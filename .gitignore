@@ -1,0 +1,119 @@
+# ── Operating System & Editor Files ───────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Editors & IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+*.bak
+
+# ── Node.js & Frontend Build (Vite / React) ──────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+build/
+*.local
+.npm/
+.eslintcache
+.stylelintcache
+.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Rust & Tauri Desktop ─────────────────────────────────────────────────────
+target/
+.tauri/target/
+.tauri/gen/
+gen/
+Cargo.lock
+**/*.rs.bk
+
+# ── Python Runtime & Tooling ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Testing, Type Checking & Linting Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+htmlcov/
+.hypothesis/
+
+# Packaging
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ── Local AI Models & Sidecar Server Caches ─────────────────────────────────
+# Ignore huge downloaded weights (.gguf / .bin) & sidecar runtime files,
+# but keep directory structures via .gitkeep
+core-engine/models/bin/*
+!core-engine/models/bin/.gitkeep
+
+core-engine/models/cache/*
+!core-engine/models/cache/.gitkeep
+
+# Model files & weights
+*.gguf
+*.bin
+*.pt
+*.safetensors
+*.onnx
+
+# Sidecar runtime locks and logs
+.sidecar.pid
+sidecar.log
+*.download
+*.part
+
+# ── Execution Sandbox & Verification Gauntlet Artifacts ─────────────────────
+# Ignore temporary runtime files created during sandbox test runs
+*_sandbox_stdout.log
+*_sandbox_stderr.log
+sandbox_audit_*.jsonl
+ide_staging_*
+ide_perf_staging_*
+aide_sandbox_*
+*.tmp
+tmp*
