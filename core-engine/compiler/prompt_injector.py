@@ -365,9 +365,12 @@ def format_unified_prompt(
 
 def _derive_threshold_sentences(slider_payload: dict) -> list[str]:
     """Derive concrete performance threshold sentences from slider values."""
-    scale = slider_payload.get("budget_vs_scale", "medium").lower()
-    speed = slider_payload.get("speed_vs_precision", "medium").lower()
-
+    normalized = SliderPayload(
+        budget_vs_scale=slider_payload.get("budget_vs_scale", "medium"),
+        speed_vs_precision=slider_payload.get("speed_vs_precision", "medium"),
+    ).normalize()
+    scale = normalized.scale.value
+    speed = normalized.precision.value
     thresholds: list[str] = []
 
     scale_targets = {

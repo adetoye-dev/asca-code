@@ -317,12 +317,13 @@ def _sanitize_sandbox_environment(base_env: Optional[dict] = None, port: int = 9
     policy = _load_security_policy()
     sanitation = policy.get("environment", {}).get("sanitation", {})
 
-    # Start with base or os.environ
-    env = dict(os.environ)
-
-    # Strip dangerous variables
-    for var in sanitation.get("stripped_variables", []):
-        env.pop(var, None)
+    if sanitation.get("inherit_from_host", True):
+        env = dict(os.environ)
+        for var in sanitation.get("stripped_variables", []):
+            env.pop(var, None)
+    else:
+        # Deny-by-default: only injected_variables reach the sandbox.
+        env = {}
 
     # Inject safe defaults
     chroot_tmp = tempfile.gettempdir()
@@ -347,6 +348,54 @@ def _sanitize_sandbox_environment(base_env: Optional[dict] = None, port: int = 9
     return env
 
 
+def _build_os_isolation_prefix() -> Optional[list[str]]:
+    """Return a supported OS-level isolation launcher or None if unavailable."""
+    if platform.system() == "Linux":
+        firejail = shutil.which("firejail")
+        if firejail:
+            return [
+                firejail,
+                "--quiet",
+                "--net=none",
+                "--private",
+                "--private-tmp",
+                "--noprofile",
+                "--caps.drop=all",
+                "--seccomp",
+                "--nonewprivs",
+                "--",
+            ]
+
+        bwrap = shutil.which("bwrap")
+        if bwrap:
+            return [
+                bwrap,
+                "--unshare-net",
+                "--unshare-user",
+                "--die-with-parent",
+                "--dev", "/dev",
+                "--proc", "/proc",
+                "--tmpfs", "/tmp",
+                "--",
+            ]
+
+    elif platform.system() == "Darwin":
+        sandbox_exec = shutil.which("sandbox-exec")
+        if sandbox_exec:
+            profile = (
+                "(version 1)"
+                "(deny default)"
+                "(allow file-read* (subpath \"/tmp\"))"
+                "(allow file-read* (subpath \"/private/tmp\"))"
+                "(allow file-write* (subpath \"/tmp\"))"
+                "(allow file-write* (subpath \"/private/tmp\"))"
+                "(deny network*)"
+            )
+            return [sandbox_exec, "-p", profile, "--"]
+
+    return None
+
+
 class SandboxProcess:
     """Manages the lifecycle of a sandboxed application subprocess."""
 
@@ -363,6 +412,7 @@ class SandboxProcess:
         self._cwd = cwd
         self._env = _sanitize_sandbox_environment(env, port=port)
         self._startup_timeout = startup_timeout
+        self._isolation_prefix = _build_os_isolation_prefix()
         self._process: Optional[subprocess.Popen] = None
         self._stdout_log = tempfile.NamedTemporaryFile(
             mode="w", suffix="_sandbox_stdout.log", delete=False
@@ -381,12 +431,21 @@ class SandboxProcess:
 
     def start(self) -> bool:
         """Launch the sandboxed process and wait for the port to become reachable."""
+        if self._isolation_prefix is None:
+            logger.error(
+                "Automatic sandbox execution disabled: no supported OS-level isolation primitive is available (firejail, bwrap, or sandbox-exec)."
+            )
+            return False
+
+        launch_cmd = [*self._isolation_prefix, *self._command]
         logger.info(
-            "Starting sandbox: %s on port %d", " ".join(self._command), self._port
+            "Starting sandbox: %s on port %d with OS isolation",
+            " ".join(self._command),
+            self._port,
         )
         try:
             self._process = subprocess.Popen(
-                self._command,
+                launch_cmd,
                 stdout=self._stdout_log,
                 stderr=self._stderr_log,
                 cwd=self._cwd,

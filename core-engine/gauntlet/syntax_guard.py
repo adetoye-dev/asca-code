@@ -184,8 +184,9 @@ def parse_ruff_output(raw: str) -> list[Diagnostic]:
         return diagnostics
 
     for entry in entries:
+        raw_code = entry.get("code") or ""
         sev = Severity.WARNING
-        if entry.get("type", "").upper() == "E" or entry.get("code", "").startswith("E"):
+        if (entry.get("type") or "").upper() == "E" or raw_code.startswith("E"):
             sev = Severity.ERROR
         diagnostics.append(
             Diagnostic(
@@ -193,7 +194,7 @@ def parse_ruff_output(raw: str) -> list[Diagnostic]:
                 line=entry.get("location", {}).get("row", entry.get("row", 0)),
                 column=entry.get("location", {}).get("column", entry.get("column", 0)),
                 severity=sev,
-                code=entry.get("code", ""),
+                code=raw_code,
                 message=entry.get("message", ""),
                 source="ruff",
             )

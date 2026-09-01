@@ -60,6 +60,7 @@ from tree_sitter_cfg import (  # noqa: E402
     parse_file,
     extract_function_signature,
 )
+from load_sandbox import _sanitize_sandbox_environment  # noqa: E402
 
 
 # ── Data Structures ──────────────────────────────────────────────────────────
@@ -226,8 +227,15 @@ def _type_to_edge_cases(type_str: Optional[str]) -> list:
 
     cleaned = type_str.strip().lower()
 
+    cleaned = type_str.strip().lower()
+
+    base = cleaned.split("[")[0].strip()
+    if "optional" in cleaned:
+        base = _extract_optional_inner(type_str.strip()) or base
+        base = base.strip().lower().split("[")[0]
+
     for key in EDGE_CASES:
-        if key in cleaned:
+        if key.lower() == base:
             values = list(EDGE_CASES[key])
             if "optional" in cleaned:
                 values.append(None)
@@ -288,7 +296,7 @@ def generate_hypothesis_test(
     for param in sig.parameters:
         strategy = _type_to_strategy(param.type_annotation)
         param_names.append(param.name)
-        given_args.append(f"    {param.name}={strategy},")
+        given_args.append(f"        {param.name}={strategy},")
 
     given_block = "\n".join(given_args)
     call_args = ", ".join(f"{n}={n}" for n in param_names)
@@ -566,12 +574,14 @@ def run_oracle_test(
     start = time.monotonic()
 
     try:
+        safe_env = _sanitize_sandbox_environment({"PYTHONPATH": str(Path(test_file).parent)})
         proc = subprocess.run(
             [sys.executable, test_file],
             capture_output=True,
             timeout=timeout_seconds,
             text=True,
             cwd=str(Path(test_file).parent),
+            env=safe_env,
         )
         elapsed = (time.monotonic() - start) * 1000
         result.elapsed_ms = elapsed

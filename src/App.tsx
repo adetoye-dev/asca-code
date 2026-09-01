@@ -8,7 +8,7 @@
  * 4. Micro-Diff Inspector: Live visual review of generated unified diff hunks.
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { TradeOffSliders } from "./components/TradeOffSliders";
 import { TelemetryScorecard } from "./components/TelemetryScorecard";
 import { usePipeline } from "./hooks/usePipeline";
@@ -32,6 +32,8 @@ const PRESET_PROMPTS = [
 ];
 
 export function App() {
+  const [customLanguage, setCustomLanguage] = useState("python");
+
   const {
     prompt,
     setPrompt,
@@ -46,9 +48,7 @@ export function App() {
     setActiveTab,
     runPipeline,
     cancelPipeline,
-  } = usePipeline();
-
-  const [customLanguage, setCustomLanguage] = useState("python");
+  } = usePipeline({ defaultLanguage: customLanguage });
 
   const isRunning = status === "running";
 
@@ -145,121 +145,131 @@ export function App() {
 
       {/* ── Main Workspace Body ───────────────────────────────────────────── */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Left Column: Prompt Input & Trade-off Sliders */}
-        <div className="w-1/2 flex flex-col border-r border-zinc-800 overflow-y-auto p-6 space-y-6">
-          {/* Prompt Section */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label
-                htmlFor="user-prompt"
-                className="text-xs font-semibold uppercase tracking-wider text-zinc-400"
-              >
-                Code Generation Request
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-zinc-500">Target Language:</span>
-                <select
-                  value={customLanguage}
-                  onChange={(e) => setCustomLanguage(e.target.value)}
-                  disabled={isRunning}
-                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
-                >
-                  <option value="python">Python</option>
-                  <option value="typescript">TypeScript</option>
-                  <option value="javascript">JavaScript</option>
-                </select>
-              </div>
-            </div>
-
-            <textarea
-              id="user-prompt"
-              rows={4}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              disabled={isRunning}
-              placeholder="Describe what you want to build (e.g., 'Build a fast JWT auth service with SQLite cache')..."
-              className="w-full rounded-xl border border-zinc-700/60 bg-zinc-900/80 p-4 text-sm text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 focus:outline-none transition-colors"
-            />
-
-            {/* Presets */}
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-medium text-zinc-500">
-                Quick Architectural Presets:
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {PRESET_PROMPTS.map((p, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handlePresetClick(p.prompt)}
-                    disabled={isRunning}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800/60 border border-zinc-700/40 text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
+        {activeTab === "editor" ? (
+          <>
+            {/* Left Column: Prompt Input & Trade-off Sliders */}
+            <div className="w-full flex flex-col border-r border-zinc-800 overflow-y-auto p-6 space-y-6">
+              {/* Prompt Section */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="user-prompt"
+                    className="text-xs font-semibold uppercase tracking-wider text-zinc-400"
                   >
-                    ⚡ {p.title}
+                    Code Generation Request
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor="target-language"
+                      className="text-xs text-zinc-500"
+                    >
+                      Target Language:
+                    </label>
+                    <select
+                      id="target-language"
+                      aria-label="Target language"
+                      value={customLanguage}
+                      onChange={(e) => setCustomLanguage(e.target.value)}
+                      disabled={isRunning}
+                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
+                    >
+                      <option value="python">Python</option>
+                      <option value="typescript">TypeScript</option>
+                      <option value="javascript">JavaScript</option>
+                    </select>
+                  </div>
+                </div>
+
+                <textarea
+                  id="user-prompt"
+                  rows={4}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  disabled={isRunning}
+                  placeholder="Describe what you want to build (e.g., 'Build a fast JWT auth service with SQLite cache')..."
+                  className="w-full rounded-xl border border-zinc-700/60 bg-zinc-900/80 p-4 text-sm text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 focus:outline-none transition-colors"
+                />
+
+                {/* Presets */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-zinc-500">
+                    Quick Architectural Presets:
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_PROMPTS.map((p, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handlePresetClick(p.prompt)}
+                        disabled={isRunning}
+                        className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800/60 border border-zinc-700/40 text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
+                      >
+                        ⚡ {p.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* Trade-off Sliders Panel */}
+              <TradeOffSliders
+                initialConfig={sliders}
+                onChange={setSliders}
+                disabled={isRunning}
+              />
+
+              {/* Action CTA */}
+              <div className="pt-2">
+                {!isRunning ? (
+                  <button
+                    type="button"
+                    onClick={() => runPipeline()}
+                    disabled={!prompt.trim()}
+                    className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm text-white shadow-xl transition-all flex items-center justify-center gap-2 ${
+                      prompt.trim()
+                        ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-emerald-500 hover:opacity-95 hover:shadow-sky-500/25 cursor-pointer"
+                        : "bg-zinc-800 text-zinc-500 border border-zinc-700/40 cursor-not-allowed"
+                    }`}
+                  >
+                    <span>🚀 Execute Autonomous Pipeline</span>
                   </button>
-                ))}
+                ) : (
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      disabled
+                      className="flex-1 py-3.5 px-4 rounded-xl font-bold text-sm bg-zinc-800 border border-zinc-700 text-sky-400 flex items-center justify-center gap-3 cursor-wait"
+                    >
+                      <span className="relative flex h-3 w-3">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
+                        <span className="relative inline-flex h-3 w-3 rounded-full bg-sky-500" />
+                      </span>
+                      Verification Gauntlet Running...
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelPipeline}
+                      className="px-5 py-3.5 rounded-xl font-semibold text-sm bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-          </section>
-
-          {/* Trade-off Sliders Panel */}
-          <TradeOffSliders
-            initialConfig={sliders}
-            onChange={setSliders}
-            disabled={isRunning}
-          />
-
-          {/* Action CTA */}
-          <div className="pt-2">
-            {!isRunning ? (
-              <button
-                type="button"
-                onClick={() => runPipeline()}
-                disabled={!prompt.trim()}
-                className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm text-white shadow-xl transition-all flex items-center justify-center gap-2 ${
-                  prompt.trim()
-                    ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-emerald-500 hover:opacity-95 hover:shadow-sky-500/25 cursor-pointer"
-                    : "bg-zinc-800 text-zinc-500 border border-zinc-700/40 cursor-not-allowed"
-                }`}
-              >
-                <span>🚀 Execute Autonomous Pipeline</span>
-              </button>
-            ) : (
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  disabled
-                  className="flex-1 py-3.5 px-4 rounded-xl font-bold text-sm bg-zinc-800 border border-zinc-700 text-sky-400 flex items-center justify-center gap-3 cursor-wait"
-                >
-                  <span className="relative flex h-3 w-3">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
-                    <span className="relative inline-flex h-3 w-3 rounded-full bg-sky-500" />
-                  </span>
-                  Verification Gauntlet Running...
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelPipeline}
-                  className="px-5 py-3.5 rounded-xl font-semibold text-sm bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
+          </>
+        ) : (
+          <div className="w-full flex flex-col overflow-y-auto p-6 bg-zinc-950/50">
+            <TelemetryScorecard
+              telemetry={telemetry}
+              orchestrationResult={orchestrationResult}
+              pipelineStatus={status}
+              activityLog={activityLog}
+              systemMetrics={systemMetrics}
+              sliderScale={sliders.budget_vs_scale}
+            />
           </div>
-        </div>
-
-        {/* Right Column: Live Telemetry & Micro-Diff Inspector */}
-        <div className="w-1/2 flex flex-col overflow-y-auto p-6 bg-zinc-950/50">
-          <TelemetryScorecard
-            telemetry={telemetry}
-            orchestrationResult={orchestrationResult}
-            pipelineStatus={status}
-            activityLog={activityLog}
-            systemMetrics={systemMetrics}
-            sliderScale={sliders.budget_vs_scale}
-          />
-        </div>
+        )}
       </main>
     </div>
   );

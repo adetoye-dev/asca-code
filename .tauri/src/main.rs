@@ -20,9 +20,9 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use sysinfo::System;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 // ── Data Structures ─────────────────────────────────────────────────────────
 
@@ -90,9 +90,10 @@ pub struct SystemMetrics {
     pub timestamp_ms: u64,
 }
 
-/// Managed state: wraps sysinfo::System behind a Mutex for thread safety.
+/// Managed state: wraps sysinfo::System and the active pipeline child behind mutexes.
 pub struct AppState {
     sys: Mutex<System>,
+    active_child: Arc<Mutex<Option<u32>>>,
 }
 
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
@@ -134,6 +135,7 @@ fn resolve_engine_dir() -> PathBuf {
 #[tauri::command]
 async fn run_generation_pipeline(
     app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
     prompt: String,
     sliders: SliderConfig,
     project_root: String,
@@ -141,7 +143,6 @@ async fn run_generation_pipeline(
     skip_performance: Option<bool>,
     dry_run: Option<bool>,
 ) -> Result<PipelineResult, String> {
-    // Validate inputs
     if prompt.trim().is_empty() {
         return Err("Prompt cannot be empty.".to_string());
     }
@@ -157,105 +158,119 @@ async fn run_generation_pipeline(
         ));
     }
 
-    // Build the command
-    let mut cmd = Command::new("python3");
-    cmd.arg(&manager_path)
-        .arg(&prompt)
-        .arg("--project-root")
-        .arg(&project_root)
-        .arg("--scale")
-        .arg(&sliders.budget_vs_scale)
-        .arg("--speed")
-        .arg(&sliders.speed_vs_precision)
-        .arg("--modularity")
-        .arg(&sliders.simplicity_vs_futureproof)
-        .arg("--json");
+    let app_for_blocking = app_handle.clone();
+    let active_child = state.active_child.clone();
 
-    if let Some(lang) = &language {
-        cmd.arg("--language").arg(lang);
-    }
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<PipelineResult, String> {
+        let mut cmd = Command::new("python3");
+        cmd.arg(&manager_path)
+            .arg(&prompt)
+            .arg("--project-root")
+            .arg(&project_root)
+            .arg("--scale")
+            .arg(&sliders.budget_vs_scale)
+            .arg("--speed")
+            .arg(&sliders.speed_vs_precision)
+            .arg("--modularity")
+            .arg(&sliders.simplicity_vs_futureproof)
+            .arg("--json");
 
-    if skip_performance.unwrap_or(false) {
-        cmd.arg("--skip-performance");
-    }
+        if let Some(lang) = &language {
+            cmd.arg("--language").arg(lang);
+        }
 
-    if dry_run.unwrap_or(false) {
-        cmd.arg("--dry-run");
-    }
+        if skip_performance.unwrap_or(false) {
+            cmd.arg("--skip-performance");
+        }
 
-    // Configure stdio for streaming
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+        if dry_run.unwrap_or(false) {
+            cmd.arg("--dry-run");
+        }
 
-    // Set working directory to project root
-    let project_path = PathBuf::from(&project_root);
-    if project_path.exists() {
-        cmd.current_dir(&project_path);
-    }
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
 
-    // Spawn the child process
-    let mut child = cmd.spawn().map_err(|e| {
-        format!(
-            "Failed to spawn orchestrator process: {}. Is Python 3 installed?",
-            e
-        )
-    })?;
+        let project_path = PathBuf::from(&project_root);
+        if project_path.exists() {
+            cmd.current_dir(&project_path);
+        }
 
-    // ── Stream stdout ──
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn orchestrator process: {}. Is Python 3 installed?",
+                e
+            )
+        })?;
 
-    let stdout_handle = app_handle.clone();
-    let stderr_handle = app_handle.clone();
+        let pid = child.id();
+        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
-    let mut all_lines: Vec<String> = Vec::new();
-    let mut json_result: Option<serde_json::Value> = None;
-    let mut line_count: usize = 0;
+        {
+            let mut locked_child = active_child
+                .lock()
+                .map_err(|e| format!("Failed to lock active child: {}", e))?;
+            *locked_child = Some(pid);
+        }
 
-    // Read stdout line by line
-    let stdout_reader = BufReader::new(stdout);
-    for line in stdout_reader.lines() {
-        match line {
-            Ok(content) => {
-                line_count += 1;
-                let is_json =
-                    content.trim_start().starts_with('{') || content.trim_start().starts_with('[');
+        let stdout_handle = app_for_blocking.clone();
+        let stderr_handle = app_for_blocking.clone();
 
-                let output = PipelineOutputLine {
-                    line_number: line_count,
-                    content: content.clone(),
-                    stream: "stdout".to_string(),
-                    is_json,
-                };
-
-                // Emit to frontend
-                let _ = stdout_handle.emit("pipeline:output", &output);
-
-                // Try to parse the last JSON line as the final result
-                if is_json {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                        json_result = Some(parsed);
-                    }
+        let stderr_thread = std::thread::spawn(move || {
+            let stderr_reader = BufReader::new(stderr);
+            let mut collected = Vec::new();
+            for line in stderr_reader.lines() {
+                match line {
+                    Ok(content) => collected.push(content),
+                    Err(err) => collected.push(format!("[read error: {}]", err)),
                 }
-
-                all_lines.push(content);
             }
-            Err(e) => {
-                let output = PipelineOutputLine {
-                    line_number: line_count + 1,
-                    content: format!("[read error: {}]", e),
-                    stream: "stderr".to_string(),
-                    is_json: false,
-                };
-                let _ = stdout_handle.emit("pipeline:output", &output);
+            collected
+        });
+
+        let mut all_lines: Vec<String> = Vec::new();
+        let mut json_result: Option<serde_json::Value> = None;
+        let mut line_count: usize = 0;
+
+        let stdout_reader = BufReader::new(stdout);
+        for line in stdout_reader.lines() {
+            match line {
+                Ok(content) => {
+                    line_count += 1;
+                    let is_json =
+                        content.trim_start().starts_with('{') || content.trim_start().starts_with('[');
+
+                    let output = PipelineOutputLine {
+                        line_number: line_count,
+                        content: content.clone(),
+                        stream: "stdout".to_string(),
+                        is_json,
+                    };
+
+                    let _ = stdout_handle.emit("pipeline:output", &output);
+
+                    if is_json {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                            json_result = Some(parsed);
+                        }
+                    }
+
+                    all_lines.push(content);
+                }
+                Err(err) => {
+                    let output = PipelineOutputLine {
+                        line_number: line_count + 1,
+                        content: format!("[read error: {}]", err),
+                        stream: "stderr".to_string(),
+                        is_json: false,
+                    };
+                    let _ = stdout_handle.emit("pipeline:output", &output);
+                }
             }
         }
-    }
 
-    // Read stderr
-    let stderr_reader = BufReader::new(stderr);
-    for line in stderr_reader.lines() {
-        if let Ok(content) = line {
+        let mut stderr_lines = stderr_thread.join().unwrap_or_default();
+        for content in stderr_lines.drain(..) {
             line_count += 1;
             let output = PipelineOutputLine {
                 line_number: line_count,
@@ -266,33 +281,54 @@ async fn run_generation_pipeline(
             let _ = stderr_handle.emit("pipeline:output", &output);
             all_lines.push(content);
         }
-    }
 
-    // Wait for process to finish
-    let status = child
-        .wait()
-        .map_err(|e| format!("Process wait failed: {}", e))?;
-    let exit_code = status.code().unwrap_or(-1);
+        let wait_result = child.wait();
 
-    let success = exit_code == 0;
-    let error_message = if success {
-        String::new()
-    } else {
-        format!("Pipeline exited with code {}", exit_code)
-    };
+        {
+            if let Ok(mut locked_child) = active_child.lock() {
+                if locked_child.as_ref() == Some(&pid) {
+                    *locked_child = None;
+                }
+            }
+        }
 
-    let result = PipelineResult {
-        success,
-        exit_code,
-        total_lines: line_count,
-        json_result,
-        error_message,
-    };
+        let status = wait_result.map_err(|e| format!("Process wait failed: {}", e))?;
+        let exit_code = status.code().unwrap_or(-1);
 
-    // Emit completion event
-    let _ = app_handle.emit("pipeline:complete", &result);
+        let success = exit_code == 0;
+        let error_message = if success {
+            String::new()
+        } else {
+            format!("Pipeline exited with code {}", exit_code)
+        };
+
+        let result = PipelineResult {
+            success,
+            exit_code,
+            total_lines: line_count,
+            json_result,
+            error_message,
+        };
+
+        let _ = app_for_blocking.emit("pipeline:complete", &result);
+        Ok(result)
+    }).await.map_err(|e| format!("Pipeline task failed: {}", e))??;
 
     Ok(result)
+}
+
+#[tauri::command]
+fn cancel_generation_pipeline(state: State<'_, AppState>) -> Result<(), String> {
+    let mut active = state
+        .active_child
+        .lock()
+        .map_err(|e| format!("Failed to acquire active child lock: {}", e))?;
+
+    if let Some(pid) = active.take() {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+    }
+
+    Ok(())
 }
 
 // ── Tauri Command: fetch_system_metrics ─────────────────────────────────────
@@ -369,9 +405,14 @@ fn main() {
     tauri::Builder::default()
         .manage(AppState {
             sys: Mutex::new(System::new_all()),
+            active_child: Arc::new(Mutex::new(None)),
         })
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             run_generation_pipeline,
+            cancel_generation_pipeline,
             fetch_system_metrics,
         ])
         .setup(|app| {

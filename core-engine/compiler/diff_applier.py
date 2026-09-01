@@ -205,7 +205,7 @@ def parse_diff_text(raw_text: str, project_root: str = "") -> list[FilePatch]:
     patches: list[FilePatch] = []
 
     # Split into per-file diff blocks at --- headers
-    blocks = re.split(r"(?=^---\s)", cleaned, flags=re.MULTILINE)
+    blocks = re.split(r"(?=^---\s.*\n\+\+\+\s)", cleaned, flags=re.MULTILINE)
 
     for block in blocks:
         block = block.strip()
@@ -396,6 +396,14 @@ def apply_patch(
 
     # ── Handle new file creation ──
     if patch.is_new_file:
+        if Path(patch.new_path).exists():
+            result.status = PatchStatus.REJECTED
+            result.error_message = (
+                f"File already exists: {patch.new_path} (patch claims new file)"
+            )
+            logger.error(result.error_message)
+            return result
+
         new_content = _collect_added_content(patch)
 
         if dry_run:

@@ -73,6 +73,7 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
 
   const unlistenOutputRef = useRef<(() => void) | null>(null);
   const unlistenCompleteRef = useRef<(() => void) | null>(null);
+  const cancellationRef = useRef(false);
 
   // Check if running inside Tauri webview
   const isTauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -115,19 +116,20 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
   useEffect(() => {
     if (!isTauriAvailable) return;
 
-    let mounted = true;
+    let cancelled = false;
 
     async function setupListeners() {
       try {
         const { listen } = await import("@tauri-apps/api/event");
 
-        // Listen for streaming output lines
         const unlistenOut = await listen<PipelineOutputLine>("pipeline:output", (event) => {
-          if (!mounted) return;
+          if (cancelled) return;
           const line = event.payload;
-          setActivityLog((prev) => [...prev, line]);
+          setActivityLog((prev) => {
+            const next = [...prev, line];
+            return next.length > 500 ? next.slice(-500) : next;
+          });
 
-          // Extract inline telemetry if json payload emitted
           if (line.is_json) {
             try {
               const data = JSON.parse(line.content);
@@ -140,13 +142,17 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
           }
         });
 
-        // Listen for complete event
+        if (cancelled) {
+          unlistenOut();
+          return;
+        }
+
         const unlistenComp = await listen<any>("pipeline:complete", (event) => {
-          if (!mounted) return;
+          if (cancelled || cancellationRef.current) return;
           const result = event.payload;
-          if (result && result.parsed_result) {
-            setOrchestrationResult(result.parsed_result);
-            if (result.parsed_result.outcome === "success") {
+          if (result && result.json_result) {
+            setOrchestrationResult(result.json_result);
+            if (result.json_result.outcome === "success") {
               setStatus("success");
             } else {
               setStatus("failed");
@@ -158,6 +164,12 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
           }
         });
 
+        if (cancelled) {
+          unlistenOut();
+          unlistenComp();
+          return;
+        }
+
         unlistenOutputRef.current = unlistenOut;
         unlistenCompleteRef.current = unlistenComp;
       } catch (err) {
@@ -168,9 +180,15 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
     setupListeners();
 
     return () => {
-      mounted = false;
-      if (unlistenOutputRef.current) unlistenOutputRef.current();
-      if (unlistenCompleteRef.current) unlistenCompleteRef.current();
+      cancelled = true;
+      if (unlistenOutputRef.current) {
+        unlistenOutputRef.current();
+        unlistenOutputRef.current = null;
+      }
+      if (unlistenCompleteRef.current) {
+        unlistenCompleteRef.current();
+        unlistenCompleteRef.current = null;
+      }
     };
   }, [isTauriAvailable]);
 
@@ -180,6 +198,7 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
       const activePrompt = customPrompt ?? prompt;
       if (!activePrompt.trim()) return;
 
+      cancellationRef.current = false;
       setStatus("running");
       setActivityLog([]);
       setOrchestrationResult(null);
@@ -197,13 +216,16 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
             dryRun: false,
           });
 
-          if (result && result.parsed_result) {
-            setOrchestrationResult(result.parsed_result);
-            setStatus(result.parsed_result.outcome === "success" ? "success" : "failed");
+          if (cancellationRef.current) return;
+
+          if (result && result.json_result) {
+            setOrchestrationResult(result.json_result);
+            setStatus(result.json_result.outcome === "success" ? "success" : "failed");
           } else {
             setStatus(result.success ? "success" : "failed");
           }
         } catch (err: any) {
+          if (cancellationRef.current) return;
           console.error("Pipeline invocation failed:", err);
           setStatus("error");
           setActivityLog((prev) => [
@@ -283,8 +305,16 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
   );
 
   const cancelPipeline = useCallback(() => {
+    cancellationRef.current = true;
+    if (isTauriAvailable) {
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) => {
+          invoke("cancel_generation_pipeline").catch(() => undefined);
+        })
+        .catch(() => undefined);
+    }
     setStatus("idle");
-  }, []);
+  }, [isTauriAvailable]);
 
   const clearLog = useCallback(() => {
     setActivityLog([]);

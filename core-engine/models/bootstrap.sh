@@ -39,6 +39,7 @@ LOG_FILE="${CACHE_DIR}/sidecar.log"
 
 MODEL_REPO="${AIDE_MODEL_REPO:-Qwen/Qwen2.5-Coder-7B-Instruct-GGUF}"
 MODEL_FILE="${AIDE_MODEL_FILE:-qwen2.5-coder-7b-instruct-q4_k_m.gguf}"
+MODEL_SHA256="${AIDE_MODEL_SHA256:-}"
 BIND_HOST="${AIDE_BIND_HOST:-127.0.0.1}"
 BIND_PORT="${AIDE_BIND_PORT:-8080}"
 CTX_SIZE="${AIDE_CTX_SIZE:-8192}"
@@ -233,6 +234,10 @@ compute_gpu_layers() {
             # Check VRAM via nvidia-smi
             local vram_mb
             vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo 0)
+            vram_mb="${vram_mb//[[:space:]]/}"
+            if ! [[ "${vram_mb}" =~ ^[0-9]+$ ]]; then
+                vram_mb=0
+            fi
             if [ "${vram_mb}" -ge 8000 ]; then
                 echo "99"
             elif [ "${vram_mb}" -ge 6000 ]; then
@@ -390,6 +395,22 @@ download_model() {
                 continue
             fi
 
+            if ! file "${tmp_path}" | grep -qi "GGUF"; then
+                log_warn "Downloaded model failed GGUF magic-byte validation. Retrying..."
+                rm -f "${tmp_path}"
+                continue
+            fi
+
+            if [ -n "${MODEL_SHA256}" ]; then
+                local actual_sha256
+                actual_sha256=$(shasum -a 256 "${tmp_path}" 2>/dev/null | awk '{print $1}' || echo "")
+                if [ -z "${actual_sha256}" ] || [ "${actual_sha256}" != "${MODEL_SHA256}" ]; then
+                    log_warn "Downloaded model SHA-256 mismatch for ${MODEL_FILE}. Retrying..."
+                    rm -f "${tmp_path}"
+                    continue
+                fi
+            fi
+
             mv "${tmp_path}" "${MODEL_PATH}"
             local final_gb
             final_gb=$(awk "BEGIN {printf \"%.2f\", ${dl_bytes} / 1073741824}")
@@ -465,10 +486,20 @@ is_sidecar_running() {
         local pid
         pid=$(cat "${PID_FILE}" 2>/dev/null)
         if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-            echo "${pid}"
-            return 0
+            local expected_bin
+            expected_bin="$(resolve_server_binary 2>/dev/null || true)"
+            if [ -n "${expected_bin}" ]; then
+                local cmdline
+                cmdline=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || ps -o args= -p "${pid}" 2>/dev/null || true)
+                if [[ "${cmdline}" == *"${expected_bin}"* ]]; then
+                    echo "${pid}"
+                    return 0
+                fi
+            else
+                echo "${pid}"
+                return 0
+            fi
         fi
-        # Stale PID file
         rm -f "${PID_FILE}"
     fi
     return 1
@@ -486,12 +517,10 @@ wait_for_server() {
         if curl -sf "http://${host}:${port}/health" &>/dev/null; then
             return 0
         fi
-        # Fallback: try a basic TCP connection
-        if (echo > "/dev/tcp/${host}/${port}") 2>/dev/null; then
-            # Port is open — give the server a moment to initialize
-            sleep 1
+        if curl -sf "http://${host}:${port}/health" &>/dev/null; then
             return 0
         fi
+        sleep 1
         sleep 1
         elapsed=$(( elapsed + 1 ))
     done

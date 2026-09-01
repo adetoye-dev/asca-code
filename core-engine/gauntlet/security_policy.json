@@ -3,9 +3,9 @@
 
   "_meta": {
     "version": "1.0.0",
-    "description": "Declarative execution sandbox policy for AI-generated code. Enforces filesystem chroot, environment sanitation, network egress blocking, and resource limits to prevent untrusted code from damaging the host system.",
-    "enforced_by": "core-engine/gauntlet/load_sandbox.py",
-    "last_updated": "2025-01-01T00:00:00Z"
+    "description": "Execution sandbox policy for AI-generated code. The runner requires OS-level isolation before launching generated code and combines it with environment sanitization to block direct filesystem, network, and process access unless the host provides the required primitives.",
+    "enforced_by": "core-engine/gauntlet/load_sandbox.py (OS-level isolation + environment sanitization)",
+    "last_updated": "2026-09-01T00:00:00Z"
   },
 
   "filesystem": {
@@ -71,7 +71,7 @@
       "allowed_extensions": [
         ".py", ".js", ".ts", ".tsx", ".jsx",
         ".json", ".yaml", ".yml", ".toml",
-        ".html", ".css", ".sql", ".sh",
+        ".html", ".css", ".sql",
         ".txt", ".md", ".csv", ".log",
         ".env", ".cfg", ".ini", ".xml"
       ],
@@ -246,7 +246,7 @@
 
         "darwin": {
           "primary": "sandbox-exec",
-          "profile_template": "(version 1)(deny default)(allow network* (local ip \"localhost:*\"))(allow process-exec)(allow file-read*)(allow file-write* (subpath \"{chroot_dir}\"))",
+          "profile_template": "(version 1)(deny default)(allow network* (local ip \"localhost:*\"))(allow file-read* (subpath \"{chroot_dir}\") (subpath \"{project_root}\"))(allow file-write* (subpath \"{chroot_dir}\"))(allow process-exec (path \"/usr/bin/python3\") (path \"/usr/local/bin/python3\") (path \"/usr/bin/env\"))",
           "fallback": "environment_only"
         },
 

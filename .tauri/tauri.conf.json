@@ -6,8 +6,8 @@
   "identifier": "com.autonomous-ide.app",
 
   "build": {
-    "beforeBuildCommand": "",
-    "beforeDevCommand": "",
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
   },
@@ -40,34 +40,10 @@
   },
 
   "bundle": {
-    "active": true,
+    "active": false,
     "createUpdaterArtifacts": false,
 
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-
     "targets": "all",
-
-    "externalBin": [
-      "bin/llama-server"
-    ],
-
-    "resources": {
-      "core-engine/**/*": "core-engine/",
-      "core-engine/data-map/*.js": "core-engine/data-map/",
-      "core-engine/data-map/*.py": "core-engine/data-map/",
-      "core-engine/compiler/*.py": "core-engine/compiler/",
-      "core-engine/gauntlet/*.py": "core-engine/gauntlet/",
-      "core-engine/gauntlet/*.json": "core-engine/gauntlet/",
-      "core-engine/models/bootstrap.sh": "core-engine/models/",
-      "core-engine/models/sampling_rules.json": "core-engine/models/",
-      "core-engine/manager.py": "core-engine/"
-    },
 
     "macOS": {
       "minimumSystemVersion": "11.0",

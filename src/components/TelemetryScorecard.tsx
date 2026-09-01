@@ -8,7 +8,7 @@
  * Styling: Tailwind CSS utility classes — zero external component libraries.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -541,23 +541,23 @@ export function TelemetryScorecard({
                     : "bg-sky-500"
                 }
               />
-              <MetricCard
-                label="Peak CPU"
-                value={
-                  telemetry
-                    ? `${telemetry.peak_cpu_percent.toFixed(1)}%`
-                    : "—"
-                }
-                sublabel="During benchmark"
-                icon="🔥"
-                color={
-                  telemetry && telemetry.peak_cpu_percent > 85
-                    ? "text-red-400"
-                    : "text-zinc-300"
-                }
-              />
             </>
           )}
+          <MetricCard
+            label="Peak CPU"
+            value={
+              telemetry
+                ? `${telemetry.peak_cpu_percent.toFixed(1)}%`
+                : "—"
+            }
+            sublabel="During benchmark"
+            icon="🔥"
+            color={
+              telemetry && telemetry.peak_cpu_percent > 85
+                ? "text-red-400"
+                : "text-zinc-300"
+            }
+          />
         </div>
       )}
 

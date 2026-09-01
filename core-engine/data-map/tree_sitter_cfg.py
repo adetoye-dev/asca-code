@@ -655,7 +655,9 @@ def _extract_typescript_functions_regex(
         ),
         # Method: foo(params): RetType {
         re.compile(
-            r"^(\s+)(?:async\s+)?(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?\s*\{",
+            r"^(\s+)(?:async\s+)?"
+            r"(?!if\b|for\b|while\b|switch\b|catch\b|do\b|return\b|with\b)"
+            r"(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?\s*\{",
             re.MULTILINE,
         ),
     ]

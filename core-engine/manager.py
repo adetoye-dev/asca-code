@@ -343,7 +343,14 @@ def _parse_unified_diffs(raw_response: str, project_root: str) -> list[DiffPatch
             continue
 
         rel_path = new_match.group(1).strip()
-        abs_path = str(Path(project_root) / rel_path)
+        root = Path(project_root).resolve()
+        candidate = (root / rel_path).resolve()
+        if not candidate.is_relative_to(root):
+            logger.error(
+                "Rejecting patch with out-of-root path: %s", rel_path
+            )
+            continue
+        abs_path = str(candidate)
 
         # Read original content if file exists
         original = ""
@@ -444,31 +451,80 @@ def _apply_diff_hunks(original: str, hunk_lines: list[str]) -> str:
     return "".join(result)
 
 
-def _write_patches_to_disk(patches: list[DiffPatch]) -> list[str]:
-    """Write finalized patches to disk. Returns list of written file paths."""
-    written = []
+def _write_patches_to_disk(patches: list[DiffPatch], project_root: str = "") -> list[str]:
+    """Write finalized patches to disk using the validated raw diff flow."""
+    written: list[str] = []
+    root = Path(project_root).resolve() if project_root else None
+
     for patch in patches:
-        target = Path(patch.file_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(patch.patched_content, encoding="utf-8")
-        written.append(str(target))
-        logger.info("Written: %s (%d bytes)", target, len(patch.patched_content))
+        target = Path(patch.file_path).resolve()
+        if root is not None:
+            try:
+                target.relative_to(root)
+            except ValueError:
+                logger.warning(
+                    "Refusing to write patch outside project_root for %s (project_root=%s)",
+                    patch.file_path,
+                    project_root,
+                )
+                continue
+
+        batch = apply_diff_text(
+            patch.diff_text,
+            project_root=project_root,
+            backup=True,
+            strict=True,
+        )
+        if batch.rejected or batch.errors:
+            logger.warning(
+                "Patch rejected during final write for %s: %s",
+                patch.file_path,
+                batch.to_json(),
+            )
+            continue
+
+        applied_any = False
+        for result in batch.results:
+            result_path = Path(result.file_path).resolve() if getattr(result, "file_path", None) else None
+            if root is not None and result_path is not None:
+                try:
+                    result_path.relative_to(root)
+                except ValueError:
+                    logger.warning(
+                        "Patch result for %s escapes project_root and was rejected",
+                        result.file_path,
+                    )
+                    continue
+
+            if result.status in {"applied", "created"}:
+                written.append(result.file_path)
+                applied_any = True
+                logger.info("Written: %s", result.file_path)
+
+        if not applied_any:
+            logger.warning(
+                "Patch showed no successful final write for %s; keeping correction loop active",
+                patch.file_path,
+            )
+
     return written
 
 
-def _write_patches_to_staging(patches: list[DiffPatch], staging_dir: str) -> list[str]:
-    """Write patches to a temporary staging directory for gate verification.
-
-    Returns list of staged file paths.
-    """
-    staged = []
+def _write_patches_to_staging(
+    patches: list[DiffPatch], staging_dir: str, project_root: str = ""
+) -> list[str]:
+    """Write patches to a temporary staging directory for gate verification."""
+    staged: list[str] = []
+    seen: set[str] = set()
     for patch in patches:
-        # Compute relative path from common ancestor
-        rel = Path(patch.file_path).name
+        rel = os.path.relpath(patch.file_path, project_root) if project_root else Path(patch.file_path).name
         staged_path = Path(staging_dir) / rel
         staged_path.parent.mkdir(parents=True, exist_ok=True)
         staged_path.write_text(patch.patched_content, encoding="utf-8")
-        staged.append(str(staged_path))
+        staged_key = str(staged_path)
+        if staged_key not in seen:
+            staged.append(staged_key)
+            seen.add(staged_key)
     return staged
 
 
@@ -825,7 +881,6 @@ def orchestrate(
 
         if not current_patches:
             logger.warning("LLM produced no parseable diff patches")
-            # Treat as a syntax failure and retry
             round_record = CorrectionRound(
                 round_number=round_num,
                 syntax_passed=False,
@@ -835,6 +890,21 @@ def orchestrate(
                 llm_latency_ms=llm_elapsed,
             )
             rounds.append(round_record)
+
+            paradox = _detect_paradox(
+                '{"error":"No valid unified diff patches found in your output"}',
+                [],
+                rounds,
+            )
+            if paradox:
+                logger.error("PARADOX DETECTED: %s", paradox)
+                return OrchestrationResult(
+                    outcome=LoopOutcome.PARADOX_DETECTED,
+                    total_rounds=round_num,
+                    rounds=rounds,
+                    elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
+                    error_detail=paradox,
+                )
 
             prompt = build_correction_prompt(
                 original_request=user_request,
@@ -851,7 +921,11 @@ def orchestrate(
         # ── Step 3: Write to staging ──
         staging_dir = tempfile.mkdtemp(prefix="ide_staging_")
         try:
-            staged_paths = _write_patches_to_staging(current_patches, staging_dir)
+            staged_paths = _write_patches_to_staging(
+                current_patches,
+                staging_dir,
+                project_root=config.project_root,
+            )
 
             # ── Step 4: Syntax Gate ──
             syntax_passed, syntax_report, syntax_card = evaluate_syntax_gate(staged_paths)
@@ -863,6 +937,12 @@ def orchestrate(
                 syntax_errors,
                 syntax_report.total_warnings if syntax_report else 0,
             )
+
+            oracle_passed = True
+            oracle_card = "{}"
+            oracle_reports: list[OracleReport] = []
+            if syntax_passed:
+                oracle_passed, oracle_reports, oracle_card = evaluate_oracle_gate(staged_paths)
 
             # ── Step 5: Performance Gate (only if syntax passes) ──
             perf_passed = True
@@ -929,15 +1009,32 @@ def orchestrate(
             rounds.append(round_record)
 
             # ── Step 6: Check for 100% green ──
-            if syntax_passed and perf_passed:
+            if syntax_passed and perf_passed and oracle_passed:
                 logger.info("=" * 70)
                 logger.info("ALL GATES PASSED — Round %d", round_num)
                 logger.info("=" * 70)
 
                 # ── Step 7: Write to disk ──
                 if not dry_run:
-                    written = _write_patches_to_disk(current_patches)
+                    written = _write_patches_to_disk(
+                        current_patches,
+                        project_root=config.project_root,
+                    )
                     logger.info("Finalized %d files to disk", len(written))
+
+                    if len(written) != len(current_patches):
+                        logger.warning(
+                            "Final patch application incomplete (%d/%d files applied); continuing correction loop",
+                            len(written),
+                            len(current_patches),
+                        )
+                        prompt = build_correction_prompt(
+                            original_request=user_request,
+                            current_diff=current_diff_text,
+                            syntax_card='{"error":"Final patch application was incomplete or rejected"}',
+                            round_number=round_num + 1,
+                        )
+                        continue
                 else:
                     logger.info("Dry run — skipping disk write")
 
@@ -967,6 +1064,7 @@ def orchestrate(
                 current_diff=current_diff_text,
                 syntax_card=syntax_card if not syntax_passed else None,
                 performance_card=perf_card if not perf_passed else None,
+                oracle_card=oracle_card if not oracle_passed else None,
                 round_number=round_num + 1,
             )
 
