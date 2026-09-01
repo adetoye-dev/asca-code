@@ -1,0 +1,184 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui/tauri-v2-schema/main/tauri.conf.schema.json",
+
+  "productName": "Autonomous IDE",
+  "version": "0.1.0",
+  "identifier": "com.autonomous-ide.app",
+
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
+  },
+
+  "app": {
+    "windows": [
+      {
+        "title": "Autonomous IDE — Local-First Code Generation",
+        "label": "main",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "maximized": false,
+        "visible": true,
+        "focus": true
+      }
+    ],
+
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:8080 http://localhost:8080; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    },
+
+    "withGlobalTauri": true
+  },
+
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": false,
+
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+
+    "targets": "all",
+
+    "externalBin": [
+      "bin/llama-server"
+    ],
+
+    "resources": {
+      "core-engine/**/*": "core-engine/",
+      "core-engine/data-map/*.js": "core-engine/data-map/",
+      "core-engine/data-map/*.py": "core-engine/data-map/",
+      "core-engine/compiler/*.py": "core-engine/compiler/",
+      "core-engine/gauntlet/*.py": "core-engine/gauntlet/",
+      "core-engine/gauntlet/*.json": "core-engine/gauntlet/",
+      "core-engine/models/bootstrap.sh": "core-engine/models/",
+      "core-engine/models/sampling_rules.json": "core-engine/models/",
+      "core-engine/manager.py": "core-engine/"
+    },
+
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "frameworks": [],
+      "entitlements": null,
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "providerShortName": null
+    },
+
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "certificateThumbprint": null,
+      "timestampUrl": "",
+      "wix": null,
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "headerImage": null,
+        "sidebarImage": null
+      }
+    },
+
+    "linux": {
+      "deb": {
+        "depends": ["python3", "python3-venv"],
+        "section": "devel",
+        "priority": "optional"
+      },
+      "rpm": {
+        "depends": ["python3"],
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+
+  "plugins": {
+    "shell": {
+      "open": false,
+      "scope": {
+        "sidecar": true,
+        "scopes": [
+          {
+            "name": "llm-sidecar",
+            "cmd": "bin/llama-server",
+            "args": true
+          },
+          {
+            "name": "python-orchestrator",
+            "cmd": "python3",
+            "args": [
+              "core-engine/manager.py",
+              { "validator": "\\S+" }
+            ]
+          },
+          {
+            "name": "bootstrap-script",
+            "cmd": "bash",
+            "args": [
+              "core-engine/models/bootstrap.sh",
+              { "validator": "^--(detect|download|serve|status|kill)$" }
+            ]
+          }
+        ]
+      }
+    },
+
+    "http": {
+      "scope": {
+        "allow": [
+          {
+            "url": "http://127.0.0.1:8080/**"
+          },
+          {
+            "url": "http://localhost:8080/**"
+          }
+        ],
+        "deny": [
+          {
+            "url": "http://*:*/**"
+          },
+          {
+            "url": "https://*:*/**"
+          }
+        ]
+      }
+    },
+
+    "fs": {
+      "scope": {
+        "allow": [
+          "$APPDATA/**",
+          "$RESOURCE/**",
+          "$TEMP/**"
+        ],
+        "deny": [
+          "$HOME/.ssh/**",
+          "$HOME/.gnupg/**",
+          "$HOME/.aws/**",
+          "$HOME/.kube/**",
+          "/etc/**",
+          "/System/**",
+          "/usr/**",
+          "C:\\Windows\\**",
+          "C:\\Program Files\\**"
+        ]
+      }
+    }
+  }
+}

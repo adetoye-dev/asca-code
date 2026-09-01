@@ -1,0 +1,251 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "Grammar-Guided Generation rules for the Autonomous IDE LLM sidecar. Constrains token sampling to emit only valid unified diff patches or structured JSON code-patch arrays. Prevents conversational chatter, introductory remarks, and variable name hallucinations at the token generation level.",
+    "compatible_engines": ["llama.cpp", "vllm", "outlines", "guidance"],
+    "schema_source": "core-engine/data-map/graph_manager.js"
+  },
+
+  "output_mode": "unified_diff",
+  "output_modes": {
+    "unified_diff": {
+      "description": "Constrains the model to emit only valid unified diff patch blocks.",
+      "grammar_type": "gbnf",
+      "grammar": "root        ::= patch+\npatch       ::= old-header new-header hunk+\nold-header  ::= \"--- \" path \"\\n\"\nnew-header  ::= \"+++ \" path \"\\n\"\npath        ::= [a-zA-Z] prefix? segments\nprefix      ::= \"/ \" | \"\"\nsegments    ::= segment (\"/\" segment)*\nsegment     ::= [a-zA-Z0-9._-]+\nhunk        ::= hunk-header hunk-line+\nhunk-header ::= \"@@ -\" range \" +\" range \" @@\" context? \"\\n\"\nrange       ::= [0-9]+ (\",\" [0-9]+)?\ncontext     ::= \" \" [^\\n]*\nhunk-line   ::= add-line | del-line | ctx-line\nadd-line    ::= \"+\" [^\\n]* \"\\n\"\ndel-line    ::= \"-\" [^\\n]* \"\\n\"\nctx-line    ::= \" \" [^\\n]* \"\\n\"\n"
+    },
+    "json_patch_array": {
+      "description": "Constrains the model to emit a JSON array of structured code patch objects aligned with the graph_manager node schema.",
+      "grammar_type": "json_schema",
+      "schema": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["file_path", "patches"],
+          "additionalProperties": false,
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_./-]+$",
+              "description": "Relative path to the target file from project root."
+            },
+            "node_type": {
+              "type": "string",
+              "enum": ["file", "function", "component", "schema", "endpoint", "state_variable"],
+              "description": "Graph node type from graph_manager.js NODE_TYPES. Constrains the model to only reference valid entity types."
+            },
+            "edge_type": {
+              "type": "string",
+              "enum": ["structural_import", "data_flow_call", "schema_subscription", "property_read"],
+              "description": "Graph edge type from graph_manager.js EDGE_TYPES. Used when the patch modifies inter-node relationships."
+            },
+            "change_kind": {
+              "type": "string",
+              "enum": ["body_only", "signature_change", "schema_change"],
+              "description": "Change classification from graph_manager.js CHANGE_KINDS. Determines blast-radius propagation."
+            },
+            "patches": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["start_line", "end_line", "replacement"],
+                "additionalProperties": false,
+                "properties": {
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "1-indexed start line of the region to replace."
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "1-indexed end line of the region to replace (inclusive)."
+                  },
+                  "original": {
+                    "type": "string",
+                    "description": "Exact text of the original region. Used for conflict detection."
+                  },
+                  "replacement": {
+                    "type": "string",
+                    "minLength": 0,
+                    "description": "The replacement code text. Empty string to delete a region."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "sampling_parameters": {
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "top_k": 40,
+    "min_p": 0.05,
+    "repeat_penalty": 1.1,
+    "repeat_last_n": 256,
+    "max_tokens": 4096,
+    "stop_sequences": [
+      "\n\n\n",
+      "```",
+      "Sure,",
+      "Here is",
+      "Here's",
+      "I've ",
+      "I have ",
+      "Let me ",
+      "Note:",
+      "Note that",
+      "Please note",
+      "This code",
+      "This will",
+      "The above",
+      "As you can see",
+      "In this example",
+      "Explanation:",
+      "Output:",
+      "// End of",
+      "# End of"
+    ],
+    "description": "Sampling parameters tuned for deterministic code generation. Low temperature + stop sequences that hard-cut conversational preambles."
+  },
+
+  "banned_token_patterns": {
+    "description": "Regex patterns matched against decoded token sequences. Any match causes the token to be rejected and resampled. Prevents conversational filler at the structural level.",
+    "patterns": [
+      "^Sure[,!.]",
+      "^Here [is|are]",
+      "^Here's",
+      "^I('ve| have| will| can| would)",
+      "^Let me",
+      "^Of course",
+      "^Certainly",
+      "^Absolutely",
+      "^Great[,!.]",
+      "^No problem",
+      "^Happy to",
+      "^You're welcome",
+      "^Thank",
+      "^Please ",
+      "^Note[: ]",
+      "^Explanation",
+      "^Output:",
+      "^The (above|following|code|result)",
+      "^This (is|will|should|code|function|implementation)",
+      "^As (you|we|shown|mentioned)",
+      "^In (this|the|order)",
+      "^For (example|instance|reference)",
+      "^To (summarize|recap|clarify)",
+      "^Also[,.]",
+      "^Additionally[,.]",
+      "^Furthermore[,.]",
+      "^However[,.]",
+      "^Basically[,.]"
+    ]
+  },
+
+  "structural_constraints": {
+    "description": "Hard rules enforced at the output validation layer. If the complete output fails any of these checks, it is rejected before reaching the diff applier.",
+    "rules": [
+      {
+        "id": "no_markdown_fences",
+        "description": "Output must not contain markdown code fences (triple backticks). The model emits raw diffs, not fenced blocks.",
+        "pattern_must_not_match": "^```",
+        "action": "strip_and_warn"
+      },
+      {
+        "id": "must_start_with_diff_header",
+        "description": "In unified_diff mode, the output must begin with a valid diff header line.",
+        "pattern_must_match": "^--- ",
+        "applies_to": "unified_diff",
+        "action": "reject"
+      },
+      {
+        "id": "must_be_valid_json_array",
+        "description": "In json_patch_array mode, the output must be a valid JSON array.",
+        "pattern_must_match": "^\\s*\\[",
+        "applies_to": "json_patch_array",
+        "action": "reject"
+      },
+      {
+        "id": "valid_node_types_only",
+        "description": "Any node_type field must match one of the graph_manager.js NODE_TYPES enum values.",
+        "allowed_values": ["file", "function", "component", "schema", "endpoint", "state_variable"],
+        "field": "node_type",
+        "applies_to": "json_patch_array",
+        "action": "reject"
+      },
+      {
+        "id": "valid_edge_types_only",
+        "description": "Any edge_type field must match one of the graph_manager.js EDGE_TYPES enum values.",
+        "allowed_values": ["structural_import", "data_flow_call", "schema_subscription", "property_read"],
+        "field": "edge_type",
+        "applies_to": "json_patch_array",
+        "action": "reject"
+      },
+      {
+        "id": "valid_change_kinds_only",
+        "description": "Any change_kind field must match one of the graph_manager.js CHANGE_KINDS enum values.",
+        "allowed_values": ["body_only", "signature_change", "schema_change"],
+        "field": "change_kind",
+        "applies_to": "json_patch_array",
+        "action": "reject"
+      },
+      {
+        "id": "no_empty_patches",
+        "description": "Each patch object must have at least one hunk or replacement entry.",
+        "action": "reject"
+      },
+      {
+        "id": "file_path_no_traversal",
+        "description": "File paths must not contain directory traversal sequences (..) to prevent sandbox escape.",
+        "pattern_must_not_match": "\\.\\.",
+        "field": "file_path",
+        "action": "reject"
+      }
+    ]
+  },
+
+  "identifier_vocabulary": {
+    "description": "Constrained vocabulary aligned with graph_manager.js schema types. When the model generates identifiers in structured JSON mode, token sampling is biased toward these known-valid values to prevent hallucinated node/edge type strings.",
+    "node_types": {
+      "valid": ["file", "function", "component", "schema", "endpoint", "state_variable"],
+      "source": "core-engine/data-map/graph_manager.js::NODE_TYPES"
+    },
+    "edge_types": {
+      "valid": ["structural_import", "data_flow_call", "schema_subscription", "property_read"],
+      "source": "core-engine/data-map/graph_manager.js::EDGE_TYPES"
+    },
+    "change_kinds": {
+      "valid": ["body_only", "signature_change", "schema_change"],
+      "source": "core-engine/data-map/graph_manager.js::CHANGE_KINDS"
+    }
+  },
+
+  "llama_cpp_integration": {
+    "description": "Configuration keys passed directly to the llama.cpp server via its API or CLI flags. The grammar field uses GBNF (Generalized Backus-Naur Form) natively supported by llama.cpp.",
+    "api_fields": {
+      "grammar": "Loaded from output_modes[output_mode].grammar when grammar_type is 'gbnf'.",
+      "json_schema": "Loaded from output_modes[output_mode].schema when grammar_type is 'json_schema'.",
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "top_k": 40,
+      "min_p": 0.05,
+      "repeat_penalty": 1.1,
+      "repeat_last_n": 256,
+      "n_predict": 4096,
+      "stop": ["\n\n\n", "```", "Sure,", "Here is", "Here's"]
+    },
+    "cli_flags": {
+      "--grammar-file": "Path to a .gbnf file extracted from this config.",
+      "--ctx-size": 8192,
+      "--flash-attn": true,
+      "--cont-batching": true,
+      "--mlock": true
+    }
+  }
+}
