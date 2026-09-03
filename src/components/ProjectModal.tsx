@@ -1,0 +1,226 @@
+/**
+ * ProjectModal.tsx — New Project Creation Modal
+ *
+ * Scaffolds new projects with production templates (FastAPI, Express, TypeScript, Minimal)
+ * into a real physical folder on disk.
+ */
+
+import React, { useState } from "react";
+import { FolderPlus, X, Server, Zap, Code2, Layers, FolderSearch } from "lucide-react";
+
+interface ProjectModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreateProject: (name: string, template: string, parentDir?: string) => void;
+  onPickFolder?: () => Promise<string | null>;
+}
+
+const TEMPLATES = [
+  {
+    id: "fastapi",
+    name: "Python FastAPI Service",
+    description: "High-performance async REST API with Pydantic schemas and Uvicorn server.",
+    icon: Zap,
+    files: ["main.py", "models.py", "requirements.txt"],
+  },
+  {
+    id: "express",
+    name: "Node.js / Express API",
+    description: "Lightweight JSON HTTP service with Express routing and package.json.",
+    icon: Server,
+    files: ["server.js", "package.json", "README.md"],
+  },
+  {
+    id: "typescript",
+    name: "TypeScript Microservice",
+    description: "Typed ESNext architecture with strict tsconfig and typed exports.",
+    icon: Code2,
+    files: ["src/index.ts", "tsconfig.json", "package.json"],
+  },
+  {
+    id: "minimal",
+    name: "Minimal Blank Starter",
+    description: "Barebones workspace with main.py entry point for custom builds.",
+    icon: Layers,
+    files: ["main.py", "README.md"],
+  },
+];
+
+export function ProjectModal({
+  isOpen,
+  onClose,
+  onCreateProject,
+  onPickFolder,
+}: ProjectModalProps) {
+  const [projectName, setProjectName] = useState("");
+  const [parentDir, setParentDir] = useState("~/AutonomousProjects");
+  const [selectedTemplate, setSelectedTemplate] = useState("fastapi");
+
+  if (!isOpen) return null;
+
+  const handleBrowse = async () => {
+    if (onPickFolder) {
+      const picked = await onPickFolder();
+      if (picked) {
+        setParentDir(picked);
+      }
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = projectName.trim().replace(/\s+/g, "-").toLowerCase();
+    if (!clean) return;
+    onCreateProject(clean, selectedTemplate, parentDir.trim());
+    setProjectName("");
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none">
+      <div className="w-full max-w-lg rounded-2xl bg-zinc-900 border border-zinc-700/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+              <FolderPlus className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-zinc-100">Create New Project on Disk</h2>
+              <p className="text-[11px] text-zinc-400">
+                Scaffold a new project in a real physical directory on your machine.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Modal Form */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Project Name Input */}
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-zinc-300">
+              Project Name
+            </label>
+            <input
+              autoFocus
+              type="text"
+              placeholder="e.g. user-auth-service"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500"
+            />
+          </div>
+
+          {/* Destination Folder Location */}
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-zinc-300">
+              Save Inside Directory
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="e.g. ~/Desktop or /Users/.../Projects"
+                value={parentDir}
+                onChange={(e) => setParentDir(e.target.value)}
+                className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500"
+              />
+              <button
+                type="button"
+                onClick={handleBrowse}
+                className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+              >
+                <FolderSearch className="w-3.5 h-3.5 text-sky-400" />
+                <span>Browse...</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Template Picker */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-zinc-300">
+              Select Architecture Template
+            </label>
+            <div className="grid grid-cols-1 gap-2">
+              {TEMPLATES.map((tmpl) => {
+                const isSelected = selectedTemplate === tmpl.id;
+                const Icon = tmpl.icon;
+                return (
+                  <div
+                    key={tmpl.id}
+                    onClick={() => setSelectedTemplate(tmpl.id)}
+                    className={`flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                      isSelected
+                        ? "bg-sky-500/10 border-sky-500/50 text-white shadow-sm"
+                        : "bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
+                  >
+                    <div
+                      className={`p-2 rounded-lg shrink-0 mt-0.5 ${
+                        isSelected
+                          ? "bg-sky-500 text-white"
+                          : "bg-zinc-800 text-zinc-400"
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-zinc-200">
+                          {tmpl.name}
+                        </span>
+                        <div className="flex gap-1">
+                          {tmpl.files.map((f) => (
+                            <span
+                              key={f}
+                              className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono"
+                            >
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5 leading-normal">
+                        {tmpl.description}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!projectName.trim()}
+              className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-lg transition-all ${
+                projectName.trim()
+                  ? "bg-sky-600 hover:bg-sky-500 cursor-pointer shadow-sky-600/20"
+                  : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+              }`}
+            >
+              Scaffold Real Files
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default ProjectModal;

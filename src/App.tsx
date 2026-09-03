@@ -1,40 +1,70 @@
 /**
- * App.tsx — Autonomous IDE Main Application Layout
+ * App.tsx — Autonomous Development Environment Desktop IDE
  *
- * Full desktop IDE interface combining:
- * 1. Status Bar: Offline status, host hardware load, thermal safety guards.
- * 2. Steering & Prompt Panel: User request prompt with presets and TradeOffSliders.
- * 3. Telemetry & Verification Panel: TelemetryScorecard with real-time gauntlet cards.
- * 4. Micro-Diff Inspector: Live visual review of generated unified diff hunks.
+ * Full developer-grade IDE layout integrating:
+ * 1. Titlebar: Native OS folder selector, "+ New Project" physical directory scaffolder, AI engine settings, host telemetry.
+ * 2. Activity Bar: Left icon strip toggling Explorer and Agent panels.
+ * 3. File Explorer: Recursive project tree with file creation, deletion, and physical path tracking.
+ * 4. Main Stage: Multi-tab code editor with line numbers and unified diff inspector.
+ * 5. Autonomous Agent Dock: Compact prompt steering with architectural sliders.
+ * 6. Gauntlet Drawer: Collapsible bottom console streaming live linter, test, and sandbox logs.
  */
 
 import { useState } from "react";
-import { TradeOffSliders } from "./components/TradeOffSliders";
-import { TelemetryScorecard } from "./components/TelemetryScorecard";
+import {
+  FolderCode,
+  FolderPlus,
+  FolderOpen,
+  Play,
+  GitCompare,
+  Code2,
+  Sliders,
+  Cpu,
+  Flame,
+  FileCheck2,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 import { usePipeline } from "./hooks/usePipeline";
+import { FileTree } from "./components/FileTree";
+import { CodeEditor } from "./components/CodeEditor";
+import { DiffViewer } from "./components/DiffViewer";
+import { ProjectModal } from "./components/ProjectModal";
+import { SettingsModal } from "./components/SettingsModal";
+import { GauntletDrawer } from "./components/GauntletDrawer";
+import { TradeOffSliders } from "./components/TradeOffSliders";
 
-const PRESET_PROMPTS = [
-  {
-    title: "High-Throughput Token Auth",
-    prompt:
-      "Create a high-performance token authentication module with in-memory token caching, rate-limiting, and timing-safe signature verification.",
-  },
-  {
-    title: "Transactional Order Processing",
-    prompt:
-      "Implement an atomic checkout pipeline with inventory decrementing, idempotent order ledger entries, and zero-loss rollback logic.",
-  },
-  {
-    title: "Lightweight Key-Value Storage",
-    prompt:
-      "Build an in-process key-value store with TTL expiration, thread-safe access locks, and snapshot persistence to disk.",
-  },
+const PRESETS = [
+  "Add rate-limiting middleware using token bucket",
+  "Implement transactional inventory checkout with rollback",
+  "Add JWT bearer authentication with TTL caching",
 ];
 
 export function App() {
-  const [customLanguage, setCustomLanguage] = useState("python");
-
   const {
+    activeProject,
+    projectFiles,
+    openTabs,
+    activeTabPath,
+    currentDiff,
+    touchedPaths,
+    isProjectModalOpen,
+    setIsProjectModalOpen,
+    isSettingsModalOpen,
+    setIsSettingsModalOpen,
+    aiSettings,
+    setAiSettings,
+    pickFolder,
+    openFolder,
+    openFile,
+    closeTab,
+    selectTab,
+    updateTabContent,
+    saveFile,
+    createFileOrFolder,
+    deleteFile,
+    createProject,
+    refreshProjectFiles,
     prompt,
     setPrompt,
     sliders,
@@ -44,212 +74,349 @@ export function App() {
     orchestrationResult,
     activityLog,
     systemMetrics,
-    activeTab,
-    setActiveTab,
+    activeCenterView,
+    setActiveCenterView,
     runPipeline,
     cancelPipeline,
-  } = usePipeline({ defaultLanguage: customLanguage });
+    clearLog,
+  } = usePipeline();
+
+  const [showExplorer, setShowExplorer] = useState(true);
+  const [showAgentDock, setShowAgentDock] = useState(true);
 
   const isRunning = status === "running";
 
-  const handlePresetClick = (presetText: string) => {
-    if (!isRunning) {
-      setPrompt(presetText);
+  const handleOpenFolder = async () => {
+    const picked = await pickFolder();
+    if (picked) {
+      await openFolder(picked);
     }
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100">
-      {/* ── Top Navigation Bar ────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-zinc-800/80 bg-zinc-900/60 backdrop-blur-md select-none">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100 select-none">
+      {/* ── Top IDE Titlebar ─────────────────────────────────────────────── */}
+      <header className="flex items-center justify-between px-4 h-11 border-b border-zinc-800 bg-zinc-900/90 shrink-0 text-xs">
+        {/* Brand & Project Selector */}
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center font-black text-white text-base shadow-lg shadow-sky-500/20">
-            A
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-bold tracking-tight text-zinc-100">
-                AUTONOMOUS IDE
-              </h1>
-              <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                100% Offline-First
-              </span>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center font-black text-white text-xs shadow-md">
+              A
             </div>
-            <p className="text-[11px] text-zinc-500">
-              Deterministic Verification Gates over Probabilistic AI Reasoning
-            </p>
+            <span className="font-bold tracking-tight text-zinc-200">
+              AUTONOMOUS IDE
+            </span>
+          </div>
+
+          <div className="w-px h-4 bg-zinc-800" />
+
+          {/* Active Project Dropdown, Open Folder, & Scaffold */}
+          <div className="flex items-center gap-1.5">
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-700/60 text-zinc-200 font-medium max-w-[200px]"
+              title={activeProject.path}
+            >
+              <FolderCode className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span className="truncate">{activeProject.name}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOpenFolder}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700/50 text-zinc-300 hover:text-white transition-colors"
+              title="Open any local directory on disk"
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-sky-400" />
+              <span>Open Folder...</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsProjectModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-800/80 hover:bg-zinc-750 border border-zinc-700/50 text-zinc-300 hover:text-white transition-colors"
+              title="Create new project on disk"
+            >
+              <FolderPlus className="w-3.5 h-3.5 text-emerald-400" />
+              <span>New Project</span>
+            </button>
           </div>
         </div>
 
-        {/* Right Host Hardware Telemetry */}
-        <div className="flex items-center gap-4 text-xs">
+        {/* Center Stage Switcher: Code Editor vs Micro-Diff */}
+        <div className="flex items-center p-0.5 rounded-lg bg-zinc-950 border border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setActiveCenterView("editor")}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              activeCenterView === "editor"
+                ? "bg-zinc-800 text-white shadow-sm"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            <Code2 className="w-3.5 h-3.5 text-sky-400" />
+            <span>Code Editor</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveCenterView("diff")}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              activeCenterView === "diff"
+                ? "bg-zinc-800 text-white shadow-sm"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            <GitCompare className="w-3.5 h-3.5 text-purple-400" />
+            <span>Micro-Diff Inspector</span>
+            {currentDiff && (
+              <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+            )}
+          </button>
+        </div>
+
+        {/* Right Hardware Telemetry & AI Settings */}
+        <div className="flex items-center gap-2.5">
+          {/* AI Provider Button */}
+          <button
+            type="button"
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-750 border border-zinc-700/70 text-zinc-300 hover:text-white transition-colors text-[11px]"
+            title="Configure AI Engine / LLM Provider"
+          >
+            <Settings className="w-3.5 h-3.5 text-zinc-400" />
+            <span className="font-semibold text-zinc-300">
+              {aiSettings.provider === "deterministic"
+                ? "Offline Synthesizer"
+                : aiSettings.provider === "ollama"
+                ? `Ollama (${aiSettings.model || "default"})`
+                : aiSettings.provider === "openai"
+                ? `Cloud (${aiSettings.model || "API"})`
+                : "llama.cpp"}
+            </span>
+          </button>
+
           {systemMetrics && (
-            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-zinc-800/60 border border-zinc-700/40">
-              <div className="flex items-center gap-1.5">
-                <span className="text-zinc-500">CPU</span>
-                <span
-                  className={`font-mono font-medium ${
-                    systemMetrics.cpu_usage_percent > 80
-                      ? "text-red-400"
-                      : "text-zinc-300"
-                  }`}
-                >
+            <div className="flex items-center gap-2.5 px-2.5 py-1 rounded-lg bg-zinc-800/80 border border-zinc-750 text-[11px]">
+              <div className="flex items-center gap-1">
+                <Cpu className="w-3 h-3 text-zinc-400" />
+                <span className="font-mono text-zinc-300">
                   {systemMetrics.cpu_usage_percent.toFixed(0)}%
                 </span>
               </div>
-              <div className="w-px h-3 bg-zinc-700" />
-              <div className="flex items-center gap-1.5">
-                <span className="text-zinc-500">RAM</span>
-                <span className="font-mono font-medium text-zinc-300">
+              <div className="w-px h-2.5 bg-zinc-700" />
+              <div className="flex items-center gap-1 font-mono text-zinc-300">
+                <span>
                   {systemMetrics.memory_used_mb > 1024
-                    ? `${(systemMetrics.memory_used_mb / 1024).toFixed(1)} GB`
-                    : `${systemMetrics.memory_used_mb.toFixed(0)} MB`}
+                    ? `${(systemMetrics.memory_used_mb / 1024).toFixed(1)}GB`
+                    : `${systemMetrics.memory_used_mb.toFixed(0)}MB`}
                 </span>
               </div>
               {systemMetrics.is_thermal_risk && (
-                <>
-                  <div className="w-px h-3 bg-zinc-700" />
-                  <span className="flex items-center gap-1 text-amber-400 font-medium animate-pulse">
-                    🔥 Hot
-                  </span>
-                </>
+                <span className="flex items-center gap-0.5 text-amber-400 font-bold animate-pulse">
+                  <Flame className="w-3 h-3" />
+                </span>
               )}
             </div>
           )}
-
-          {/* Navigation View Switcher */}
-          <div className="flex items-center p-0.5 rounded-lg bg-zinc-800/80 border border-zinc-700/50">
-            <button
-              onClick={() => setActiveTab("editor")}
-              className={`px-3 py-1 rounded-md font-medium text-xs transition-colors ${
-                activeTab === "editor"
-                  ? "bg-zinc-700 text-white shadow-sm"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              Control & Config
-            </button>
-            <button
-              onClick={() => setActiveTab("telemetry")}
-              className={`px-3 py-1 rounded-md font-medium text-xs transition-colors ${
-                activeTab === "telemetry"
-                  ? "bg-zinc-700 text-white shadow-sm"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              Performance Scorecard
-            </button>
-          </div>
         </div>
       </header>
 
-      {/* ── Main Workspace Body ───────────────────────────────────────────── */}
-      <main className="flex-1 flex overflow-hidden">
-        {activeTab === "editor" ? (
-          <>
-            {/* Left Column: Prompt Input & Trade-off Sliders */}
-            <div className="w-full flex flex-col border-r border-zinc-800 overflow-y-auto p-6 space-y-6">
-              {/* Prompt Section */}
-              <section className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="user-prompt"
-                    className="text-xs font-semibold uppercase tracking-wider text-zinc-400"
-                  >
-                    Code Generation Request
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <label
-                      htmlFor="target-language"
-                      className="text-xs text-zinc-500"
-                    >
-                      Target Language:
-                    </label>
-                    <select
-                      id="target-language"
-                      aria-label="Target language"
-                      value={customLanguage}
-                      onChange={(e) => setCustomLanguage(e.target.value)}
-                      disabled={isRunning}
-                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
-                    >
-                      <option value="python">Python</option>
-                      <option value="typescript">TypeScript</option>
-                      <option value="javascript">JavaScript</option>
-                    </select>
-                  </div>
-                </div>
+      {/* ── Main IDE Body ────────────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Activity Bar Strip */}
+        <aside className="w-12 bg-zinc-900 border-r border-zinc-800 flex flex-col items-center py-3 gap-3 shrink-0">
+          <button
+            type="button"
+            title="Toggle Explorer"
+            onClick={() => setShowExplorer(!showExplorer)}
+            className={`p-2 rounded-xl transition-all ${
+              showExplorer
+                ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <FolderCode className="w-5 h-5" />
+          </button>
 
+          <button
+            type="button"
+            title="Toggle Autonomous Agent Dock"
+            onClick={() => setShowAgentDock(!showAgentDock)}
+            className={`p-2 rounded-xl transition-all ${
+              showAgentDock
+                ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <Sliders className="w-5 h-5" />
+          </button>
+
+          <div className="flex-1" />
+
+          <button
+            type="button"
+            title="AI Engine Settings"
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="p-2 text-zinc-500 hover:text-zinc-300 rounded-xl transition-all"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        </aside>
+
+        {/* File Explorer Sidebar */}
+        {showExplorer && (
+          <FileTree
+            files={projectFiles}
+            activeFilePath={activeTabPath}
+            onSelectFile={openFile}
+            onCreateFile={createFileOrFolder}
+            onDeleteFile={deleteFile}
+            onRefresh={refreshProjectFiles}
+            onOpenFolder={handleOpenFolder}
+            projectName={activeProject.name}
+            projectPath={activeProject.path}
+            touchedPaths={touchedPaths}
+          />
+        )}
+
+        {/* Center Workspace & Bottom Gauntlet Drawer */}
+        <main className="flex-1 flex flex-col overflow-hidden bg-zinc-950">
+          {/* Main Stage: Editor or Diff Viewer */}
+          <div className="flex-1 overflow-hidden">
+            {activeCenterView === "editor" ? (
+              <CodeEditor
+                tabs={openTabs}
+                activeTabPath={activeTabPath}
+                onSelectTab={selectTab}
+                onCloseTab={closeTab}
+                onContentChange={updateTabContent}
+                onSaveFile={saveFile}
+              />
+            ) : (
+              <DiffViewer
+                diffText={currentDiff}
+                isVerified={status === "success"}
+              />
+            )}
+          </div>
+
+          {/* Bottom Gauntlet Drawer Console */}
+          <GauntletDrawer
+            activityLog={activityLog}
+            telemetry={telemetry}
+            orchestrationResult={orchestrationResult}
+            pipelineStatus={status}
+            systemMetrics={systemMetrics}
+            sliderScale={sliders.budget_vs_scale}
+            onClearLog={clearLog}
+          />
+        </main>
+
+        {/* Right Autonomous Agent Steering Dock */}
+        {showAgentDock && (
+          <aside className="w-80 border-l border-zinc-800 bg-zinc-900/95 flex flex-col h-full shrink-0 overflow-y-auto">
+            {/* Dock Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-950/40">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-bold text-zinc-200">
+                  Autonomous Code Agent
+                </span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono">
+                Self-Healing
+              </span>
+            </div>
+
+            {/* Prompt & Sliders Form */}
+            <div className="p-4 space-y-4 flex-1">
+              {/* Task Prompt Area */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-300">
+                  Feature / Refactor Task
+                </label>
                 <textarea
-                  id="user-prompt"
                   rows={4}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  disabled={isRunning}
-                  placeholder="Describe what you want to build (e.g., 'Build a fast JWT auth service with SQLite cache')..."
-                  className="w-full rounded-xl border border-zinc-700/60 bg-zinc-900/80 p-4 text-sm text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 focus:outline-none transition-colors"
+                  placeholder="Describe the feature or fix (e.g. 'Add sliding window token bucket rate limiter to protect public endpoints')..."
+                  className="w-full bg-zinc-950 border border-zinc-700/80 rounded-xl p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 resize-none font-sans"
                 />
+              </div>
 
-                {/* Presets */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-medium text-zinc-500">
-                    Quick Architectural Presets:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_PROMPTS.map((p, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => handlePresetClick(p.prompt)}
-                        disabled={isRunning}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800/60 border border-zinc-700/40 text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
-                      >
-                        ⚡ {p.title}
-                      </button>
-                    ))}
-                  </div>
+              {/* Quick Presets */}
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-semibold text-zinc-400">
+                  Quick Tasks:
                 </div>
-              </section>
+                <div className="flex flex-col gap-1">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPrompt(p)}
+                      className="text-left text-[11px] px-2.5 py-1.5 rounded-lg bg-zinc-950/60 hover:bg-zinc-800 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 transition-colors truncate"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-              {/* Trade-off Sliders Panel */}
-              <TradeOffSliders
-                initialConfig={sliders}
-                onChange={setSliders}
-                disabled={isRunning}
-              />
+              {/* Architectural Trade-Off Sliders (Compact) */}
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
+                <TradeOffSliders
+                  initialConfig={sliders}
+                  onChange={setSliders}
+                  compact={true}
+                />
+              </div>
 
-              {/* Action CTA */}
+              {/* Touched Files / Blast Radius */}
+              {touchedPaths.length > 0 && (
+                <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs space-y-1">
+                  <div className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1">
+                    <FileCheck2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Affected Blast Radius:</span>
+                  </div>
+                  {touchedPaths.map((p) => (
+                    <div key={p} className="text-[11px] font-mono text-zinc-300 truncate">
+                      • {p}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Action Trigger */}
               <div className="pt-2">
                 {!isRunning ? (
                   <button
                     type="button"
                     onClick={() => runPipeline()}
                     disabled={!prompt.trim()}
-                    className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm text-white shadow-xl transition-all flex items-center justify-center gap-2 ${
+                    className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
                       prompt.trim()
-                        ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-emerald-500 hover:opacity-95 hover:shadow-sky-500/25 cursor-pointer"
-                        : "bg-zinc-800 text-zinc-500 border border-zinc-700/40 cursor-not-allowed"
+                        ? "bg-gradient-to-r from-sky-500 to-emerald-500 hover:opacity-95 shadow-sky-500/20 cursor-pointer"
+                        : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                     }`}
                   >
-                    <span>🚀 Execute Autonomous Pipeline</span>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Execute & Verify</span>
                   </button>
                 ) : (
-                  <div className="flex gap-3">
+                  <div className="space-y-2">
                     <button
                       type="button"
                       disabled
-                      className="flex-1 py-3.5 px-4 rounded-xl font-bold text-sm bg-zinc-800 border border-zinc-700 text-sky-400 flex items-center justify-center gap-3 cursor-wait"
+                      className="w-full py-2.5 px-3 rounded-xl font-bold text-xs bg-zinc-800 border border-zinc-700 text-sky-400 flex items-center justify-center gap-2 cursor-wait"
                     >
-                      <span className="relative flex h-3 w-3">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
-                        <span className="relative inline-flex h-3 w-3 rounded-full bg-sky-500" />
-                      </span>
-                      Verification Gauntlet Running...
+                      <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+                      <span>Running Gauntlet...</span>
                     </button>
                     <button
                       type="button"
                       onClick={cancelPipeline}
-                      className="px-5 py-3.5 rounded-xl font-semibold text-sm bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors"
+                      className="w-full py-1.5 text-center text-xs font-semibold text-red-400 hover:underline"
                     >
                       Cancel
                     </button>
@@ -257,20 +424,24 @@ export function App() {
                 )}
               </div>
             </div>
-          </>
-        ) : (
-          <div className="w-full flex flex-col overflow-y-auto p-6 bg-zinc-950/50">
-            <TelemetryScorecard
-              telemetry={telemetry}
-              orchestrationResult={orchestrationResult}
-              pipelineStatus={status}
-              activityLog={activityLog}
-              systemMetrics={systemMetrics}
-              sliderScale={sliders.budget_vs_scale}
-            />
-          </div>
+          </aside>
         )}
-      </main>
+      </div>
+
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
+      <ProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => setIsProjectModalOpen(false)}
+        onCreateProject={createProject}
+        onPickFolder={pickFolder}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        settings={aiSettings}
+        onSave={setAiSettings}
+      />
     </div>
   );
 }

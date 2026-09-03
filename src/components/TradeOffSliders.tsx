@@ -2,11 +2,8 @@
  * TradeOffSliders.tsx — Visual Architectural Steering Panel
  *
  * Three reactive slider controls that let non-technical users steer the
- * system's code generation strategy via plain-English labels. Every slider
- * adjustment dispatches a unified SliderConfig payload back to the parent
- * controller, which passes it to the Tauri backend when the pipeline runs.
- *
- * Styling: Tailwind CSS utility classes — zero external component libraries.
+ * system's code generation strategy via plain-English labels.
+ * Supports standard mode and compact dockable mode for sidebar panels.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -33,6 +30,7 @@ interface TradeOffSlidersProps {
   initialConfig?: SliderConfig;
   onChange: (config: SliderConfig) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 // ── Slider Definitions ──────────────────────────────────────────────────────
@@ -57,10 +55,10 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         color: "text-sky-400",
       },
       high: {
-        name: "Enterprise · Scaled Cluster",
+        name: "Enterprise · Distributed",
         detail:
-          "Distributed database with read replicas and caching layers. 50,000+ users. Hosting $100+/mo.",
-        color: "text-violet-400",
+          "Horizontal sharding, read replicas, Redis caching. 100,000+ users with failover. Hosting $200+/mo.",
+        color: "text-purple-400",
       },
     },
   },
@@ -71,10 +69,10 @@ const SLIDER_DEFS: SliderDescriptor[] = [
     icon: "⚡",
     labels: {
       low: {
-        name: "Relaxed · Eventual Consistency",
+        name: "Rapid · Eventual Consistency",
         detail:
-          "WebSocket push with optimistic updates. Fastest perceived speed, but brief data staleness possible.",
-        color: "text-emerald-400",
+          "Optimistic updates with background reconciliation. Max throughput, non-blocking writes.",
+        color: "text-amber-400",
       },
       medium: {
         name: "Balanced · Confirmed Writes",
@@ -83,10 +81,10 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         color: "text-sky-400",
       },
       high: {
-        name: "Strict · ACID Transactions",
+        name: "Bulletproof · Strict ACID",
         detail:
-          "Synchronous database commits with full ACID guarantees. Highest data integrity, higher latency.",
-        color: "text-violet-400",
+          "Full distributed locking, two-phase commits. Zero data loss guarantee for financial/audit workloads.",
+        color: "text-emerald-400",
       },
     },
   },
@@ -94,13 +92,13 @@ const SLIDER_DEFS: SliderDescriptor[] = [
     id: "simplicity_vs_futureproof",
     title: "System Modularity",
     subtitle: "How decoupled should the generated architecture be?",
-    icon: "🧱",
+    icon: "📦",
     labels: {
       low: {
-        name: "Streamlined · Monolith",
+        name: "Simple · Monolith",
         detail:
-          "Single deployable unit. Fastest to ship, easiest to debug. Best for small teams and MVPs.",
-        color: "text-emerald-400",
+          "Single deployable unit. Direct function calls, shared memory. Fastest to build and debug.",
+        color: "text-zinc-300",
       },
       medium: {
         name: "Balanced · Layered Modules",
@@ -109,18 +107,16 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         color: "text-sky-400",
       },
       high: {
-        name: "Future-Proof · Decoupled Services",
+        name: "Decoupled · Micro-Services",
         detail:
-          "Independent sub-modules with defined API contracts. Ready for team scaling and independent deployment.",
-        color: "text-violet-400",
+          "Independent services with gRPC / REST contracts. Maximum team scale, higher ops complexity.",
+        color: "text-purple-400",
       },
     },
   },
 ];
 
 const LEVELS: SliderLevel[] = ["low", "medium", "high"];
-
-// ── Utility ─────────────────────────────────────────────────────────────────
 
 function levelToIndex(level: SliderLevel): number {
   return LEVELS.indexOf(level);
@@ -130,54 +126,76 @@ function indexToLevel(index: number): SliderLevel {
   return LEVELS[Math.max(0, Math.min(index, 2))];
 }
 
-// ── Individual Slider ───────────────────────────────────────────────────────
-
-interface SingleSliderProps {
-  descriptor: SliderDescriptor;
-  value: SliderLevel;
-  onValueChange: (id: keyof SliderConfig, value: SliderLevel) => void;
-  disabled: boolean;
-}
+// ── Single Slider Row ───────────────────────────────────────────────────────
 
 function SingleSlider({
   descriptor,
   value,
   onValueChange,
   disabled,
-}: SingleSliderProps) {
+  compact = false,
+}: {
+  descriptor: SliderDescriptor;
+  value: SliderLevel;
+  onValueChange: (id: keyof SliderConfig, value: SliderLevel) => void;
+  disabled: boolean;
+  compact?: boolean;
+}) {
   const currentLabel = descriptor.labels[value];
   const index = levelToIndex(value);
 
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const newLevel = indexToLevel(parseInt(e.target.value, 10));
-      onValueChange(descriptor.id, newLevel);
-    },
-    [descriptor.id, onValueChange]
-  );
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newLevel = indexToLevel(parseInt(e.target.value, 10));
+    onValueChange(descriptor.id, newLevel);
+  };
 
-  // Track color for the filled portion of the slider
   const fillPercent = (index / 2) * 100;
   const trackGradient = disabled
     ? "from-zinc-600 to-zinc-600"
     : "from-emerald-500 via-sky-500 to-violet-500";
 
+  if (compact) {
+    return (
+      <div className="space-y-1.5 p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold text-zinc-300 truncate">
+            {descriptor.icon} {descriptor.title.split(" vs")[0]}
+          </span>
+          <span className={`text-[11px] font-bold ${currentLabel.color}`}>
+            {currentLabel.name.split("·")[0].trim()}
+          </span>
+        </div>
+        <input
+          type="range"
+          aria-label={descriptor.title}
+          min={0}
+          max={2}
+          step={1}
+          value={index}
+          onChange={handleChange}
+          disabled={disabled}
+          className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500 disabled:opacity-40"
+        />
+        <div className="text-[10px] text-zinc-400 truncate leading-tight">
+          {currentLabel.detail}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`
-        rounded-2xl border border-zinc-700/50 bg-zinc-800/60 p-6
+        rounded-2xl border border-zinc-700/50 bg-zinc-800/60 p-5
         backdrop-blur-sm transition-all duration-200
-        ${disabled ? "opacity-50 pointer-events-none" : "hover:border-zinc-600/70 hover:bg-zinc-800/80"}
+        ${disabled ? "opacity-50 pointer-events-none" : "hover:border-zinc-600/70"}
       `}
     >
-      {/* Header */}
-      <div className="mb-4 flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xl" role="img" aria-label={descriptor.title}>
-              {descriptor.icon}
-            </span>
-            <h3 className="text-sm font-semibold text-zinc-200 tracking-wide uppercase">
+      <div className="mb-3 flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-lg">{descriptor.icon}</span>
+            <h3 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide">
               {descriptor.title}
             </h3>
           </div>
@@ -185,15 +203,13 @@ function SingleSlider({
         </div>
       </div>
 
-      {/* Slider Track */}
-      <div className="relative mb-4">
+      <div className="relative mb-3">
         <div className="relative h-2 rounded-full bg-zinc-700/80 overflow-hidden">
           <div
             className={`absolute inset-y-0 left-0 rounded-full bg-gradient-to-r ${trackGradient} transition-all duration-300`}
             style={{ width: `${fillPercent}%` }}
           />
         </div>
-
         <input
           type="range"
           min={0}
@@ -202,52 +218,20 @@ function SingleSlider({
           value={index}
           onChange={handleChange}
           disabled={disabled}
-          aria-label={descriptor.title}
-          aria-valuetext={currentLabel.name}
-          className={`
-            absolute inset-0 w-full h-2 appearance-none bg-transparent cursor-pointer
-            [&::-webkit-slider-thumb]:appearance-none
-            [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
-            [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white
-            [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-black/30
-            [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-zinc-400
-            [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:duration-150
-            [&::-webkit-slider-thumb]:hover:scale-125
-            [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:h-5
-            [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white
-            [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-zinc-400
-          `}
+          className="w-full h-2 appearance-none bg-transparent cursor-pointer accent-white absolute inset-0 disabled:opacity-40"
         />
-
-        {/* Tick marks */}
-        <div className="flex justify-between mt-2 px-0.5">
-          {LEVELS.map((level) => (
-            <button
-              key={level}
-              onClick={() => onValueChange(descriptor.id, level)}
-              disabled={disabled}
-              className={`
-                text-[10px] font-medium transition-colors duration-200 hover:text-zinc-300
-                ${level === value ? "text-zinc-200" : "text-zinc-600"}
-              `}
-            >
-              {level.charAt(0).toUpperCase() + level.slice(1)}
-            </button>
-          ))}
+        <div className="flex justify-between text-[10px] text-zinc-500 mt-1 font-mono">
+          <span>Low</span>
+          <span>Medium</span>
+          <span>High</span>
         </div>
       </div>
 
-      {/* Active Label Card */}
-      <div
-        className={`
-          rounded-xl border border-zinc-700/40 bg-zinc-900/50 px-4 py-3
-          transition-all duration-300
-        `}
-      >
-        <div className={`text-sm font-semibold ${currentLabel.color} mb-1`}>
+      <div className="rounded-xl border border-zinc-700/40 bg-zinc-900/50 px-3.5 py-2.5">
+        <div className={`text-xs font-semibold ${currentLabel.color} mb-0.5`}>
           {currentLabel.name}
         </div>
-        <p className="text-xs text-zinc-400 leading-relaxed">
+        <p className="text-[11px] text-zinc-400 leading-relaxed">
           {currentLabel.detail}
         </p>
       </div>
@@ -267,12 +251,12 @@ export function TradeOffSliders({
   initialConfig,
   onChange,
   disabled = false,
+  compact = false,
 }: TradeOffSlidersProps) {
   const [config, setConfig] = useState<SliderConfig>(
     initialConfig ?? DEFAULT_CONFIG
   );
 
-  // Debounce timer to batch rapid slider adjustments into a single dispatch
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSliderChange = useCallback(
@@ -285,7 +269,6 @@ export function TradeOffSliders({
     []
   );
 
-  // Dispatch unified payload when config stabilizes (150ms debounce)
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -301,15 +284,31 @@ export function TradeOffSliders({
     };
   }, [config, onChange]);
 
+  if (compact) {
+    return (
+      <div className="space-y-2">
+        {SLIDER_DEFS.map((descriptor) => (
+          <SingleSlider
+            key={descriptor.id}
+            descriptor={descriptor}
+            value={config[descriptor.id]}
+            onValueChange={handleSliderChange}
+            disabled={disabled}
+            compact={true}
+          />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <section aria-label="Trade-off Configuration" className="w-full">
-      <div className="mb-6">
+      <div className="mb-5">
         <h2 className="text-lg font-bold text-zinc-100 tracking-tight">
           System Configuration
         </h2>
-        <p className="text-sm text-zinc-500 mt-1">
+        <p className="text-xs text-zinc-500 mt-0.5">
           Adjust these sliders to shape the architecture of the generated code.
-          Changes are applied automatically.
         </p>
       </div>
 
@@ -321,15 +320,17 @@ export function TradeOffSliders({
             value={config[descriptor.id]}
             onValueChange={handleSliderChange}
             disabled={disabled}
+            compact={false}
           />
         ))}
       </div>
 
-      {/* Active Configuration Summary */}
       <div className="mt-4 rounded-xl border border-zinc-700/30 bg-zinc-900/40 px-4 py-3">
         <div className="flex items-center gap-2 mb-2">
           <div
-            className={`w-2 h-2 rounded-full ${disabled ? "bg-zinc-600" : "bg-emerald-400 animate-pulse"}`}
+            className={`w-2 h-2 rounded-full ${
+              disabled ? "bg-zinc-600" : "bg-emerald-400 animate-pulse"
+            }`}
           />
           <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
             Active Profile

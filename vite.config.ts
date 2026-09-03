@@ -1,22 +1,19 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { realFilesystemPlugin } from "./vite-fs-bridge";
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
-  plugins: [react()],
+export default defineConfig(async ({ command }) => ({
+  plugins: [react(), ...(command === "serve" ? [realFilesystemPlugin()] : [])],
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent vite from obscuring rust errors
+  // Vite options tailored for development and Tauri desktop integration
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 5173,
     strictPort: true,
-    host: true,
+    host: "127.0.0.1",
     watch: {
-      // 3. tell vite to ignore watching `src-tauri`
-      ignored: ["**/.tauri/**", "**/core-engine/**"],
+      ignored: ["**/.tauri/**", "**/core-engine/**", "**/projects/**"],
     },
   },
 }));
