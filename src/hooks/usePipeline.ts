@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { SliderConfig } from "../components/TradeOffSliders";
 import type { FileNode } from "../components/FileTree";
-import type { OpenFileTab } from "../components/CodeEditor";
+import type { OpenFileTab } from "../types/workbench";
 import type { AISettings } from "../components/SettingsModal";
 import type {
   TelemetryData,
@@ -34,6 +34,8 @@ export interface UsePipelineReturn {
   openTabs: OpenFileTab[];
   activeTabPath: string | null;
   currentDiff: string;
+  setCurrentDiff: (diff: string) => void;
+  applyPatchToTab: (path: string, newContent: string) => void;
   touchedPaths: string[];
   isProjectModalOpen: boolean;
   setIsProjectModalOpen: (open: boolean) => void;
@@ -94,19 +96,35 @@ export function usePipeline(): UsePipelineReturn {
   // AI settings
   const [aiSettings, setAiSettingsState] = useState<AISettings>(() => {
     try {
-      const saved = localStorage.getItem("aide_ai_settings");
+      const saved =
+        localStorage.getItem("aide_ai_settings") ||
+        localStorage.getItem("ide_ai_settings");
       if (!saved) return DEFAULT_AI_SETTINGS;
       const parsed = JSON.parse(saved);
-      return { ...DEFAULT_AI_SETTINGS, ...parsed, apiKey: "" };
+      if (parsed && typeof parsed === "object") {
+        return {
+          provider: parsed.provider || DEFAULT_AI_SETTINGS.provider,
+          model: parsed.model || DEFAULT_AI_SETTINGS.model,
+          apiKey: parsed.apiKey || DEFAULT_AI_SETTINGS.apiKey,
+          baseUrl: parsed.baseUrl || DEFAULT_AI_SETTINGS.baseUrl,
+        };
+      }
+      return DEFAULT_AI_SETTINGS;
     } catch {
       return DEFAULT_AI_SETTINGS;
     }
   });
 
   const setAiSettings = (newSettings: AISettings) => {
-    setAiSettingsState(newSettings);
+    const safeSettings: AISettings = {
+      provider: newSettings?.provider || DEFAULT_AI_SETTINGS.provider,
+      model: newSettings?.model || "",
+      apiKey: newSettings?.apiKey || "",
+      baseUrl: newSettings?.baseUrl || "",
+    };
+    setAiSettingsState(safeSettings);
     try {
-      const { provider, model, baseUrl } = newSettings;
+      const { provider, model, baseUrl } = safeSettings;
       localStorage.setItem("aide_ai_settings", JSON.stringify({ provider, model, baseUrl }));
     } catch {}
   };
@@ -115,9 +133,13 @@ export function usePipeline(): UsePipelineReturn {
   const [activeProject, setActiveProjectState] = useState<ProjectMeta>(() => {
     try {
       const saved = localStorage.getItem("aide_active_project");
-      return saved
-        ? JSON.parse(saved)
-        : { name: "acsa-code", path: "." };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.path && parsed.path !== "." && parsed.path !== "./") {
+          return parsed;
+        }
+      }
+      return { name: "acsa-code", path: "." };
     } catch {
       return { name: "acsa-code", path: "." };
     }
@@ -172,6 +194,13 @@ export function usePipeline(): UsePipelineReturn {
         if (res.ok) {
           const data = await res.json();
           setProjectFiles(data.nodes || []);
+          if (data.resolvedPath && (activeProject.path === "." || activeProject.path === "./")) {
+            const folderName = data.resolvedPath.split("/").filter(Boolean).pop() || activeProject.name;
+            setActiveProject({
+              name: folderName,
+              path: data.resolvedPath,
+            });
+          }
         }
       } catch (err) {
         console.warn("Vite FS list failed:", err);
@@ -218,6 +247,7 @@ export function usePipeline(): UsePipelineReturn {
       setActiveProject({ name: folderName, path: cleanPath });
       setOpenTabs([]);
       setActiveTabPath(null);
+      setCurrentDiff("");
     },
     []
   );
@@ -312,6 +342,22 @@ export function usePipeline(): UsePipelineReturn {
     );
   }, []);
 
+  const applyPatchToTab = useCallback((path: string, newContent: string) => {
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.path === path) {
+          return {
+            ...tab,
+            content: newContent,
+            originalContent: newContent,
+            isDirty: false,
+          };
+        }
+        return tab;
+      })
+    );
+  }, []);
+
   const saveFile = useCallback(
     async (path: string) => {
       const tab = openTabs.find((t) => t.path === path);
@@ -359,7 +405,15 @@ export function usePipeline(): UsePipelineReturn {
 
   const createFileOrFolder = useCallback(
     async (parentPath: string, name: string, isDir: boolean) => {
-      const targetPath = parentPath ? `${parentPath}/${name}` : `${activeProject.path}/${name}`;
+      const cleanName = name.trim().replace(/^[/\\]+/, "");
+      if (!cleanName) return;
+
+      let targetPath: string;
+      if (parentPath && parentPath !== activeProject.path) {
+        targetPath = `${parentPath}/${cleanName}`;
+      } else {
+        targetPath = `${activeProject.path}/${cleanName}`;
+      }
 
       if (isTauriAvailable) {
         try {
@@ -370,23 +424,44 @@ export function usePipeline(): UsePipelineReturn {
             projectRoot: activeProject.path,
           });
           await refreshProjectFiles();
+          if (!isDir) {
+            openFile({
+              name: cleanName.split("/").pop() || cleanName,
+              path: targetPath,
+              is_dir: false,
+              size_bytes: 0,
+            });
+          }
         } catch (err) {
           alert(`Failed to create: ${err}`);
         }
       } else {
         try {
-          await fetch("/api/fs/create", {
+          const res = await fetch("/api/fs/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ itemPath: targetPath, isDir, projectRoot: activeProject.path }),
           });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert(`Failed to create: ${data?.error || res.statusText}`);
+            return;
+          }
           await refreshProjectFiles();
+          if (!isDir) {
+            openFile({
+              name: cleanName.split("/").pop() || cleanName,
+              path: data.path || targetPath,
+              is_dir: false,
+              size_bytes: 0,
+            });
+          }
         } catch (err) {
           alert(`Failed to create: ${err}`);
         }
       }
     },
-    [isTauriAvailable, activeProject.path, refreshProjectFiles]
+    [isTauriAvailable, activeProject.path, refreshProjectFiles, openFile]
   );
 
   const deleteFile = useCallback(
@@ -433,6 +508,7 @@ export function usePipeline(): UsePipelineReturn {
           setActiveProject({ name, path: createdPath });
           setOpenTabs([]);
           setActiveTabPath(null);
+          setCurrentDiff("");
         } catch (err) {
           alert(`Scaffold failed: ${err}`);
         }
@@ -448,6 +524,7 @@ export function usePipeline(): UsePipelineReturn {
             setActiveProject({ name: data.name, path: data.projectPath });
             setOpenTabs([]);
             setActiveTabPath(null);
+            setCurrentDiff("");
           }
         } catch (err) {
           alert(`Scaffold failed: ${err}`);
@@ -642,6 +719,8 @@ export function usePipeline(): UsePipelineReturn {
     openTabs,
     activeTabPath,
     currentDiff,
+    setCurrentDiff,
+    applyPatchToTab,
     touchedPaths,
     isProjectModalOpen,
     setIsProjectModalOpen,

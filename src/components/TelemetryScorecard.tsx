@@ -57,6 +57,7 @@ export interface PipelineOutputLine {
 
 /** System metrics from Tauri's fetch_system_metrics command */
 export interface SystemMetrics {
+  cpu_count?: number;
   cpu_usage_percent: number;
   memory_used_mb: number;
   memory_total_mb: number;

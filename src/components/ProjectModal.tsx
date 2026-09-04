@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from "react";
-import { FolderPlus, X, Server, Zap, Code2, Layers, FolderSearch } from "lucide-react";
+import { FolderPlus, X, Server, Zap, Globe, Atom, Box, Database, FolderSearch } from "lucide-react";
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -17,32 +17,52 @@ interface ProjectModalProps {
 
 const TEMPLATES = [
   {
+    id: "nextjs",
+    name: "Next.js 15 App Router",
+    description: "Production fullstack React 19 app with TypeScript, Tailwind CSS, App Directory, and server components.",
+    icon: Globe,
+    badge: "Fullstack",
+    files: ["app/page.tsx", "app/layout.tsx", "package.json"],
+  },
+  {
+    id: "vite-react",
+    name: "Vite React + TypeScript",
+    description: "Ultra-fast frontend SPA with React 18, strict TypeScript, Tailwind CSS, and lightning HMR.",
+    icon: Atom,
+    badge: "Frontend",
+    files: ["src/App.tsx", "vite.config.ts", "package.json"],
+  },
+  {
+    id: "nestjs",
+    name: "NestJS TypeScript API",
+    description: "Enterprise modular TypeScript backend with controllers, services, Nest CLI configs, and REST routing.",
+    icon: Box,
+    badge: "Backend",
+    files: ["src/main.ts", "src/app.module.ts", "nest-cli.json"],
+  },
+  {
+    id: "supabase",
+    name: "Supabase Fullstack Starter",
+    description: "Express backend pre-configured with @supabase/supabase-js client, auth endpoints, and .env.example.",
+    icon: Database,
+    badge: "BaaS",
+    files: ["src/server.js", "src/supabaseClient.js", ".env.example"],
+  },
+  {
     id: "fastapi",
     name: "Python FastAPI Service",
-    description: "High-performance async REST API with Pydantic schemas and Uvicorn server.",
+    description: "High-performance async REST API with Pydantic schemas, Uvicorn ASGI server, and requirements.txt.",
     icon: Zap,
+    badge: "Python",
     files: ["main.py", "models.py", "requirements.txt"],
   },
   {
     id: "express",
-    name: "Node.js / Express API",
-    description: "Lightweight JSON HTTP service with Express routing and package.json.",
+    name: "Node.js / Express REST API",
+    description: "Lightweight JSON HTTP microservice with Express routing, middleware, CORS, and package.json.",
     icon: Server,
+    badge: "Node.js",
     files: ["server.js", "package.json", "README.md"],
-  },
-  {
-    id: "typescript",
-    name: "TypeScript Microservice",
-    description: "Typed ESNext architecture with strict tsconfig and typed exports.",
-    icon: Code2,
-    files: ["src/index.ts", "tsconfig.json", "package.json"],
-  },
-  {
-    id: "minimal",
-    name: "Minimal Blank Starter",
-    description: "Barebones workspace with main.py entry point for custom builds.",
-    icon: Layers,
-    files: ["main.py", "README.md"],
   },
 ];
 
@@ -54,7 +74,7 @@ export function ProjectModal({
 }: ProjectModalProps) {
   const [projectName, setProjectName] = useState("");
   const [parentDir, setParentDir] = useState("~/AutonomousProjects");
-  const [selectedTemplate, setSelectedTemplate] = useState("fastapi");
+  const [selectedTemplate, setSelectedTemplate] = useState("nextjs");
 
   if (!isOpen) return null;
 

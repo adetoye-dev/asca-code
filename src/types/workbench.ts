@@ -1,0 +1,92 @@
+/**
+ * workbench.ts — Unified Workbench Types for Autonomous IDE
+ */
+
+import type { FileNode } from "../components/FileTree";
+import type { SystemMetrics } from "../components/TelemetryScorecard";
+
+export type { FileNode, SystemMetrics };
+
+export interface OpenFileTab {
+  path: string;
+  name: string;
+  content: string;
+  originalContent: string;
+  isDirty: boolean;
+}
+
+export interface SecurityStatus {
+  passed: boolean;
+  checks: {
+    name: string;
+    status: "pass" | "fail" | "warn";
+    message: string;
+  }[];
+}
+
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  displayName: string;
+  publisher: string;
+  version: string;
+  description: string;
+  iconUrl?: string;
+  downloadCount: number;
+  installed: boolean;
+  category: "Theme" | "Language" | "Linter" | "AI" | "Other";
+  themeData?: any;
+}
+
+export type AIProviderId =
+  | "deterministic"
+  | "ollama"
+  | "llamacpp"
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "groq"
+  | "mistral"
+  | "deepseek"
+  | "xai"
+  | "moonshot";
+
+export interface AIProviderConfig {
+  id: AIProviderId;
+  name: string;
+  category: "local" | "cloud";
+  isConnected: boolean;
+  isDefault: boolean;
+  apiKey: string;
+  baseUrl: string;
+  selectedModel: string;
+  availableModels: string[];
+  speedBadge?: "Fast" | "Medium" | "Thinking" | "Offline";
+  latencyMs?: number;
+}
+
+export interface StorageCategory {
+  id: string;
+  name: string;
+  objects: number;
+  sizeMb: number;
+  reclaimableMb: number;
+}
+
+export interface StorageMetrics {
+  totalGb: number;
+  freeGb: number;
+  usedGb: number;
+  usedPercent: number;
+  buildArtifactsMb: number;
+  cacheReclaimableMb: number;
+  categories: StorageCategory[];
+}
+
+export interface RunningProcessItem {
+  pid: number;
+  name: string;
+  cpuPercent: number;
+  memoryMb: number;
+  status: string;
+}
