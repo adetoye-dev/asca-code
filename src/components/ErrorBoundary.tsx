@@ -1,5 +1,5 @@
 /**
- * ErrorBoundary.tsx — Robust React Error Boundary for Autonomous IDE
+ * ErrorBoundary.tsx — Robust React Error Boundary for ACSA Code
  *
  * Prevents unhandled render errors from unmounting the React tree into a blank screen.
  * Displays an authentic IDE error dialog with stack trace and recovery actions.
@@ -34,7 +34,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("[Autonomous IDE ErrorBoundary Caught Error]:", error, errorInfo);
+    console.error("[ACSA Code ErrorBoundary Caught Error]:", error, errorInfo);
     this.setState({ errorInfo });
   }
 

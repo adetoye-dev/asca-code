@@ -1,7 +1,7 @@
 """
 manager.py — The System Orchestrator
 
-Central orchestration brain of the Autonomous IDE backend. Implements the
+Central orchestration brain of the ACSA Code backend. Implements the
 single-agent self-healing loop: accepts a user prompt, requests a code patch
 from the local sidecar LLM, runs the generated draft through the deterministic
 verification gauntlet (syntax gate → performance gate), and recursively

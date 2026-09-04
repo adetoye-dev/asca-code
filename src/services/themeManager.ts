@@ -1,5 +1,5 @@
 /**
- * themeManager.ts — Dynamic VS Code Theme Engine for Autonomous IDE
+ * themeManager.ts — Dynamic VS Code Theme Engine for ACSA Code
  *
  * Provides built-in authentic VS Code themes (Dracula, One Dark Pro, GitHub Dark,
  * Catppuccin Mocha, and VS Code Dark+), injecting CSS variables across the entire

@@ -1,5 +1,5 @@
 /**
- * IdeLayout.tsx — Production VS Code Workbench Layout for Autonomous IDE
+ * IdeLayout.tsx — Production VS Code Workbench Layout for ACSA Code
  *
  * Full developer-grade layout integrating:
  * 1. Titlebar: Project picker, Quick Open file search bar, Layout toggles (Sidebar/Panel), Theme picker, Telemetry.
@@ -774,7 +774,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <div className="flex items-center gap-2 pr-1">
             <IdeBrandLogo className="w-5 h-5 shrink-0" />
             <span className="font-semibold tracking-tight text-zinc-100 text-[13px] flex items-center gap-1 font-sans">
-              Autonomous <span className="text-sky-400 font-mono text-[11px] font-normal">&lt;IDE/&gt;</span>
+              ACSA <span className="text-sky-400 font-medium">Code</span>
             </span>
           </div>
 

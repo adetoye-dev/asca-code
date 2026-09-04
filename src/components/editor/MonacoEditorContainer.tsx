@@ -1,5 +1,5 @@
 /**
- * MonacoEditorContainer.tsx — Real Monaco Editor Component for Autonomous IDE
+ * MonacoEditorContainer.tsx — Real Monaco Editor Component for ACSA Code
  *
  * Integrates @monaco-editor/react with:
  * 1. Syntax highlighting & TextMate tokenization for all major languages.

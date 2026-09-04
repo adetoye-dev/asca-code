@@ -1,5 +1,5 @@
 /**
- * App.tsx — Autonomous Development Environment Desktop IDE
+ * App.tsx — ACSA Code Desktop IDE
  *
  * Mounts the complete VS Code workbench layout (IdeLayout) powered by
  * DockviewReact, Monaco Editor with Copilot ghost text autocomplete,
@@ -13,7 +13,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 export function App() {
   const pipeline = usePipeline();
   return (
-    <ErrorBoundary fallbackTitle="Autonomous IDE Workbench Error">
+    <ErrorBoundary fallbackTitle="ACSA Code Workbench Error">
       <IdeLayout {...pipeline} />
     </ErrorBoundary>
   );

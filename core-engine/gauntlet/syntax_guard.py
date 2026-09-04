@@ -821,7 +821,7 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Syntax Guard — Deterministic linter gate for the Autonomous IDE",
+        description="Syntax Guard — Deterministic linter gate for ACSA Code",
     )
     parser.add_argument(
         "targets",

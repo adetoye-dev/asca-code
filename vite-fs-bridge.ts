@@ -697,7 +697,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/git/commit" && req.method === "POST") {
             const body = await parseJsonBody(req);
             const targetCwd = resolveProjectRoot(body.cwd || process.cwd());
-            const message = body.message || "Commit from Autonomous IDE";
+            const message = body.message || "Commit from ACSA Code";
             const stageAll = !!body.stageAll;
 
             const commit = () => execFile("git", ["commit", "-m", message], { cwd: targetCwd }, (err, stdout, stderr) => {
@@ -1194,7 +1194,7 @@ export function realFilesystemPlugin(): Plugin {
 
               fs.writeFileSync(
                 path.join(appDir, "layout.tsx"),
-                `import type { Metadata } from "next";\nimport "./globals.css";\n\nexport const metadata: Metadata = {\n  title: "${name} - Next.js 15 App",\n  description: "Scaffolded with Autonomous IDE",\n};\n\nexport default function RootLayout({\n  children,\n}: {\n  children: React.ReactNode;\n}) {\n  return (\n    <html lang="en">\n      <body className="antialiased min-h-screen bg-zinc-950 text-zinc-100 font-sans">\n        {children}\n      </body>\n    </html>\n  );\n}\n`,
+                `import type { Metadata } from "next";\nimport "./globals.css";\n\nexport const metadata: Metadata = {\n  title: "${name} - Next.js 15 App",\n  description: "Scaffolded with ACSA Code",\n};\n\nexport default function RootLayout({\n  children,\n}: {\n  children: React.ReactNode;\n}) {\n  return (\n    <html lang="en">\n      <body className="antialiased min-h-screen bg-zinc-950 text-zinc-100 font-sans">\n        {children}\n      </body>\n    </html>\n  );\n}\n`,
                 "utf-8"
               );
 
@@ -1218,7 +1218,7 @@ export function realFilesystemPlugin(): Plugin {
 
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nProduction [Next.js 15](https://nextjs.org/) App Router project scaffolded by Autonomous IDE.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nOpen [http://localhost:3000](http://localhost:3000) with your browser to see the result.\n`,
+                `# ${name}\n\nProduction [Next.js 15](https://nextjs.org/) App Router project scaffolded by ACSA Code.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nOpen [http://localhost:3000](http://localhost:3000) with your browser to see the result.\n`,
                 "utf-8"
               );
             } else if (template === "vite-react") {
@@ -1231,7 +1231,7 @@ export function realFilesystemPlugin(): Plugin {
                   {
                     name,
                     private: true,
-                    version: "0.1.0",
+                    version: "0.0.0",
                     type: "module",
                     scripts: {
                       dev: "vite",
@@ -1239,19 +1239,20 @@ export function realFilesystemPlugin(): Plugin {
                       preview: "vite preview",
                     },
                     dependencies: {
-                      react: "^18.3.1",
-                      "react-dom": "^18.3.1",
-                      "lucide-react": "^0.468.0",
+                      react: "^19.0.0",
+                      "react-dom": "^19.0.0",
+                      "lucide-react": "^0.475.0",
+                      clsx: "^2.1.1",
                     },
                     devDependencies: {
-                      "@types/react": "^18.3.12",
-                      "@types/react-dom": "^18.3.1",
+                      "@types/react": "^19.0.0",
+                      "@types/react-dom": "^19.0.0",
                       "@vitejs/plugin-react": "^4.3.4",
+                      typescript: "~5.7.2",
+                      vite: "^6.1.0",
+                      tailwindcss: "^3.4.17",
+                      postcss: "^8.5.1",
                       autoprefixer: "^10.4.20",
-                      postcss: "^8.4.49",
-                      tailwindcss: "^3.4.16",
-                      typescript: "~5.6.2",
-                      vite: "^6.0.1",
                     },
                   },
                   null,
@@ -1261,8 +1262,32 @@ export function realFilesystemPlugin(): Plugin {
               );
 
               fs.writeFileSync(
+                path.join(srcDir, "App.tsx"),
+                `import { useState } from 'react';\n\nexport function App() {\n  const [count, setCount] = useState(0);\n  return (\n    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center p-8 text-center">\n      <h1 className="text-4xl font-bold tracking-tight text-white mb-4">\n        ${name} • Vite + React 19\n      </h1>\n      <p className="text-zinc-400 mb-6 max-w-md">\n        Scaffolded with ACSA Code. Fast refresh enabled with Tailwind CSS.\n      </p>\n      <button\n        onClick={() => setCount((c) => c + 1)}\n        className="px-5 py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-medium text-sm transition"\n      >\n        Count is {count}\n      </button>\n    </div>\n  );\n}\nexport default App;\n`,
+                "utf-8"
+              );
+
+              fs.writeFileSync(
+                path.join(srcDir, "main.tsx"),
+                `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nimport './index.css';\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n);\n`,
+                "utf-8"
+              );
+
+              fs.writeFileSync(
+                path.join(srcDir, "index.css"),
+                `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n`,
+                "utf-8"
+              );
+
+              fs.writeFileSync(
+                path.join(projectPath, "index.html"),
+                `<!doctype html>\n<html lang="en" class="dark">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>${name}</title>\n  </head>\n  <body class="bg-zinc-950 text-zinc-100 antialiased">\n    <div id="root"></div>\n    <script type="module" src="/src/main.tsx"></script>\n  </body>\n</html>\n`,
+                "utf-8"
+              );
+
+              fs.writeFileSync(
                 path.join(projectPath, "vite.config.ts"),
-                `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()],\n  server: {\n    port: 5173,\n    open: false,\n  },\n});\n`,
+                `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()],\n});\n`,
                 "utf-8"
               );
 
@@ -1277,8 +1302,9 @@ export function realFilesystemPlugin(): Plugin {
                       module: "ESNext",
                       skipLibCheck: true,
                       moduleResolution: "bundler",
-                      resolveJsonModule: true,
+                      allowImportingTsExtensions: true,
                       isolatedModules: true,
+                      moduleDetection: "force",
                       noEmit: true,
                       jsx: "react-jsx",
                       strict: true,
@@ -1295,38 +1321,14 @@ export function realFilesystemPlugin(): Plugin {
               );
 
               fs.writeFileSync(
+                path.join(projectPath, "tailwind.config.js"),
+                `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: { extend: {} },\n  plugins: [],\n};\n`,
+                "utf-8"
+              );
+
+              fs.writeFileSync(
                 path.join(projectPath, "postcss.config.js"),
                 `export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n};\n`,
-                "utf-8"
-              );
-
-              fs.writeFileSync(
-                path.join(projectPath, "tailwind.config.js"),
-                `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: {\n    extend: {},\n  },\n  plugins: [],\n};\n`,
-                "utf-8"
-              );
-
-              fs.writeFileSync(
-                path.join(projectPath, "index.html"),
-                `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>${name} - Vite + React + TS</title>\n  </head>\n  <body class="bg-slate-950 text-slate-100 font-sans antialiased">\n    <div id="root"></div>\n    <script type="module" src="/src/main.tsx"></script>\n  </body>\n</html>\n`,
-                "utf-8"
-              );
-
-              fs.writeFileSync(
-                path.join(srcDir, "main.tsx"),
-                `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nimport './index.css';\n\nReactDOM.createRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n);\n`,
-                "utf-8"
-              );
-
-              fs.writeFileSync(
-                path.join(srcDir, "App.tsx"),
-                `import { useState } from 'react';\nimport { Zap, Sparkles } from 'lucide-react';\n\nexport default function App() {\n  const [count, setCount] = useState(0);\n\n  return (\n    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6">\n      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl text-center space-y-6">\n        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 mx-auto">\n          <Zap className="w-8 h-8" />\n        </div>\n        <h1 className="text-2xl font-bold tracking-tight text-white">\n          ${name}\n        </h1>\n        <p className="text-sm text-slate-400">\n          Vite 6 • React 18 • TypeScript • Tailwind CSS\n        </p>\n        <div className="pt-2">\n          <button\n            type="button"\n            onClick={() => setCount((c) => c + 1)}\n            className="px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-sm transition shadow-lg shadow-cyan-500/20 active:scale-95"\n          >\n            Count is: {count}\n          </button>\n        </div>\n        <p className="text-xs text-slate-500">\n          Edit <code className="text-slate-300 font-mono">src/App.tsx</code> and save to test lightning HMR.\n        </p>\n      </div>\n    </div>\n  );\n}\n`,
-                "utf-8"
-              );
-
-              fs.writeFileSync(
-                path.join(srcDir, "index.css"),
-                `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n`,
                 "utf-8"
               );
 
@@ -1338,7 +1340,7 @@ export function realFilesystemPlugin(): Plugin {
 
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nUltra-fast Vite React + TypeScript template scaffolded by Autonomous IDE.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n`,
+                `# ${name}\n\nUltra-fast Vite React + TypeScript template scaffolded by ACSA Code.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n`,
                 "utf-8"
               );
             } else if (template === "nestjs") {
@@ -1351,7 +1353,7 @@ export function realFilesystemPlugin(): Plugin {
                   {
                     name,
                     version: "0.0.1",
-                    description: "NestJS REST API scaffolded by Autonomous IDE",
+                    description: "NestJS REST API scaffolded by ACSA Code",
                     private: true,
                     scripts: {
                       build: "nest build",
@@ -1451,7 +1453,7 @@ export function realFilesystemPlugin(): Plugin {
 
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nEnterprise NestJS TypeScript REST API scaffolded by Autonomous IDE.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run start:dev\n\`\`\`\n\nAPI available at [http://localhost:3000](http://localhost:3000).\n`,
+                `# ${name}\n\nEnterprise NestJS TypeScript REST API scaffolded by ACSA Code.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run start:dev\n\`\`\`\n\nAPI available at [http://localhost:3000](http://localhost:3000).\n`,
                 "utf-8"
               );
             } else if (template === "supabase") {
@@ -1465,7 +1467,7 @@ export function realFilesystemPlugin(): Plugin {
                     name,
                     version: "1.0.0",
                     type: "module",
-                    description: "Supabase Fullstack Starter scaffolded by Autonomous IDE",
+                    description: "Supabase Fullstack Starter scaffolded by ACSA Code",
                     scripts: {
                       dev: "node --watch src/server.js",
                       start: "node src/server.js",
@@ -1509,13 +1511,13 @@ export function realFilesystemPlugin(): Plugin {
 
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nSupabase Fullstack Starter scaffolded by Autonomous IDE.\n\n## Getting Started\n\n1. Copy \`.env.example\` to \`.env\` and add your Supabase credentials:\n\`\`\`bash\ncp .env.example .env\n\`\`\`\n\n2. Install dependencies & run:\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n`,
+                `# ${name}\n\nSupabase Fullstack Starter scaffolded by ACSA Code.\n\n## Getting Started\n\n1. Copy \`.env.example\` to \`.env\` and add your Supabase credentials:\n\`\`\`bash\ncp .env.example .env\n\`\`\`\n\n2. Install dependencies & run:\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n`,
                 "utf-8"
               );
             } else if (template === "fastapi") {
               fs.writeFileSync(
                 path.join(projectPath, "main.py"),
-                `from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom models import Item, ItemCreate, HealthResponse\nfrom datetime import datetime\n\napp = FastAPI(\n    title="${name}",\n    description="High-performance async REST API scaffolded by Autonomous IDE",\n    version="1.0.0"\n)\n\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=["*"],\n    allow_credentials=True,\n    allow_methods=["*"],\n    allow_headers=["*"],\n)\n\nitems_db: dict[int, Item] = {}\n\n@app.get("/", response_model=HealthResponse)\ndef read_root():\n    return HealthResponse(\n        service="${name}",\n        status="active",\n        timestamp=datetime.utcnow().isoformat()\n    )\n\n@app.get("/items", response_model=list[Item])\ndef get_items():\n    return list(items_db.values())\n\n@app.post("/items", response_model=Item, status_code=201)\ndef create_item(payload: ItemCreate):\n    item_id = len(items_db) + 1\n    item = Item(id=item_id, **payload.model_dump())\n    items_db[item_id] = item\n    return item\n`,
+                `from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom models import Item, ItemCreate, HealthResponse\nfrom datetime import datetime\n\napp = FastAPI(\n    title="${name}",\n    description="High-performance async REST API scaffolded by ACSA Code",\n    version="1.0.0"\n)\n\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=["*"],\n    allow_credentials=True,\n    allow_methods=["*"],\n    allow_headers=["*"],\n)\n\nitems_db: dict[int, Item] = {}\n\n@app.get("/", response_model=HealthResponse)\ndef read_root():\n    return HealthResponse(\n        service="${name}",\n        status="active",\n        timestamp=datetime.utcnow().isoformat()\n    )\n\n@app.get("/items", response_model=list[Item])\ndef get_items():\n    return list(items_db.values())\n\n@app.post("/items", response_model=Item, status_code=201)\ndef create_item(payload: ItemCreate):\n    item_id = len(items_db) + 1\n    item = Item(id=item_id, **payload.model_dump())\n    items_db[item_id] = item\n    return item\n`,
                 "utf-8"
               );
               fs.writeFileSync(
@@ -1535,7 +1537,7 @@ export function realFilesystemPlugin(): Plugin {
               );
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nPython FastAPI service generated by Autonomous IDE.\n\n## Getting Started\n\n\`\`\`bash\npip install -r requirements.txt\nuvicorn main:app --reload --port 8000\n\`\`\`\n\nInteractive API documentation available at [http://localhost:8000/docs](http://localhost:8000/docs).\n`,
+                `# ${name}\n\nPython FastAPI service generated by ACSA Code.\n\n## Getting Started\n\n\`\`\`bash\npip install -r requirements.txt\nuvicorn main:app --reload --port 8000\n\`\`\`\n\nInteractive API documentation available at [http://localhost:8000/docs](http://localhost:8000/docs).\n`,
                 "utf-8"
               );
             } else if (template === "express") {
@@ -1580,7 +1582,7 @@ export function realFilesystemPlugin(): Plugin {
               );
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nNode.js Express API scaffolded by Autonomous IDE.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nAPI available at [http://localhost:3000](http://localhost:3000).\n`,
+                `# ${name}\n\nNode.js Express API scaffolded by ACSA Code.\n\n## Getting Started\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nAPI available at [http://localhost:3000](http://localhost:3000).\n`,
                 "utf-8"
               );
             } else {
@@ -1592,7 +1594,7 @@ export function realFilesystemPlugin(): Plugin {
               );
               fs.writeFileSync(
                 path.join(projectPath, "README.md"),
-                `# ${name}\n\nStarter project scaffolded by Autonomous IDE.\n`,
+                `# ${name}\n\nStarter project scaffolded by ACSA Code.\n`,
                 "utf-8"
               );
             }

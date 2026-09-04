@@ -213,7 +213,7 @@ const INITIAL_AGENTS: AIAgentItem[] = [
     badge: "Core",
     description:
       "Built-in offline syntax synthesizer & structural diff planner. Zero network latency.",
-    author: "Autonomous IDE Core",
+    author: "ACSA Code Core",
     installed: true,
     isCore: true,
   },
@@ -1395,7 +1395,7 @@ export function SettingsModal({
                     {[
                       {
                         name: "TypeScript and JavaScript Language Features",
-                        author: "Autonomous IDE",
+                        author: "ACSA Code",
                         version: "v1.96.0",
                         status: "Installed",
                       },

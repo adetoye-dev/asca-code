@@ -73,7 +73,7 @@ export function ProjectModal({
   onPickFolder,
 }: ProjectModalProps) {
   const [projectName, setProjectName] = useState("");
-  const [parentDir, setParentDir] = useState("~/AutonomousProjects");
+  const [parentDir, setParentDir] = useState("~/AcsaProjects");
   const [selectedTemplate, setSelectedTemplate] = useState("nextjs");
 
   if (!isOpen) return null;

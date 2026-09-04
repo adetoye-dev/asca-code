@@ -1,5 +1,5 @@
 /**
- * workbench.ts — Unified Workbench Types for Autonomous IDE
+ * workbench.ts — Unified Workbench Types for ACSA Code
  */
 
 import type { FileNode } from "../components/FileTree";

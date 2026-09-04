@@ -21,7 +21,7 @@ import argparse
 import threading
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="PTY Bridge for Autonomous IDE")
+    parser = argparse.ArgumentParser(description="PTY Bridge for ACSA Code")
     parser.add_argument("--cwd", default=os.getcwd(), help="Initial working directory")
     parser.add_argument("--cols", type=int, default=80, help="Initial terminal columns")
     parser.add_argument("--rows", type=int, default=24, help="Initial terminal rows")

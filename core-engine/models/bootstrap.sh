@@ -723,7 +723,7 @@ main() {
             ;;
         "")
             # Full pipeline: detect → download → launch
-            log_header "AUTONOMOUS IDE — FIRST-LAUNCH BOOTSTRAP"
+            log_header "ACSA CODE — FIRST-LAUNCH BOOTSTRAP"
 
             build_hardware_profile
             print_hardware_profile

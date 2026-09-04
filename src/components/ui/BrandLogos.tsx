@@ -2,7 +2,7 @@
  * BrandLogos.tsx — Authentic AI Model, Provider & IDE Vector Logos
  *
  * Provides pixel-perfect vector SVGs matching the real brand identities of:
- * - Autonomous IDE brand mark
+ * - ACSA Code brand mark
  * - Anthropic Claude
  * - OpenAI / Codex
  * - GitHub Copilot
@@ -22,7 +22,7 @@ interface LogoProps {
   size?: number;
 }
 
-// ── Autonomous IDE Brand Mark ────────────────────────────────────────────────
+// ── ACSA Code Brand Mark ────────────────────────────────────────────────
 export function IdeBrandLogo({ className = "w-4 h-4", size }: LogoProps) {
   const gradientId = useId();
   return (
