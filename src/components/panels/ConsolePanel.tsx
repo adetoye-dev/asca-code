@@ -22,9 +22,9 @@ export function ConsolePanel({ activityLog }: ConsolePanelProps) {
   }, [activityLog]);
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#121214] overflow-hidden select-none font-mono text-xs">
+    <div className="flex flex-col h-full w-full bg-workbench overflow-hidden select-none font-mono text-xs">
       {/* Console Body */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1 bg-[#121214] text-xs leading-relaxed font-mono">
+      <div className="flex-1 overflow-y-auto p-3 space-y-1 bg-workbench text-xs leading-relaxed font-mono">
         {activityLog.length === 0 ? (
           <div className="text-zinc-400 py-4 font-sans text-xs">
             Autonomous verification engine idle. When an agent generates code, live compiler, property oracle, and test outputs will appear here...

@@ -15,29 +15,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  X,
-  Search,
-  ChevronRight,
-  ChevronDown,
-  HelpCircle,
-  ArrowLeft,
-  ArrowRight,
-  Pin,
-  Check,
-  CheckCircle2,
-  AlertCircle,
-  RefreshCw,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  Cpu,
-  Sparkles,
-  Bot,
-  Zap,
-  Layers,
-  Settings,
-} from "lucide-react";
+import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Bot, Search, Layers, ChevronRight, ExternalLink, EyeOff, ArrowRight, Check, Zap, Pin, Cpu, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 
@@ -508,15 +486,15 @@ export function SettingsModal({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-[2px] p-4 select-none animate-in fade-in duration-100 font-sans cursor-default"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-[2px] p-4 select-none animate-in fade-in duration-100 font-sans cursor-default"
     >
-      {/* Outer Window Frame */}
+      {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-xl bg-[#1E1F22] border border-[#3E4147] shadow-[0_25px_60px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col text-[#BCBEC4]"
+        className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-modal bg-modal/95 backdrop-blur-xl border border-hairline shadow-elevation-3 overflow-hidden flex flex-col text-zinc-300 relative"
       >
         {/* ── macOS Traffic Light Header Bar ───────────────────────────────── */}
-        <div className="h-10 bg-[#2B2D30] border-b border-[#393B40] px-4 flex items-center justify-between shrink-0">
+        <div className="h-10 bg-workbench/90 border-b border-hairline px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             {/* macOS Window Controls */}
             <button
@@ -537,14 +515,14 @@ export function SettingsModal({
             />
           </div>
 
-          <div className="text-[13px] font-medium text-[#DFE1E5] font-sans">
+          <div className="text-[13px] font-medium text-zinc-200 font-sans tracking-tight">
             Settings – {projectName}
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-[#9DA0A8] hover:text-[#DFE1E5] rounded transition"
+            className="p-1 text-zinc-400 hover:text-zinc-100 rounded-md hover:bg-surface-hover transition"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -553,23 +531,23 @@ export function SettingsModal({
         {/* ── Main Two-Column Stage ────────────────────────────────────────── */}
         <div className="flex flex-1 min-h-0 overflow-hidden font-sans">
           {/* Left Column: Navigation Category Tree */}
-          <aside className="w-[260px] bg-[#1E1F22] border-r border-[#2B2D30] flex flex-col shrink-0">
+          <aside className="w-[260px] bg-workbench/80 border-r border-hairline flex flex-col shrink-0">
             {/* Search Settings Input */}
-            <div className="p-2.5 border-b border-[#2B2D30]">
+            <div className="p-2.5 border-b border-hairline">
               <div className="relative flex items-center">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 text-[#9DA0A8]" />
+                <Search className="w-3.5 h-3.5 absolute left-2.5 text-zinc-400" />
                 <input
                   type="text"
                   value={navSearch}
                   onChange={(e) => setNavSearch(e.target.value)}
                   placeholder="Search settings..."
-                  className="w-full bg-[#2B2D30] border border-[#3E4147] rounded-md pl-8 pr-2.5 py-1.5 text-[13px] text-[#DFE1E5] placeholder-[#9DA0A8] focus:outline-none focus:border-[#3574F0] font-sans"
+                  className="w-full bg-surface border border-hairline rounded-md pl-8 pr-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500/60 font-sans"
                 />
                 {navSearch && (
                   <button
                     type="button"
                     onClick={() => setNavSearch("")}
-                    className="absolute right-2 text-[#9DA0A8] hover:text-[#DFE1E5]"
+                    className="absolute right-2 text-zinc-400 hover:text-zinc-100"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -594,18 +572,18 @@ export function SettingsModal({
           </aside>
 
           {/* Right Column: Configuration Stage */}
-          <main className="flex-1 min-w-0 bg-[#2B2D30] flex flex-col h-full overflow-hidden">
+          <main className="flex-1 min-w-0 bg-canvas/70 flex flex-col h-full overflow-hidden">
             {/* Stage Top Breadcrumbs Header */}
-            <div className="h-10 px-5 border-b border-[#393B40] flex items-center justify-between shrink-0 bg-[#2B2D30]">
-              <div className="flex items-center gap-1.5 text-xs text-[#9DA0A8] font-sans">
+            <div className="h-10 px-5 border-b border-hairline flex items-center justify-between shrink-0 bg-workbench/40">
+              <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-sans">
                 {breadcrumb.map((crumb, idx) => (
                   <React.Fragment key={crumb}>
-                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-[#6F737A]" />}
+                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-zinc-600" />}
                     <span
                       className={
                         idx === breadcrumb.length - 1
-                          ? "text-[#DFE1E5] font-semibold"
-                          : "text-[#9DA0A8]"
+                          ? "text-zinc-100 font-semibold"
+                          : "text-zinc-400"
                       }
                     >
                       {crumb}
@@ -615,12 +593,12 @@ export function SettingsModal({
               </div>
 
               {/* Top Navigation History / Pin Controls */}
-              <div className="flex items-center gap-1 text-[#9DA0A8]">
+              <div className="flex items-center gap-1 text-zinc-400">
                 <button
                   type="button"
                   onClick={handleBack}
                   disabled={historyIndex <= 0}
-                  className="p-1 hover:text-[#DFE1E5] disabled:opacity-30 disabled:hover:text-[#9DA0A8] rounded transition"
+                  className="p-1 hover:text-zinc-100 disabled:opacity-30 disabled:hover:text-zinc-500 rounded transition"
                   title="Back"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
@@ -629,15 +607,15 @@ export function SettingsModal({
                   type="button"
                   onClick={handleForward}
                   disabled={historyIndex >= history.length - 1}
-                  className="p-1 hover:text-[#DFE1E5] disabled:opacity-30 disabled:hover:text-[#9DA0A8] rounded transition"
+                  className="p-1 hover:text-zinc-100 disabled:opacity-30 disabled:hover:text-zinc-500 rounded transition"
                   title="Forward"
                 >
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
-                <div className="h-3 w-[1px] bg-[#3E4147] mx-1" />
+                <div className="h-3 w-[1px] bg-zinc-700/60 mx-1" />
                 <button
                   type="button"
-                  className="p-1 hover:text-[#DFE1E5] rounded transition"
+                  className="p-1 hover:text-zinc-100 rounded transition"
                   title="Pin"
                 >
                   <Pin className="w-3.5 h-3.5" />
@@ -646,40 +624,40 @@ export function SettingsModal({
             </div>
 
             {/* Stage Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-5 text-[13px] text-[#DFE1E5] font-sans">
+            <div className="flex-1 overflow-y-auto p-5 text-[13px] text-zinc-200 font-sans">
               {/* ── SECTION: AGENTS (media_1788523057455.png reference) ───────── */}
               {selectedSection === "agents" && (
                 <div className="space-y-4 max-w-2xl">
                   {/* Agent Search Filter */}
                   <div className="relative flex items-center">
-                    <Search className="w-3.5 h-3.5 absolute left-3 text-[#9DA0A8]" />
+                    <Search className="w-3.5 h-3.5 absolute left-3 text-zinc-400" />
                     <input
                       type="text"
                       value={agentSearch}
                       onChange={(e) => setAgentSearch(e.target.value)}
                       placeholder="Search agents..."
-                      className="w-full bg-[#1E1F22] border border-[#3E4147] rounded-md pl-8 pr-3 py-1.5 text-[13px] text-[#DFE1E5] placeholder-[#9DA0A8] focus:outline-none focus:border-[#3574F0] font-sans"
+                      className="w-full bg-surface border border-hairline rounded-md pl-8 pr-3 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-sans"
                     />
                   </div>
 
                   {/* Agents List */}
-                  <div className="divide-y divide-[#393B40] border border-[#393B40] rounded-lg bg-[#1E1F22]/40 overflow-hidden">
+                  <div className="divide-y divide-hairline border border-hairline rounded-lg bg-surface/50 overflow-hidden">
                     {agents
                       .filter(
                         (a) =>
-                          !agentSearch.trim() ||
+                           !agentSearch.trim() ||
                           a.name.toLowerCase().includes(agentSearch.toLowerCase()) ||
                           a.description.toLowerCase().includes(agentSearch.toLowerCase())
                       )
                       .map((agent) => (
                         <div
                           key={agent.id}
-                          className="p-3 flex items-start gap-3 hover:bg-[#1E1F22]/70 transition-colors"
+                          className="p-3 flex items-start gap-3 hover:bg-surface-hover transition-colors"
                         >
                           {/* Agent Avatar / Icon */}
-                          <div className="w-8 h-8 rounded-lg bg-[#2B2D30] border border-[#393B40] flex items-center justify-center shrink-0 mt-0.5 text-sky-400">
+                          <div className="w-8 h-8 rounded-lg bg-workbench border border-hairline flex items-center justify-center shrink-0 mt-0.5 text-sky-400">
                             {agent.id.includes("claude") ? (
-                              <Sparkles className="w-4 h-4 text-amber-400" />
+                              <Bot className="w-4 h-4 text-amber-400" />
                             ) : agent.id.includes("codex") ? (
                               <Bot className="w-4 h-4 text-emerald-400" />
                             ) : agent.id.includes("copilot") ? (
@@ -696,22 +674,22 @@ export function SettingsModal({
                           {/* Agent Info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-[13px] text-[#DFE1E5]">
+                              <span className="font-medium text-[13px] text-zinc-100">
                                 {agent.name}
                               </span>
-                              <span className="text-[11px] text-[#9DA0A8] font-mono">
+                              <span className="text-[11px] text-zinc-400 font-mono">
                                 {agent.version}
                               </span>
                               {agent.badge && (
-                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-[#393B40] text-[#DFE1E5] font-mono">
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono border border-hairline">
                                   {agent.badge}
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-[#BCBEC4] mt-0.5 leading-normal">
+                            <p className="text-xs text-zinc-400 mt-0.5 leading-normal">
                               {agent.description}
                             </p>
-                            <div className="flex items-center gap-1 text-[10px] text-[#565960] hover:text-[#868A91] mt-1 cursor-pointer">
+                            <div className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 mt-1 cursor-pointer">
                               <span>{agent.author}</span>
                               <ExternalLink className="w-2.5 h-2.5" />
                             </div>
@@ -720,14 +698,14 @@ export function SettingsModal({
                           {/* Agent Action Button */}
                           <div className="shrink-0">
                             {agent.isCore ? (
-                              <span className="px-3 py-1 rounded text-[11px] bg-[#2E436E] text-[#85AFFF] font-medium border border-[#3574F0]/30">
+                              <span className="px-3 py-1 rounded text-[11px] bg-sky-500/15 text-sky-300 font-medium border border-sky-500/30">
                                 Active
                               </span>
                             ) : agent.installed ? (
                               <button
                                 type="button"
                                 onClick={() => toggleAgent(agent.id)}
-                                className="px-3 py-1 rounded text-[11px] bg-[#2B2D30] hover:bg-[#393B40] text-[#DFE1E5] border border-[#3E4147] transition font-medium cursor-pointer"
+                                className="px-3 py-1 rounded text-[11px] bg-surface hover:bg-surface-hover text-zinc-200 border border-hairline transition font-medium cursor-pointer"
                               >
                                 Uninstall
                               </button>
@@ -735,7 +713,7 @@ export function SettingsModal({
                               <button
                                 type="button"
                                 onClick={() => toggleAgent(agent.id)}
-                                className="px-3 py-1 rounded text-[11px] bg-[#367A4E] hover:bg-[#3D8B59] text-white font-medium transition cursor-pointer shadow-sm"
+                                className="px-3 py-1 rounded text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition cursor-pointer shadow-sm"
                               >
                                 Install
                               </button>
@@ -746,23 +724,23 @@ export function SettingsModal({
                   </div>
 
                   {/* Bottom Controls (Checked in IntelliJ screenshot) */}
-                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs border-t border-[#393B40]">
-                    <label className="flex items-center gap-2 cursor-pointer text-[#DFE1E5]">
+                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs border-t border-hairline">
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-200">
                       <input
                         type="checkbox"
                         checked={passCustomMcp}
                         onChange={(e) => setPassCustomMcp(e.target.checked)}
-                        className="rounded border-[#3E4147] text-[#3574F0] focus:ring-0"
+                        className="rounded border-zinc-700 bg-surface text-sky-500 focus:ring-0"
                       />
                       <span>Pass custom MCP servers</span>
                     </label>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-[#868A91]">Pass IntelliJ MCP server</span>
+                      <span className="text-zinc-400">Pass IntelliJ MCP server</span>
                       <select
                         value={mcpMode}
                         onChange={(e) => setMcpMode(e.target.value)}
-                        className="bg-[#1E1F22] border border-[#3E4147] rounded px-2 py-1 text-xs text-[#DFE1E5] focus:outline-none focus:border-[#3574F0]"
+                        className="bg-surface border border-hairline rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
                       >
                         <option value="On demand">On demand</option>
                         <option value="Always">Always</option>
@@ -777,10 +755,10 @@ export function SettingsModal({
               {selectedSection === "providers" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       LLM Provider & Engine Configuration
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Configure local or cloud inference engines for code generation, diff synthesis, and chat.
                     </p>
                   </div>
@@ -790,22 +768,22 @@ export function SettingsModal({
                     {/* Local Ollama */}
                     <div
                       onClick={() => setProvider("ollama")}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
+                      className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "ollama"
-                          ? "bg-[#2E436E]/40 border-[#3574F0] text-white ring-1 ring-[#3574F0]"
-                          : "bg-[#1E1F22] border-[#3E4147] hover:border-[#565960]"
+                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-1">
                         <ProviderLogo providerId="ollama" className="w-4 h-4" />
-                        <span className="font-semibold text-xs text-[#DFE1E5]">
+                        <span className="font-semibold text-xs text-zinc-100">
                           Local Ollama
                         </span>
                         <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
                           Default
                         </span>
                       </div>
-                      <p className="text-[10px] text-[#868A91] leading-tight">
+                      <p className="text-[10px] text-zinc-400 leading-tight">
                         Connects to local daemon (Qwen 2.5 Coder, Llama 3.2, DeepSeek).
                       </p>
                     </div>
@@ -813,19 +791,19 @@ export function SettingsModal({
                     {/* Local llama.cpp Sidecar */}
                     <div
                       onClick={() => setProvider("local")}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
+                      className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "local"
-                          ? "bg-[#2E436E]/40 border-[#3574F0] text-white ring-1 ring-[#3574F0]"
-                          : "bg-[#1E1F22] border-[#3E4147] hover:border-[#565960]"
+                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-1">
                         <ProviderLogo providerId="llamacpp" className="w-4 h-4" />
-                        <span className="font-semibold text-xs text-[#DFE1E5]">
+                        <span className="font-semibold text-xs text-zinc-100">
                           llama.cpp / LM Studio
                         </span>
                       </div>
-                      <p className="text-[10px] text-[#868A91] leading-tight">
+                      <p className="text-[10px] text-zinc-400 leading-tight">
                         Hardware-accelerated GGUF local inference server on port 8080.
                       </p>
                     </div>
@@ -833,28 +811,28 @@ export function SettingsModal({
                     {/* Cloud OpenAI / Anthropic */}
                     <div
                       onClick={() => setProvider("openai")}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
+                      className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "openai"
-                          ? "bg-[#2E436E]/40 border-[#3574F0] text-white ring-1 ring-[#3574F0]"
-                          : "bg-[#1E1F22] border-[#3E4147] hover:border-[#565960]"
+                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
                       <div className="flex items-center gap-2 mb-1">
                         <ProviderLogo providerId="openai" className="w-4 h-4" />
-                        <span className="font-semibold text-xs text-[#DFE1E5]">
+                        <span className="font-semibold text-xs text-zinc-100">
                           Cloud APIs
                         </span>
                       </div>
-                      <p className="text-[10px] text-[#868A91] leading-tight">
+                      <p className="text-[10px] text-zinc-400 leading-tight">
                         GPT-4o, Claude 3.7 Sonnet, Google Gemini, DeepSeek Cloud.
                       </p>
                     </div>
                   </div>
 
                   {/* Provider Settings Details */}
-                  <div className="space-y-3.5 pt-2 border-t border-[#393B40]">
+                  <div className="space-y-3.5 pt-2 border-t border-hairline">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Model Identifier
                       </label>
                       <input
@@ -868,12 +846,12 @@ export function SettingsModal({
                             ? "e.g. qwen2.5-coder-7b-instruct.gguf"
                             : "e.g. gpt-4o, claude-3-7-sonnet"
                         }
-                        className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Base URL
                       </label>
                       <input
@@ -887,13 +865,13 @@ export function SettingsModal({
                             ? "http://127.0.0.1:8080"
                             : "https://api.openai.com/v1"
                         }
-                        className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
                       />
                     </div>
 
                     {provider === "openai" && (
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-[#DFE1E5]">
+                        <label className="text-xs font-semibold text-zinc-200">
                           API Key
                         </label>
                         <div className="relative flex items-center">
@@ -902,12 +880,12 @@ export function SettingsModal({
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                             placeholder="sk-..."
-                            className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 pr-8 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                            className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
                           />
                           <button
                             type="button"
                             onClick={() => setShowApiKey(!showApiKey)}
-                            className="absolute right-2.5 text-[#6F737A] hover:text-[#DFE1E5]"
+                            className="absolute right-2.5 text-zinc-400 hover:text-zinc-200"
                           >
                             {showApiKey ? (
                               <EyeOff className="w-3.5 h-3.5" />
@@ -925,25 +903,25 @@ export function SettingsModal({
                         type="button"
                         onClick={handleTestConnection}
                         disabled={testStatus === "testing"}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1E1F22] hover:bg-[#2B2D30] text-[#DFE1E5] text-xs font-medium transition border border-[#3E4147]"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-xs font-medium transition border border-hairline shadow-elevation-1"
                       >
                         <RefreshCw
                           className={`w-3.5 h-3.5 ${
-                            testStatus === "testing" ? "animate-spin text-[#3574F0]" : ""
+                            testStatus === "testing" ? "animate-spin text-sky-400" : ""
                           }`}
                         />
                         <span>Test Connection</span>
                       </button>
 
                       {testStatus === "success" && (
-                        <span className="flex items-center gap-1 text-[#61C554] text-xs">
+                        <span className="flex items-center gap-1 text-emerald-400 text-xs">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>{testMessage}</span>
                         </span>
                       )}
 
                       {testStatus === "error" && (
-                        <span className="flex items-center gap-1 text-[#ED6A5E] text-xs">
+                        <span className="flex items-center gap-1 text-rose-400 text-xs">
                           <AlertCircle className="w-3.5 h-3.5" />
                           <span>{testMessage}</span>
                         </span>
@@ -957,29 +935,29 @@ export function SettingsModal({
               {selectedSection === "mcp" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Model Context Protocol (MCP) Servers
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Standardized bridges providing AI agents secure access to local tools, databases, and filesystem.
                     </p>
                   </div>
 
-                  <div className="border border-[#393B40] rounded-lg bg-[#1E1F22] overflow-hidden">
+                  <div className="border border-hairline rounded-panel bg-surface/50 overflow-hidden">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-[#393B40] bg-[#2B2D30]/60 text-[#868A91]">
+                        <tr className="border-b border-hairline bg-workbench/60 text-zinc-400">
                           <th className="p-2.5 font-medium">Server Name</th>
                           <th className="p-2.5 font-medium">Transport</th>
                           <th className="p-2.5 font-medium">Command / Spec</th>
                           <th className="p-2.5 font-medium text-right">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[#393B40]">
+                      <tbody className="divide-y divide-hairline">
                         <tr>
-                          <td className="p-2.5 font-semibold text-[#DFE1E5]">Filesystem</td>
-                          <td className="p-2.5 text-[#868A91]">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-[#868A91]">
+                          <td className="p-2.5 font-semibold text-zinc-100">Filesystem</td>
+                          <td className="p-2.5 text-zinc-400">stdio</td>
+                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
                             npx @modelcontextprotocol/server-filesystem
                           </td>
                           <td className="p-2.5 text-right">
@@ -989,9 +967,9 @@ export function SettingsModal({
                           </td>
                         </tr>
                         <tr>
-                          <td className="p-2.5 font-semibold text-[#DFE1E5]">Git Engine</td>
-                          <td className="p-2.5 text-[#868A91]">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-[#868A91]">
+                          <td className="p-2.5 font-semibold text-zinc-100">Git Engine</td>
+                          <td className="p-2.5 text-zinc-400">stdio</td>
+                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
                             npx @modelcontextprotocol/server-git
                           </td>
                           <td className="p-2.5 text-right">
@@ -1001,9 +979,9 @@ export function SettingsModal({
                           </td>
                         </tr>
                         <tr>
-                          <td className="p-2.5 font-semibold text-[#DFE1E5]">Web Fetch</td>
-                          <td className="p-2.5 text-[#868A91]">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-[#868A91]">
+                          <td className="p-2.5 font-semibold text-zinc-100">Web Fetch</td>
+                          <td className="p-2.5 text-zinc-400">stdio</td>
+                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
                             npx @modelcontextprotocol/server-fetch
                           </td>
                           <td className="p-2.5 text-right">
@@ -1013,13 +991,13 @@ export function SettingsModal({
                           </td>
                         </tr>
                         <tr>
-                          <td className="p-2.5 font-semibold text-[#DFE1E5]">Memory Graph</td>
-                          <td className="p-2.5 text-[#868A91]">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-[#868A91]">
+                          <td className="p-2.5 font-semibold text-zinc-100">Memory Graph</td>
+                          <td className="p-2.5 text-zinc-400">stdio</td>
+                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
                             npx @modelcontextprotocol/server-memory
                           </td>
                           <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-400">
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800/80 text-zinc-400 border border-hairline">
                               Idle
                             </span>
                           </td>
@@ -1034,10 +1012,10 @@ export function SettingsModal({
               {selectedSection === "appearance" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       UI Theme & Workbench Appearance
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Select your preferred IDE theme. Changes take effect across editor, sidebars, tabs, and status bar immediately.
                     </p>
                   </div>
@@ -1049,25 +1027,25 @@ export function SettingsModal({
                         <div
                           key={theme.id}
                           onClick={() => onApplyTheme && onApplyTheme(theme.id)}
-                          className={`p-3 rounded-lg border cursor-pointer transition flex flex-col justify-between ${
+                          className={`p-3 rounded-card border cursor-pointer transition flex flex-col justify-between ${
                             isCurrent
-                              ? "bg-[#2E436E]/40 border-[#3574F0] ring-1 ring-[#3574F0]"
-                              : "bg-[#1E1F22] border-[#3E4147] hover:border-[#565960]"
+                              ? "bg-sky-500/15 border-sky-500/50 ring-1 ring-sky-500/40 shadow-sm"
+                              : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                           }`}
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-semibold text-xs text-[#DFE1E5]">
+                            <span className="font-semibold text-xs text-zinc-100">
                               {theme.name}
                             </span>
                             {isCurrent && (
-                              <span className="w-4 h-4 rounded-full bg-[#3574F0] flex items-center justify-center text-white">
+                              <span className="w-4 h-4 rounded-full bg-sky-500 flex items-center justify-center text-white">
                                 <Check className="w-2.5 h-2.5 stroke-[3]" />
                               </span>
                             )}
                           </div>
 
                           {/* Theme Swatches */}
-                          <div className="flex items-center gap-1.5 p-2 rounded bg-black/40 border border-white/5">
+                          <div className="flex items-center gap-1.5 p-2 rounded-md bg-workbench border border-hairline">
                             <span
                               className="w-4 h-4 rounded border border-white/10"
                               style={{ backgroundColor: theme.colors.background }}
@@ -1088,7 +1066,7 @@ export function SettingsModal({
                               style={{ backgroundColor: theme.colors.statusBarBg }}
                               title={`Status Bar: ${theme.colors.statusBarBg}`}
                             />
-                            <span className="text-[10px] font-mono text-[#868A91] ml-auto capitalize">
+                            <span className="text-[10px] font-mono text-zinc-400 ml-auto capitalize">
                               {theme.type}
                             </span>
                           </div>
@@ -1103,30 +1081,30 @@ export function SettingsModal({
               {selectedSection === "editor-font" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Typography & Font
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Configure typography for code editors and diff viewers. JetBrains Mono is the bundled default across all surfaces.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Font Family
                       </label>
                       <select
                         value="JetBrains Mono"
                         disabled
-                        className="w-full rounded-md bg-[#1E1F22] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono cursor-not-allowed opacity-90"
+                        className="w-full rounded-[8px] bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
                       >
                         <option value="JetBrains Mono">JetBrains Mono (Bundled Default)</option>
                       </select>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Font Size: {fontSize}px
                       </label>
                       <input
@@ -1135,12 +1113,12 @@ export function SettingsModal({
                         max={20}
                         value={fontSize}
                         onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-full accent-[#3574F0]"
+                        className="w-full accent-sky-500"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Line Spacing: {lineHeight}
                       </label>
                       <input
@@ -1150,17 +1128,17 @@ export function SettingsModal({
                         step={0.1}
                         value={lineHeight}
                         onChange={(e) => setLineHeight(Number(e.target.value))}
-                        className="w-full accent-[#3574F0]"
+                        className="w-full accent-sky-500"
                       />
                     </div>
 
                     <div className="flex items-center pt-5">
-                      <label className="flex items-center gap-2 cursor-pointer text-[#DFE1E5]">
+                      <label className="flex items-center gap-2 cursor-pointer text-zinc-200">
                         <input
                           type="checkbox"
                           checked={enableLigatures}
                           onChange={(e) => setEnableLigatures(e.target.checked)}
-                          className="rounded border-[#3E4147] text-[#3574F0] focus:ring-0"
+                          className="rounded border-hairline text-sky-500 focus:ring-0"
                         />
                         <span>Enable font ligatures (==, !=, =&gt;)</span>
                       </label>
@@ -1169,11 +1147,11 @@ export function SettingsModal({
 
                   {/* Live JetBrains Mono Code Preview Box */}
                   <div className="space-y-1.5 pt-2">
-                    <label className="text-xs font-medium text-[#868A91]">
+                    <label className="text-xs font-medium text-zinc-400">
                       Live Font Preview
                     </label>
                     <div
-                      className="rounded-lg bg-[#1E1F22] border border-[#3E4147] p-4 font-mono text-[#DFE1E5] overflow-x-auto"
+                      className="rounded-panel bg-workbench/80 border border-hairline p-4 font-mono text-zinc-100 overflow-x-auto shadow-elevation-1"
                       style={{
                         fontFamily: "'JetBrains Mono', monospace",
                         fontSize: `${fontSize}px`,
@@ -1208,21 +1186,21 @@ export function SettingsModal({
               {selectedSection === "editor-code-style" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Indentation & Code Style
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Configure tab size, spaces vs tabs, and auto-formatting behavior.
                     </p>
                   </div>
 
-                  <div className="space-y-3 bg-[#1E1F22] border border-[#3E4147] rounded-lg p-4">
+                  <div className="space-y-3 bg-surface border border-hairline rounded-panel p-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-[#DFE1E5]">Tab Size</span>
+                      <span className="text-zinc-200">Tab Size</span>
                       <select
                         value={tabSize}
                         onChange={(e) => setTabSize(Number(e.target.value))}
-                        className="bg-[#2B2D30] border border-[#3E4147] rounded px-2.5 py-1 text-xs text-[#DFE1E5]"
+                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={2}>2 spaces</option>
                         <option value={4}>4 spaces</option>
@@ -1230,33 +1208,33 @@ export function SettingsModal({
                       </select>
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-[#393B40] pt-3">
-                      <span className="text-[#DFE1E5]">Insert Spaces</span>
+                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                      <span className="text-zinc-200">Insert Spaces</span>
                       <input
                         type="checkbox"
                         checked={insertSpaces}
                         onChange={(e) => setInsertSpaces(e.target.checked)}
-                        className="rounded border-[#3E4147] text-[#3574F0]"
+                        className="rounded border-hairline text-sky-500 focus:ring-0"
                       />
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-[#393B40] pt-3">
-                      <span className="text-[#DFE1E5]">Format On Save</span>
+                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                      <span className="text-zinc-200">Format On Save</span>
                       <input
                         type="checkbox"
                         checked={formatOnSave}
                         onChange={(e) => setFormatOnSave(e.target.checked)}
-                        className="rounded border-[#3E4147] text-[#3574F0]"
+                        className="rounded border-hairline text-sky-500 focus:ring-0"
                       />
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-[#393B40] pt-3">
-                      <span className="text-[#DFE1E5]">Word Wrap in Editor</span>
+                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                      <span className="text-zinc-200">Word Wrap in Editor</span>
                       <input
                         type="checkbox"
                         checked={wordWrap}
                         onChange={(e) => setWordWrap(e.target.checked)}
-                        className="rounded border-[#3E4147] text-[#3574F0]"
+                        className="rounded border-hairline text-sky-500 focus:ring-0"
                       />
                     </div>
                   </div>
@@ -1267,17 +1245,17 @@ export function SettingsModal({
               {selectedSection === "terminal" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Integrated Terminal Settings
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Configure shell binary path, terminal font, and selection behaviors.
                     </p>
                   </div>
 
-                  <div className="space-y-3 bg-[#1E1F22] border border-[#3E4147] rounded-lg p-4">
+                  <div className="space-y-3 bg-surface border border-hairline rounded-panel p-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Shell Path
                       </label>
                       <input
@@ -1285,16 +1263,16 @@ export function SettingsModal({
                         value={shellPath}
                         onChange={(e) => setShellPath(e.target.value)}
                         placeholder="/bin/zsh"
-                        className="w-full rounded-md bg-[#2B2D30] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
                       />
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-[#393B40] pt-3">
-                      <span className="text-[#DFE1E5]">Terminal Font Size</span>
+                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                      <span className="text-zinc-200">Terminal Font Size</span>
                       <select
                         value={terminalFontSize}
                         onChange={(e) => setTerminalFontSize(Number(e.target.value))}
-                        className="bg-[#2B2D30] border border-[#3E4147] rounded px-2.5 py-1 text-xs text-[#DFE1E5]"
+                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={12}>12px</option>
                         <option value={13}>13px (Default)</option>
@@ -1303,13 +1281,13 @@ export function SettingsModal({
                       </select>
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-[#393B40] pt-3">
-                      <span className="text-[#DFE1E5]">Copy On Select</span>
+                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                      <span className="text-zinc-200">Copy On Select</span>
                       <input
                         type="checkbox"
                         checked={copyOnSelect}
                         onChange={(e) => setCopyOnSelect(e.target.checked)}
-                        className="rounded border-[#3E4147] text-[#3574F0]"
+                        className="rounded border-hairline text-sky-500 focus:ring-0"
                       />
                     </div>
                   </div>
@@ -1320,36 +1298,36 @@ export function SettingsModal({
               {selectedSection === "git" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Version Control & Git
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Git binary configuration and workspace synchronization options.
                     </p>
                   </div>
 
-                  <div className="space-y-3 bg-[#1E1F22] border border-[#3E4147] rounded-lg p-4">
+                  <div className="space-y-3 bg-surface border border-hairline rounded-panel p-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Git Executable Path
                       </label>
                       <input
                         type="text"
                         value={gitExecutablePath}
                         onChange={(e) => setGitExecutablePath(e.target.value)}
-                        className="w-full rounded-md bg-[#2B2D30] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                      <label className="text-xs font-semibold text-zinc-200">
                         Default Branch Name
                       </label>
                       <input
                         type="text"
                         value={gitDefaultBranch}
                         onChange={(e) => setGitDefaultBranch(e.target.value)}
-                        className="w-full rounded-md bg-[#2B2D30] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -1360,15 +1338,15 @@ export function SettingsModal({
               {selectedSection === "plugins" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-[#DFE1E5]">
+                    <h3 className="text-sm font-semibold text-zinc-100">
                       Plugins & Extensions Marketplace
                     </h3>
-                    <p className="text-[11px] text-[#868A91] mt-0.5">
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
                       Manage installed tools, language servers, and theme packs.
                     </p>
                   </div>
 
-                  <div className="divide-y divide-[#393B40] border border-[#393B40] rounded-lg bg-[#1E1F22] overflow-hidden">
+                  <div className="divide-y divide-hairline border border-hairline rounded-panel bg-surface overflow-hidden">
                     {[
                       {
                         name: "TypeScript and JavaScript Language Features",
@@ -1391,14 +1369,14 @@ export function SettingsModal({
                     ].map((p) => (
                       <div key={p.name} className="p-3 flex items-center justify-between">
                         <div>
-                          <div className="font-semibold text-xs text-[#DFE1E5]">
+                          <div className="font-semibold text-xs text-zinc-100">
                             {p.name}
                           </div>
-                          <div className="text-[11px] text-[#868A91]">
+                          <div className="text-[11px] text-zinc-400">
                             {p.author} • {p.version}
                           </div>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 font-medium">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-surface-active text-zinc-300 font-medium border border-hairline">
                           {p.status}
                         </span>
                       </div>
@@ -1419,11 +1397,11 @@ export function SettingsModal({
                 "git",
                 "plugins",
               ].includes(selectedSection) && (
-                <div className="py-10 text-center text-[#868A91] space-y-2">
-                  <div className="w-10 h-10 rounded-full bg-[#1E1F22] border border-[#393B40] flex items-center justify-center mx-auto text-[#6F737A]">
+                <div className="py-10 text-center text-zinc-400 space-y-2">
+                  <div className="w-10 h-10 rounded-full bg-surface border border-hairline flex items-center justify-center mx-auto text-zinc-400">
                     <Settings className="w-5 h-5" />
                   </div>
-                  <h4 className="font-semibold text-sm text-[#DFE1E5]">
+                  <h4 className="font-semibold text-sm text-zinc-200">
                     {(selectedSection || "General").replace(/-/g, " ").toUpperCase()}
                   </h4>
                   <p className="text-xs max-w-sm mx-auto">
@@ -1434,11 +1412,11 @@ export function SettingsModal({
             </div>
 
             {/* ── Dialog Action Footer Bar ──────────────────────────────────── */}
-            <div className="h-12 bg-[#1E1F22] border-t border-[#393B40] px-5 flex items-center justify-between shrink-0">
+            <div className="h-12 bg-workbench/90 border-t border-hairline px-5 flex items-center justify-between shrink-0">
               {/* Left Help Button */}
               <button
                 type="button"
-                className="w-7 h-7 rounded-full bg-[#2B2D30] hover:bg-[#393B40] border border-[#3E4147] flex items-center justify-center text-[#868A91] hover:text-[#DFE1E5] transition"
+                className="w-7 h-7 rounded-full bg-surface hover:bg-surface-hover border border-hairline flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition shadow-elevation-1"
                 title="Help"
               >
                 <HelpCircle className="w-4 h-4" />
@@ -1449,7 +1427,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-1.5 rounded-md bg-[#2B2D30] hover:bg-[#393B40] text-[#DFE1E5] text-[13px] font-medium border border-[#3E4147] transition cursor-pointer font-sans"
+                  className="px-4 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-[13px] font-medium border border-hairline transition cursor-pointer font-sans shadow-elevation-1"
                 >
                   Cancel
                 </button>
@@ -1457,7 +1435,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="px-4 py-1.5 rounded-md bg-[#2B2D30] hover:bg-[#393B40] text-[#DFE1E5] text-[13px] font-medium border border-[#3E4147] transition cursor-pointer font-sans"
+                  className="px-4 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-[13px] font-medium border border-hairline transition cursor-pointer font-sans shadow-elevation-1"
                 >
                   Apply
                 </button>
@@ -1465,7 +1443,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleOk}
-                  className="px-5 py-1.5 rounded-md bg-[#3574F0] hover:bg-[#4682F4] text-white text-[13px] font-semibold shadow-sm transition cursor-pointer font-sans"
+                  className="px-5 py-1.5 rounded-[8px] bg-sky-600 hover:bg-sky-500 text-white text-[13px] font-semibold shadow-elevation-1 transition cursor-pointer font-sans"
                 >
                   OK
                 </button>
@@ -1509,21 +1487,21 @@ function TreeItem({
   };
 
   return (
-    <div>
+    <div className="px-1.5 py-0.5">
       <div
         onClick={handleClick}
-        style={{ paddingLeft: `${8 + level * 14}px` }}
-        className={`pr-2.5 py-1.5 flex items-center justify-between cursor-pointer transition-colors group ${
+        style={{ paddingLeft: `${6 + level * 14}px` }}
+        className={`px-2 py-1.5 rounded-[8px] flex items-center justify-between cursor-pointer transition-colors group ${
           isSelected
-            ? "bg-[#2E436E] text-white font-medium"
-            : "hover:bg-[#2B2D30] text-[#DFE1E5]"
+            ? "bg-sky-500/15 border border-sky-500/30 text-white font-medium shadow-sm"
+            : "hover:bg-surface-hover text-zinc-300 hover:text-zinc-100"
         }`}
       >
         <div className="flex items-center gap-1.5 min-w-0 font-sans">
           {hasChildren ? (
             <span
               onClick={(e) => onToggleNode(node.id, e)}
-              className="w-3.5 h-3.5 flex items-center justify-center text-[#9DA0A8] hover:text-[#DFE1E5]"
+              className="w-3.5 h-3.5 flex items-center justify-center text-zinc-400 hover:text-zinc-200"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3 h-3" />
@@ -1539,7 +1517,7 @@ function TreeItem({
         </div>
 
         {node.hasExternalBadge && (
-          <span className="w-2.5 h-2.5 rounded-sm border border-[#565960] text-[#9DA0A8] group-hover:text-[#DFE1E5] flex items-center justify-center text-[8px] opacity-70">
+          <span className="w-2.5 h-2.5 rounded-sm border border-hairline text-zinc-400 group-hover:text-zinc-200 flex items-center justify-center text-[8px] opacity-70">
             ▫
           </span>
         )}

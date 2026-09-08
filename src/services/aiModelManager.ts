@@ -47,8 +47,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.openai.com/v1",
-    selectedModel: "gpt-4o",
-    availableModels: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1", "gpt-5.2"],
+    selectedModel: "gpt-5.5",
+    availableModels: ["gpt-5.5", "gpt-5.4", "gpt-5.6-sol", "o3", "o3-pro", "o4-mini", "gpt-4o"],
     speedBadge: "Medium",
   },
   anthropic: {
@@ -59,8 +59,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.anthropic.com/v1",
-    selectedModel: "claude-3-7-sonnet",
-    availableModels: ["claude-3-7-sonnet", "claude-3-5-sonnet", "claude-3-5-haiku"],
+    selectedModel: "claude-fable-5-1",
+    availableModels: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-3-7-sonnet-latest"],
     speedBadge: "Thinking",
   },
   google: {
@@ -71,8 +71,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://generativelanguage.googleapis.com",
-    selectedModel: "gemini-2.5-flash",
-    availableModels: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.8-flash"],
+    selectedModel: "gemini-3.8-flash",
+    availableModels: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro", "gemini-3.5-flash-lite"],
     speedBadge: "Fast",
   },
   groq: {
@@ -84,7 +84,7 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     apiKey: "",
     baseUrl: "https://api.groq.com/openai/v1",
     selectedModel: "llama-3.3-70b-versatile",
-    availableModels: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "deepseek-r1-distill-llama-70b"],
+    availableModels: ["llama-3.3-70b-versatile", "gpt-oss-120b", "gpt-oss-20b", "qwen-3.8-27b", "mixtral-8x7b-32768"],
     speedBadge: "Fast",
   },
   mistral: {
@@ -95,8 +95,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.mistral.ai/v1",
-    selectedModel: "codestral-latest",
-    availableModels: ["codestral-latest", "mistral-large-latest", "mistral-small-latest"],
+    selectedModel: "mistral-large-3",
+    availableModels: ["mistral-large-3", "mistral-medium-3.5", "devstral-2", "mistral-small-4", "codestral-latest"],
     speedBadge: "Medium",
   },
   deepseek: {
@@ -107,8 +107,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.deepseek.com/v1",
-    selectedModel: "deepseek-chat",
-    availableModels: ["deepseek-chat", "deepseek-reasoner"],
+    selectedModel: "deepseek-v4-pro",
+    availableModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
     speedBadge: "Thinking",
   },
   xai: {
@@ -119,8 +119,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.x.ai/v1",
-    selectedModel: "grok-2-latest",
-    availableModels: ["grok-2-latest", "grok-beta"],
+    selectedModel: "grok-4.6",
+    availableModels: ["grok-4.6", "grok-4.5", "grok-4.3", "grok-beta"],
     speedBadge: "Thinking",
   },
   moonshot: {
@@ -131,8 +131,68 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.moonshot.cn/v1",
-    selectedModel: "moonshot-v1-8k",
-    availableModels: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+    selectedModel: "moonshot-v1-128k",
+    availableModels: ["moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
+    speedBadge: "Medium",
+  },
+  cohere: {
+    id: "cohere",
+    name: "Cohere",
+    category: "cloud",
+    isConnected: false,
+    isDefault: false,
+    apiKey: "",
+    baseUrl: "https://api.cohere.ai/v1",
+    selectedModel: "command-r-plus",
+    availableModels: ["command-r-plus", "command-r", "c4ai-aya-expanse-32b"],
+    speedBadge: "Medium",
+  },
+  perplexity: {
+    id: "perplexity",
+    name: "Perplexity AI",
+    category: "cloud",
+    isConnected: false,
+    isDefault: false,
+    apiKey: "",
+    baseUrl: "https://api.perplexity.ai",
+    selectedModel: "sonar-pro",
+    availableModels: ["sonar-pro", "sonar-reasoning", "sonar"],
+    speedBadge: "Fast",
+  },
+  huggingface: {
+    id: "huggingface",
+    name: "Hugging Face",
+    category: "cloud",
+    isConnected: false,
+    isDefault: false,
+    apiKey: "",
+    baseUrl: "https://api-inference.huggingface.co/v1",
+    selectedModel: "Qwen/Qwen2.5-Coder-32B-Instruct",
+    availableModels: ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-V4-Flash"],
+    speedBadge: "Medium",
+  },
+  together: {
+    id: "together",
+    name: "Together AI",
+    category: "cloud",
+    isConnected: false,
+    isDefault: false,
+    apiKey: "",
+    baseUrl: "https://api.together.xyz/v1",
+    selectedModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    availableModels: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen2.5-Coder-32B-Instruct"],
+    speedBadge: "Fast",
+  },
+  openrouter: {
+    id: "openrouter",
+    name: "OpenRouter",
+    category: "cloud",
+    isConnected: false,
+    isDefault: false,
+    apiKey: "",
+    baseUrl: "https://openrouter.ai/api/v1",
+    selectedModel: "anthropic/claude-fable-5-1",
+    availableModels: ["anthropic/claude-fable-5-1", "openai/gpt-5.5", "google/gemini-3.8-flash", "deepseek/deepseek-v4-pro"],
     speedBadge: "Medium",
   },
 };
@@ -216,6 +276,22 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
       }
     }
 
+    // ── Active Sanitation & Model Refresh for 2026 Cloud Models ───────
+    let needsCloudResave = false;
+    for (const [pId, initConfig] of Object.entries(INITIAL_PROVIDERS) as [AIProviderId, AIProviderConfig][]) {
+      if (pId === "ollama" || pId === "llamacpp") continue;
+      const current = merged[pId];
+      if (current) {
+        // Sync availableModels to official list, ensuring no duplicates or hallucinations
+        current.availableModels = [...initConfig.availableModels];
+        // If current selectedModel is not in official availableModels, reset to default model
+        if (!current.availableModels.includes(current.selectedModel)) {
+          current.selectedModel = initConfig.selectedModel;
+          needsCloudResave = true;
+        }
+      }
+    }
+
     // Ensure default provider is valid
     if (!merged[defaultId]) {
       merged.ollama.isDefault = true;
@@ -224,8 +300,8 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
       } catch {}
     }
 
-    // Resave cleaned storage if deterministic was stripped
-    if (parsed.deterministic || parsed.llamacpp?.selectedModel === "default-gguf") {
+    // Resave cleaned storage if deterministic was stripped or models were migrated
+    if (parsed.deterministic || parsed.llamacpp?.selectedModel === "default-gguf" || needsCloudResave) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       } catch {}
@@ -381,4 +457,58 @@ export function getConfiguredModelsList(): ConfiguredModelItem[] {
   }
 
   return list;
+}
+
+export interface ModelDownloadState {
+  modelName: string;
+  progressPercentage: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  status: "downloading" | "paused" | "interrupted" | "completed";
+}
+
+const DOWNLOAD_STATE_KEY = "acsa_code_model_downloads_v1";
+
+export function saveModelDownloadState(state: ModelDownloadState): void {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY) || "{}";
+    const states = JSON.parse(raw);
+    states[state.modelName] = state;
+    localStorage.setItem(DOWNLOAD_STATE_KEY, JSON.stringify(states));
+  } catch {}
+}
+
+export function getModelDownloadState(modelName: string): ModelDownloadState | null {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY);
+    if (!raw) return null;
+    const states = JSON.parse(raw);
+    return states[modelName] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearModelDownloadState(modelName: string): void {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY);
+    if (!raw) return;
+    const states = JSON.parse(raw);
+    delete states[modelName];
+    localStorage.setItem(DOWNLOAD_STATE_KEY, JSON.stringify(states));
+  } catch {}
+}
+
+import { ModelCapability } from "../types/workbench";
+
+export function routeTaskToBestModel(
+  taskType: ModelCapability,
+  providers: Record<AIProviderId, AIProviderConfig>
+): AIProviderConfig | null {
+  for (const p of Object.values(providers)) {
+    if (p.isConnected && p.capabilities?.includes(taskType)) {
+      return p;
+    }
+  }
+  return null;
 }

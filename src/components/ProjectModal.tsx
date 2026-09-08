@@ -6,7 +6,8 @@
  */
 
 import React, { useState } from "react";
-import { FolderPlus, X, Server, Zap, Globe, Atom, Box, Database, FolderSearch } from "lucide-react";
+import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X } from "lucide-react";
+import { Icon } from "./ui/Icon";
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ const TEMPLATES = [
     id: "vite-react",
     name: "Vite React + TypeScript",
     description: "Ultra-fast frontend SPA with React 18, strict TypeScript, Tailwind CSS, and lightning HMR.",
-    icon: Atom,
+    icon: Code2,
     badge: "Frontend",
     files: ["src/App.tsx", "vite.config.ts", "package.json"],
   },
@@ -36,7 +37,7 @@ const TEMPLATES = [
     id: "nestjs",
     name: "NestJS TypeScript API",
     description: "Enterprise modular TypeScript backend with controllers, services, Nest CLI configs, and REST routing.",
-    icon: Box,
+    icon: Server,
     badge: "Backend",
     files: ["src/main.ts", "src/app.module.ts", "nest-cli.json"],
   },
@@ -97,13 +98,13 @@ export function ProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none">
-      <div className="w-full max-w-lg rounded-2xl bg-zinc-900 border border-zinc-700/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 select-none">
+      <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-              <FolderPlus className="w-4 h-4" />
+              <Icon icon={FolderPlus} className="w-4 h-4" />
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100">Create New Project on Disk</h2>
@@ -117,7 +118,7 @@ export function ProjectModal({
             onClick={onClose}
             className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg"
           >
-            <X className="w-4 h-4" />
+            <Icon icon={X} className="w-4 h-4" />
           </button>
         </div>
 
@@ -156,7 +157,7 @@ export function ProjectModal({
                 onClick={handleBrowse}
                 className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
               >
-                <FolderSearch className="w-3.5 h-3.5 text-sky-400" />
+                <Icon icon={Search} className="w-3.5 h-3.5 text-sky-400" />
                 <span>Browse...</span>
               </button>
             </div>

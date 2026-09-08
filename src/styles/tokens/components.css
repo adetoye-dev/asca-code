@@ -1,0 +1,49 @@
+/**
+ * components.css — Tier 3 Component-Specific Composite Tokens
+ *
+ * Implements:
+ * - Titlebar pill dimensions and concentricity
+ * - Dropdown menu geometry (outer R=12px, padding P=4px, item R=8px)
+ * - Preferences modal geometry (outer R=16px, padding P=6px/12px)
+ * - Omnibar / command palette geometry
+ */
+
+:root {
+  /* ── Titlebar Pill Component ── */
+  --titlebar-pill-height: 28px;
+  --titlebar-pill-radius: var(--radius-xl); /* 12px */
+  --titlebar-pill-bg: var(--obsidian-850);
+  --titlebar-pill-border: var(--border-hairline);
+  --titlebar-pill-padding-x: var(--space-2-5); /* 10px */
+  --titlebar-pill-padding-y: var(--space-1);   /* 4px */
+
+  /* ── Dropdown Menu Component ──
+   * Law of Concentricity: R_outer (12px) = R_item (8px) + Padding (4px)
+   */
+  --dropdown-radius-outer: var(--radius-xl); /* 12px */
+  --dropdown-padding: var(--space-1);        /* 4px */
+  --dropdown-radius-item: var(--radius-md);  /* 8px: 8 + 4 = 12px */
+  --dropdown-item-padding-x: var(--space-3); /* 12px */
+  --dropdown-item-padding-y: var(--space-2); /* 8px */
+  --dropdown-bg: var(--surface-overlay);
+  --dropdown-border: var(--border-hairline);
+  --dropdown-shadow: var(--shadow-elevation-3);
+
+  /* ── Preferences Modal Component ──
+   * Outer radius 16px, inner padding 6px or 12px
+   */
+  --modal-radius-outer: var(--radius-2xl);   /* 16px */
+  --modal-radius-inner: var(--radius-lg);    /* 10px: 10 + 6 = 16px */
+  --modal-bg: var(--surface-modal);
+  --modal-border: var(--border-hairline);
+  --modal-shadow: var(--shadow-elevation-3);
+  --modal-header-height: 48px;
+  --modal-footer-height: 52px;
+
+  /* ── Omnibar / Command Palette ── */
+  --omnibar-width: 640px;
+  --omnibar-radius: var(--radius-2xl);       /* 16px */
+  --omnibar-bg: var(--surface-overlay);
+  --omnibar-border: var(--border-hairline);
+  --omnibar-shadow: var(--shadow-elevation-3);
+}

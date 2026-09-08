@@ -7,7 +7,8 @@
 
 import { useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
-import { Check, X, Split, AlignJustify } from "lucide-react";
+import { Check, X, Menu } from "lucide-react";
+import { Icon } from "../ui/Icon";
 
 interface MonacoDiffContainerProps {
   originalContent: string;
@@ -37,9 +38,9 @@ export function MonacoDiffContainer({
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#1e1e1e] overflow-hidden select-none">
+    <div className="flex flex-col h-full w-full bg-workbench overflow-hidden select-none">
       {/* Diff Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-[#333333] text-xs">
+      <div className="flex items-center justify-between px-4 py-2 bg-workbench border-b border-hairline text-xs">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-zinc-300">Diff Review:</span>
           <span className="font-mono text-zinc-400">{filePath || "patch.diff"}</span>
@@ -50,17 +51,17 @@ export function MonacoDiffContainer({
           <button
             type="button"
             onClick={() => setRenderSideBySide(!renderSideBySide)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#2d2d2d] hover:bg-[#383838] border border-[#404040] text-zinc-300 text-xs transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-workbench hover:bg-workbench border border-hairline text-zinc-300 text-xs transition-colors"
             title={renderSideBySide ? "Switch to Inline View" : "Switch to Side-by-Side View"}
           >
             {renderSideBySide ? (
               <>
-                <AlignJustify className="w-3.5 h-3.5" />
+                <Icon icon={Menu} className="w-3.5 h-3.5" />
                 <span>Inline</span>
               </>
             ) : (
               <>
-                <Split className="w-3.5 h-3.5" />
+                <Icon icon={Menu} className="w-3.5 h-3.5" />
                 <span>Side-by-Side</span>
               </>
             )}
@@ -72,7 +73,7 @@ export function MonacoDiffContainer({
               onClick={onReject}
               className="flex items-center gap-1 px-2.5 py-1 rounded bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 text-xs font-medium transition-colors"
             >
-              <X className="w-3.5 h-3.5" />
+              <Icon icon={X} className="w-3.5 h-3.5" />
               <span>Reject</span>
             </button>
           )}
@@ -83,7 +84,7 @@ export function MonacoDiffContainer({
               onClick={onAccept}
               className="flex items-center gap-1 px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-sm transition-colors"
             >
-              <Check className="w-3.5 h-3.5" />
+              <Icon icon={Check} className="w-3.5 h-3.5" />
               <span>Accept Patch</span>
             </button>
           )}

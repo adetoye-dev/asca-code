@@ -10,19 +10,9 @@
  */
 
 import { useState, useEffect } from "react";
-import {
-  GitPullRequest,
-  Check,
-  RefreshCw,
-  ArrowUp,
-  ArrowDown,
-  AlertCircle,
-  Plus,
-  Minus,
-  RotateCcw,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { Plus, Minus, ChevronRight, Check, ChevronUp, GitPullRequest, ChevronDown, RefreshCw, AlertCircle } from "lucide-react";
+import { Icon } from "../ui/Icon";
+
 import { FileIcon } from "../ui/FileIcon";
 
 export interface ChangedGitFile {
@@ -226,12 +216,12 @@ export function SourceControlSidebar({
   const totalChanges = stagedFiles.length + unstagedFiles.length;
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#18181b] select-none text-[13px] text-zinc-300 font-sans">
+    <div className="flex flex-col h-full w-full bg-workbench select-none text-[13px] text-zinc-300 font-sans">
       {/* Header */}
       <div className="p-3 border-b border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-zinc-300 text-[11px]">
-            <GitPullRequest className="w-4 h-4 text-sky-400" />
+            <Icon icon={GitPullRequest} className="w-4 h-4 text-sky-400" />
             <span>Source Control</span>
           </div>
 
@@ -241,7 +231,7 @@ export function SourceControlSidebar({
             className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
             title="Refresh Git Status"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
           </button>
         </div>
 
@@ -256,13 +246,13 @@ export function SourceControlSidebar({
             <div className="flex items-center gap-2 font-mono text-[10px]">
               {ahead > 0 && (
                 <span className="flex items-center gap-0.5 text-emerald-400 font-semibold">
-                  <ArrowUp className="w-3 h-3" />
+                  <Icon icon={ChevronUp} className="w-3 h-3" />
                   <span>{ahead}</span>
                 </span>
               )}
               {behind > 0 && (
                 <span className="flex items-center gap-0.5 text-amber-400 font-semibold">
-                  <ArrowDown className="w-3 h-3" />
+                  <Icon icon={ChevronDown} className="w-3 h-3" />
                   <span>{behind}</span>
                 </span>
               )}
@@ -295,7 +285,7 @@ export function SourceControlSidebar({
                 : "bg-red-950/40 border border-red-500/40 text-red-300"
             }`}
           >
-            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <Icon icon={statusMsg.includes("success") ? Check : AlertCircle} className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             <span className="break-all">{statusMsg}</span>
           </div>
         )}
@@ -311,9 +301,9 @@ export function SourceControlSidebar({
           }`}
         >
           {isCommitting ? (
-            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin" />
           ) : (
-            <Check className="w-3.5 h-3.5" />
+            <Icon icon={Check} className="w-3.5 h-3.5" />
           )}
           <span>
             {stagedFiles.length > 0
@@ -340,9 +330,9 @@ export function SourceControlSidebar({
                 >
                   <div className="flex items-center gap-1.5">
                     {isStagedOpen ? (
-                      <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                      <Icon icon={ChevronDown} className="w-3.5 h-3.5 text-zinc-400" />
                     ) : (
-                      <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                      <Icon icon={ChevronRight} className="w-3.5 h-3.5 text-zinc-400" />
                     )}
                     <span>STAGED CHANGES</span>
                   </div>
@@ -354,7 +344,7 @@ export function SourceControlSidebar({
                       className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-zinc-100 transition-all"
                       title="Unstage All Changes"
                     >
-                      <Minus className="w-3 h-3" />
+                      <Icon icon={Minus} className="w-3 h-3" />
                     </button>
                     <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
                       {stagedFiles.length}
@@ -388,7 +378,7 @@ export function SourceControlSidebar({
                             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded text-zinc-400 hover:text-amber-400 transition-all"
                             title="Unstage Changes"
                           >
-                            <Minus className="w-3.5 h-3.5" />
+                            <Icon icon={Minus} className="w-3.5 h-3.5" />
                           </button>
                           {getStatusBadge(file)}
                         </div>
@@ -407,9 +397,9 @@ export function SourceControlSidebar({
               >
                 <div className="flex items-center gap-1.5">
                   {isUnstagedOpen ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                    <Icon icon={ChevronDown} className="w-3.5 h-3.5 text-zinc-400" />
                   ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                    <Icon icon={ChevronRight} className="w-3.5 h-3.5 text-zinc-400" />
                   )}
                   <span>CHANGES</span>
                 </div>
@@ -421,7 +411,7 @@ export function SourceControlSidebar({
                     className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-zinc-100 transition-all"
                     title="Stage All Changes"
                   >
-                    <Plus className="w-3 h-3" />
+                    <Icon icon={Plus} className="w-3 h-3" />
                   </button>
                   <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
                     {unstagedFiles.length}
@@ -455,7 +445,7 @@ export function SourceControlSidebar({
                           className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded text-zinc-400 hover:text-red-400 transition-all"
                           title="Discard Changes"
                         >
-                          <RotateCcw className="w-3.5 h-3.5" />
+                          <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"
@@ -463,7 +453,7 @@ export function SourceControlSidebar({
                           className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded text-zinc-400 hover:text-emerald-400 transition-all"
                           title="Stage Changes"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Icon icon={Plus} className="w-3.5 h-3.5" />
                         </button>
                         {getStatusBadge(file)}
                       </div>

@@ -6,7 +6,8 @@
  */
 
 import { Component, ErrorInfo, ReactNode } from "react";
-import { AlertTriangle, RefreshCw, Trash2, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Trash2, ChevronRight, ChevronDown, RefreshCw, AlertCircle, X } from "lucide-react";
+import { Icon } from "./ui/Icon";
 
 interface Props {
   children: ReactNode;
@@ -66,11 +67,11 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-sans text-zinc-200 select-none">
-          <div className="w-[620px] max-w-[95vw] rounded-xl bg-[#1E1F22] border border-[#E5534B]/40 shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col">
+          <div className="w-[620px] max-w-[95vw] rounded-xl bg-workbench border border-hairline/40 shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col">
             {/* Header */}
-            <div className="h-11 bg-[#2B2D30] border-b border-[#393B40] px-4 flex items-center justify-between">
+            <div className="h-11 bg-workbench border-b border-hairline px-4 flex items-center justify-between">
               <div className="flex items-center gap-2 text-red-400 font-semibold text-xs">
-                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <Icon icon={AlertCircle} className="w-4 h-4 text-red-400" />
                 <span>{this.props.fallbackTitle || "Workbench Component Error"}</span>
               </div>
               <button
@@ -79,7 +80,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="p-1 text-zinc-400 hover:text-zinc-200 rounded transition cursor-pointer"
                 title="Dismiss"
               >
-                <X className="w-4 h-4" />
+                <Icon icon={X} className="w-4 h-4" />
               </button>
             </div>
 
@@ -102,15 +103,15 @@ export class ErrorBoundary extends Component<Props, State> {
                   className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 cursor-pointer font-medium"
                 >
                   {this.state.showDetails ? (
-                    <ChevronDown className="w-3.5 h-3.5" />
+                    <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
                   ) : (
-                    <ChevronRight className="w-3.5 h-3.5" />
+                    <Icon icon={ChevronRight} className="w-3.5 h-3.5" />
                   )}
                   <span>{this.state.showDetails ? "Hide Error Details" : "Show Error Details"}</span>
                 </button>
 
                 {this.state.showDetails && (
-                  <div className="mt-2 p-3 rounded bg-[#141416] border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
+                  <div className="mt-2 p-3 rounded bg-workbench border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
                     {this.state.error?.stack || "No stack trace available"}
                     {this.state.errorInfo?.componentStack && (
                       <div className="mt-2 text-zinc-500 border-t border-zinc-800 pt-2">
@@ -123,14 +124,14 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
 
             {/* Footer Actions */}
-            <div className="h-12 bg-[#2B2D30] border-t border-[#393B40] px-4 flex items-center justify-between">
+            <div className="h-12 bg-workbench border-t border-hairline px-4 flex items-center justify-between">
               <button
                 type="button"
                 onClick={this.handleClearStorageAndReload}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-zinc-400 hover:text-red-400 hover:bg-zinc-800/60 transition cursor-pointer"
                 title="Reset corrupted preferences and reload"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Icon icon={Trash2} className="w-3.5 h-3.5" />
                 <span>Reset Cache & Reload</span>
               </button>
 
@@ -138,16 +139,16 @@ export class ErrorBoundary extends Component<Props, State> {
                 <button
                   type="button"
                   onClick={this.handleReset}
-                  className="px-3.5 py-1.5 rounded bg-[#393B40] hover:bg-[#4E5157] text-zinc-200 text-xs font-medium transition cursor-pointer"
+                  className="px-3.5 py-1.5 rounded bg-workbench hover:bg-surface-hover text-zinc-200 text-xs font-medium transition cursor-pointer"
                 >
                   Dismiss
                 </button>
                 <button
                   type="button"
                   onClick={this.handleReload}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-[#3574F0] hover:bg-[#4682F4] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
                   <span>Reload Workbench</span>
                 </button>
               </div>

@@ -14,19 +14,8 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import {
-  X,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  ChevronRight,
-  ChevronDown,
-  Cpu,
-  Download,
-  Play,
-  Sparkles,
-  Info,
-} from "lucide-react";
+import { Bot, CheckCircle2, ChevronRight, Lightbulb, Download, Loader2, ChevronDown, Play, Cpu, AlertCircle, X } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import {
   checkOllamaStatus,
   installOllama,
@@ -234,7 +223,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
     if (step === "detect") {
       return (
         <div className="flex flex-col items-center gap-4 py-8 text-center">
-          <Loader2 className="w-9 h-9 text-purple-400 animate-spin" />
+          <Icon icon={Loader2} className="w-9 h-9 text-purple-400 animate-spin" />
           <div>
             <p className="text-xs font-semibold text-zinc-200">Detecting local Ollama installation…</p>
             <p className="text-[11px] text-zinc-500 mt-1">Inspecting PATH and application directories</p>
@@ -247,7 +236,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
       return (
         <div className="space-y-4">
           <div className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/25">
-            <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <Icon icon={Lightbulb} className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             <div className="text-xs text-amber-200/90 leading-relaxed">
               <span className="font-semibold text-white">Ollama is not yet installed.</span>
               <p className="mt-0.5 text-zinc-300">
@@ -277,7 +266,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 onClick={() => setShowLogs((prev) => !prev)}
                 className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
-                <ChevronDown className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
+                <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
               </button>
               {showLogs && <LogBox logs={logs} logsEndRef={logsEndRef} />}
@@ -290,7 +279,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               onClick={runInstall}
               className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-bold text-white transition-colors shadow-sm"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Icon icon={Download} className="w-3.5 h-3.5" />
               Download & Install Ollama
             </button>
           )}
@@ -302,7 +291,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
       return (
         <div className="space-y-4">
           <div className="flex items-start gap-3 p-3.5 rounded-xl bg-sky-950/30 border border-sky-500/25">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <div className="text-xs text-sky-200/90 leading-relaxed">
               <span className="font-semibold text-white">Ollama is installed on this device.</span>
               <p className="mt-0.5 text-zinc-300">
@@ -325,7 +314,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 onClick={() => setShowLogs((prev) => !prev)}
                 className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
-                <ChevronDown className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
+                <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
               </button>
               {showLogs && <LogBox logs={logs} logsEndRef={logsEndRef} />}
@@ -338,7 +327,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               onClick={runStart}
               className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-xs font-bold text-white transition-colors shadow-sm"
             >
-              <Play className="w-3.5 h-3.5" />
+              <Icon icon={Play} className="w-3.5 h-3.5" />
               Start Ollama Server
             </button>
           )}
@@ -396,7 +385,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 onClick={() => setShowLogs((prev) => !prev)}
                 className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
-                <ChevronDown className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
+                <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
               </button>
               {showLogs && <LogBox logs={logs} logsEndRef={logsEndRef} />}
@@ -409,7 +398,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               onClick={runPull}
               className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white transition-colors shadow-sm"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Icon icon={Download} className="w-3.5 h-3.5" />
               Pull {selectedModel}
             </button>
           )}
@@ -422,7 +411,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
         <div className="space-y-5">
           <div className="flex flex-col items-center gap-3 py-4 text-center">
             <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-              <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+              <Icon icon={CheckCircle2} className="w-6 h-6 text-emerald-400" />
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Ollama is Ready!</h3>
@@ -445,7 +434,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               onClick={handleSetDefault}
               className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-xs font-bold text-zinc-950 transition-colors shadow-sm cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 fill-zinc-950 text-zinc-950" />
+              <Icon icon={Bot} className="w-3.5 h-3.5 fill-zinc-950 text-zinc-950" />
               Start Coding with Ollama
             </button>
             <button
@@ -456,7 +445,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               }}
               className="flex items-center gap-2 w-full justify-center px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-zinc-700/60 transition-colors cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 text-purple-400" />
+              <Icon icon={Download} className="w-3.5 h-3.5 text-purple-400" />
               Download More Models (AI Manager)
             </button>
             <button
@@ -475,7 +464,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
       return (
         <div className="space-y-4">
           <div className="flex items-start gap-3 p-3.5 rounded-xl bg-red-950/30 border border-red-500/30">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <div className="text-xs text-red-200/90 leading-relaxed">
               <span className="font-semibold text-white">Setup Interrupted</span>
               <p className="mt-1 font-mono text-[11px] text-red-300/80 break-words">{errorMsg}</p>
@@ -506,12 +495,12 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
 
   /* ── Modal Layout ────────────────────────────────────────────────────── */
   const inner = (
-    <div className="w-full max-w-md bg-[#131317] border border-zinc-800/90 rounded-2xl shadow-2xl overflow-hidden font-sans">
+    <div className="w-full max-w-md bg-workbench border border-zinc-800/90 rounded-2xl shadow-2xl overflow-hidden font-sans">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-800/80">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-            <Cpu className="w-4 h-4 text-purple-400" />
+            <Icon icon={Cpu} className="w-4 h-4 text-purple-400" />
           </div>
           <div>
             <h2 className="text-xs font-bold text-white tracking-tight">Local AI Engine Setup</h2>
@@ -524,7 +513,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           className="text-zinc-500 hover:text-zinc-300 transition-colors p-1 rounded-lg hover:bg-zinc-800"
           title="Dismiss"
         >
-          <X className="w-3.5 h-3.5" />
+          <Icon icon={X} className="w-3.5 h-3.5" />
         </button>
       </div>
 
@@ -545,11 +534,11 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                     : "text-zinc-600"
                 }`}
               >
-                {done && <CheckCircle2 className="w-2.5 h-2.5" />}
+                {done && <Icon icon={CheckCircle2} className="w-2.5 h-2.5" />}
                 <span>{s.label}</span>
               </div>
               {idx < steps.length - 1 && (
-                <ChevronRight className="w-3 h-3 text-zinc-800 mx-0.5 shrink-0" />
+                <Icon icon={ChevronRight} className="w-3 h-3 text-zinc-800 mx-0.5 shrink-0" />
               )}
             </div>
           );
@@ -598,8 +587,8 @@ interface OllamaBannerProps {
 
 export function OllamaNotRunningBanner({ onOpenWizard, onDismiss }: OllamaBannerProps) {
   return (
-    <div className="fixed bottom-6 right-6 z-[9000] flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-[#131317] border border-amber-500/40 shadow-xl max-w-xs font-sans">
-      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+    <div className="fixed bottom-6 right-6 z-[9000] flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
+      <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-white truncate">Ollama is not running</p>
         <p className="text-[10px] text-zinc-400 mt-0.5">Local AI engine is inactive</p>
@@ -618,7 +607,7 @@ export function OllamaNotRunningBanner({ onOpenWizard, onDismiss }: OllamaBanner
           className="text-zinc-600 hover:text-zinc-400 transition-colors p-1"
           title="Dismiss"
         >
-          <X className="w-3 h-3" />
+          <Icon icon={X} className="w-3 h-3" />
         </button>
       </div>
     </div>

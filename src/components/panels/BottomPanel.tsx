@@ -9,17 +9,8 @@
  */
 
 import { useState, useRef } from "react";
-import {
-  Terminal,
-  FileText,
-  AlertCircle,
-  X,
-  ChevronUp,
-  ChevronDown,
-  Trash2,
-  RefreshCw,
-  CheckCircle2,
-} from "lucide-react";
+import { Trash2, CheckCircle2, FileText, ChevronUp, ChevronDown, RefreshCw, AlertCircle, AlertTriangle, Terminal, X } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import { XtermTerminal, type XtermTerminalHandle } from "../terminal/XtermTerminal";
 import { ConsolePanel } from "./ConsolePanel";
 import type { PipelineOutputLine, OrchestrationResult } from "../TelemetryScorecard";
@@ -107,26 +98,26 @@ export function BottomPanel({
           <button
             type="button"
             onClick={() => setActiveTab("terminal")}
-            className={`flex items-center gap-1.5 px-2.5 h-full border-b-2 transition-colors uppercase tracking-wider ${
+            className={`flex items-center gap-1.5 px-2.5 h-[80%] rounded-md my-auto transition-colors uppercase tracking-wider ${
               activeTab === "terminal"
-                ? "border-sky-400 text-zinc-100 font-semibold bg-[var(--vscode-tab-active-bg)]"
-                : "border-transparent text-zinc-400 hover:text-zinc-200 font-medium"
+                ? "text-zinc-100 font-semibold bg-white/10"
+                : "text-zinc-400 hover:text-zinc-200 font-medium"
             }`}
           >
-            <Terminal className="w-3.5 h-3.5 text-sky-400" />
+            <Icon icon={Terminal} className="w-3.5 h-3.5 text-sky-400" />
             <span>TERMINAL</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("output")}
-            className={`flex items-center gap-1.5 px-2.5 h-full border-b-2 transition-colors uppercase tracking-wider ${
+            className={`flex items-center gap-1.5 px-2.5 h-[80%] rounded-md my-auto transition-colors uppercase tracking-wider ${
               activeTab === "output"
-                ? "border-sky-400 text-zinc-100 font-semibold bg-[var(--vscode-tab-active-bg)]"
-                : "border-transparent text-zinc-400 hover:text-zinc-200 font-medium"
+                ? "text-zinc-100 font-semibold bg-white/10"
+                : "text-zinc-400 hover:text-zinc-200 font-medium"
             }`}
           >
-            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <Icon icon={FileText} className="w-3.5 h-3.5 text-emerald-400" />
             <span>OUTPUT (GAUNTLET)</span>
             {status === "running" && (
               <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
@@ -136,13 +127,13 @@ export function BottomPanel({
           <button
             type="button"
             onClick={() => setActiveTab("problems")}
-            className={`flex items-center gap-1.5 px-2.5 h-full border-b-2 transition-colors uppercase tracking-wider ${
+            className={`flex items-center gap-1.5 px-2.5 h-[80%] rounded-md my-auto transition-colors uppercase tracking-wider ${
               activeTab === "problems"
-                ? "border-sky-400 text-zinc-100 font-semibold bg-[var(--vscode-tab-active-bg)]"
-                : "border-transparent text-zinc-400 hover:text-zinc-200 font-medium"
+                ? "text-zinc-100 font-semibold bg-white/10"
+                : "text-zinc-400 hover:text-zinc-200 font-medium"
             }`}
           >
-            <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+            <Icon icon={AlertTriangle} className="w-3.5 h-3.5 text-amber-400" />
             <span>PROBLEMS</span>
             {errorLines.length > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold font-mono">
@@ -173,7 +164,7 @@ export function BottomPanel({
                 className="p-1 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
                 title="Restart Interactive Shell (PTY)"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
@@ -181,7 +172,7 @@ export function BottomPanel({
                 className="p-1 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
                 title="Clear Terminal Buffer"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Icon icon={Trash2} className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
@@ -200,7 +191,7 @@ export function BottomPanel({
                 className="p-1 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
                 title="Clear Output Console"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Icon icon={Trash2} className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
@@ -213,9 +204,9 @@ export function BottomPanel({
             title={isMaximized ? "Restore Panel Size" : "Maximize Panel"}
           >
             {isMaximized ? (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
             ) : (
-              <ChevronUp className="w-3.5 h-3.5" />
+              <Icon icon={ChevronUp} className="w-3.5 h-3.5" />
             )}
           </button>
 
@@ -226,7 +217,7 @@ export function BottomPanel({
             className="p-1 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
             title="Close Panel (Cmd+J / Ctrl+`)"
           >
-            <X className="w-3.5 h-3.5" />
+            <Icon icon={X} className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -250,7 +241,7 @@ export function BottomPanel({
           <div className="h-full w-full overflow-y-auto p-3 space-y-1.5 font-mono text-xs bg-[var(--vscode-editor-bg)]">
             {orchestrationResult && orchestrationResult.outcome !== "success" && (
               <div className="flex items-center gap-2 p-2 rounded bg-red-950/40 border border-red-800 text-red-200 mb-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
                 <span>
                   Gauntlet Verification Failed: {orchestrationResult.outcome.toUpperCase()} (Total rounds: {orchestrationResult.total_rounds})
                 </span>
@@ -259,7 +250,7 @@ export function BottomPanel({
 
             {errorLines.length === 0 && (!orchestrationResult || orchestrationResult.outcome === "success") ? (
               <div className="flex items-center gap-2 text-zinc-400 py-6 justify-center font-sans text-xs">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400" />
                 <span>No problems detected in workspace or compiler syntax guard.</span>
               </div>
             ) : (
@@ -268,7 +259,7 @@ export function BottomPanel({
                   key={idx}
                   className="flex items-start gap-2 p-1.5 rounded bg-red-950/20 border border-red-900/40 text-red-300 font-mono text-xs"
                 >
-                  <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                  <Icon icon={AlertCircle} className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <span className="font-semibold text-red-200">[Syntax/Runtime Error]</span>{" "}
                     <span className="text-zinc-200">{line.content}</span>

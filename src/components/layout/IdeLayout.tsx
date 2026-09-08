@@ -19,33 +19,15 @@ import {
   IDockviewPanelProps,
 } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
-
-import {
-  FolderCode,
-  FolderOpen,
-  FolderPlus,
-  Activity,
-  Cpu,
-  Sparkles,
-  Settings,
-  CheckCircle2,
-  GitBranch,
-  GitPullRequest,
-  Boxes,
-  PanelLeft,
-  PanelRight,
-  PanelBottom,
-  Search,
-  Save,
-  Terminal,
-  Palette,
-  Download,
-} from "lucide-react";
-import { IdeBrandLogo, ProviderLogo } from "../ui/BrandLogos";
+import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot } from "lucide-react";
+import { Icon } from "../ui/Icon";
+import { IdeBrandLogo } from "../ui/BrandLogos";
 
 import { MonacoEditorContainer } from "../editor/MonacoEditorContainer";
 import { MonacoDiffContainer } from "../editor/MonacoDiffContainer";
 import { BottomPanel } from "../panels/BottomPanel";
+import { AssetPreview } from "../editor/AssetPreview";
+import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
@@ -61,7 +43,7 @@ import { PerformanceDashboard } from "../dashboards/PerformanceDashboard";
 import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
-import { PRESET_THEMES, applyGlobalWorkbenchTheme } from "../../services/themeManager";
+import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 
@@ -237,6 +219,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   };
 
   const openAiChatTab = () => {
+    // Mutual exclusivity: close right panel when opening center stage tab
+    setIsRightPanelOpen(false);
     const api = dockviewApiRef.current;
     if (!api) return;
     const existing = api.getPanel("dock_ai_chat");
@@ -278,7 +262,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
 
       // Cmd+Shift+P: Command Palette
-      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "p") {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPaletteMode("command");
         setIsCommandPaletteOpen((prev) => !prev);
@@ -333,10 +317,17 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         return;
       }
 
-      // Cmd+L: Toggle Right AI Assistant Tool Window
+      // Cmd+L: Toggle Right AI Assistant Tool Window (or close center tab and open right)
       if (isCmdOrCtrl && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        setIsRightPanelOpen((prev) => !prev);
+        const api = dockviewApiRef.current;
+        const centerPanel = api?.getPanel("dock_ai_chat");
+        if (centerPanel) {
+          api?.removePanel(centerPanel);
+          setIsRightPanelOpen(true);
+        } else {
+          setIsRightPanelOpen((prev) => !prev);
+        }
         return;
       }
 
@@ -372,7 +363,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       action: () => setIsSidebarOpen((prev) => !prev),
     },
     {
-      id: "view.togglePanel",
+      id: "view.toggleBottomPanel",
       title: "Toggle Bottom Panel (Terminal / Output)",
       category: "View",
       shortcut: "⌘J",
@@ -391,7 +382,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       title: "AI Assistant: Toggle AI Chat Tool Window",
       category: "AI",
       shortcut: "⌘L",
-      icon: Sparkles,
+      icon: MessageSquare,
       action: () => setIsRightPanelOpen((prev) => !prev),
     },
     {
@@ -424,7 +415,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       id: "file.openFolder",
       title: "Open Folder...",
       category: "File",
-      icon: FolderOpen,
+      icon: Folder,
       action: handleOpenFolder,
     },
     {
@@ -473,14 +464,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       id: "agent.run",
       title: "Autonomous Agent: Execute & Verify Task",
       category: "Agent",
-      icon: Sparkles,
+      icon: Bot,
       action: () => runPipeline(),
     },
     {
       id: "view.explorer",
       title: "Show Explorer",
       category: "View",
-      icon: FolderCode,
+      icon: Folder,
       action: () => {
         setActiveSidebarTab("explorer");
         setIsSidebarOpen(true);
@@ -525,7 +516,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       id: "git.clone",
       title: "Git: Clone Repository...",
       category: "Git",
-      icon: GitBranch,
+      icon: GitFork,
       action: () => setIsCloneModalOpen(true),
     },
     {
@@ -560,14 +551,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       id: "view.openAiChat",
       title: "AI: Open AI Assistant Chat",
       category: "AI",
-      icon: Sparkles,
+      icon: MessageSquare,
       action: openAiChatTab,
     },
     {
       id: "view.extensions",
       title: "Show Extensions & Open VSX Marketplace",
       category: "View",
-      icon: Boxes,
+      icon: Package,
       action: () => {
         setActiveSidebarTab("extensions");
         setIsSidebarOpen(true);
@@ -577,6 +568,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   // ── Dockview Components Dictionary ────────────────────────────────────────
   const components = {
+    
+    // Asset Preview Tab
+    assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean }>) => (
+      <AssetPreview {...props} />
+    ),
     // Monaco Code Editor Tab
     editor: (props: IDockviewPanelProps<{ filePath: string }>) => {
       const tab = openTabs.find((t) => t.path === props.params.filePath);
@@ -677,7 +673,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       />
     ),
 
-    // IntelliJ-Inspired AI Assistant Chat Tab
+    // Center Stage AI Assistant Chat Tab (Full Canvas / Wide Omnibar Mode)
     aiChat: () => (
       <AiAssistantChat
         prompt={prompt}
@@ -696,6 +692,19 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           runPipeline();
         }}
         onCancelPipeline={cancelPipeline}
+        isWide={true}
+        onClose={() => {
+          const api = dockviewApiRef.current;
+          const panel = api?.getPanel("dock_ai_chat");
+          if (panel) api?.removePanel(panel);
+        }}
+        onPopOutWide={() => {
+          // Dock back to side tool window
+          const api = dockviewApiRef.current;
+          const panel = api?.getPanel("dock_ai_chat");
+          if (panel) api?.removePanel(panel);
+          setIsRightPanelOpen(true);
+        }}
       />
     ),
   };
@@ -709,9 +718,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       const first = openTabs[0];
       event.api.addPanel({
         id: first.path,
-        component: "editor",
+        component: first.path.match(/\.(png|jpg|jpeg|svg|gif|webp|ico)$/i) ? "assetPreview" : "editor",
         title: first.name,
-        params: { filePath: first.path },
+        params: { filePath: first.path , isTauri: isTauriAvailable },
       });
     }
 
@@ -740,7 +749,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     if (!api) return;
 
     // Close any editor panel whose tab is no longer in openTabs
-    const editorPanels = api.panels.filter((p) => (p as any).component === "editor");
+    const editorPanels = api.panels.filter((p) => ["editor", "assetPreview", "diff"].includes((p as any).component));
     for (const panel of editorPanels) {
       if (!openTabs.some((t) => t.path === panel.id)) {
         panel.api.close();
@@ -753,9 +762,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       if (!existing) {
         api.addPanel({
           id: tab.path,
-          component: "editor",
+          component: tab.path.match(/\.(png|jpg|jpeg|svg|gif|webp|ico)$/i) ? "assetPreview" : "editor",
           title: tab.name,
-          params: { filePath: tab.path },
+          params: { filePath: tab.path , isTauri: isTauriAvailable },
         });
       }
     }
@@ -777,7 +786,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       if (
         panel.id.startsWith("diff_") ||
         panel.id === "dock_diff" ||
-        (panel as any).component === "editor" ||
+        ["editor", "assetPreview"].includes((panel as any).component) ||
         (panel as any).component === "diff"
       ) {
         panel.api.close();
@@ -847,7 +856,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           title="Search files or commands (Cmd+P)"
         >
           <div className="flex items-center gap-2 truncate">
-            <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <Icon icon={Search} className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
             <span className="truncate">{activeProject.name} — Search files (Cmd+P)</span>
           </div>
           <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/60">
@@ -857,29 +866,27 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
-          {/* Local AI (Ollama) Wizard Opener */}
-          <button
-            type="button"
-            onClick={openOllamaSetupWizard}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-300 hover:text-white bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 transition-all cursor-pointer shadow-sm"
-            title="Configure Local AI Models & Ollama"
-          >
-            <Cpu className="w-3.5 h-3.5 text-purple-400" />
-            <span>Local AI</span>
-          </button>
-
           {/* AI Chat Button (Toggles Right AI Panel) */}
           <button
             type="button"
-            onClick={() => setIsRightPanelOpen((prev) => !prev)}
+            onClick={() => {
+              const api = dockviewApiRef.current;
+              const centerPanel = api?.getPanel("dock_ai_chat");
+              if (centerPanel) {
+                api?.removePanel(centerPanel);
+                setIsRightPanelOpen(true);
+              } else {
+                setIsRightPanelOpen((prev) => !prev);
+              }
+            }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              isRightPanelOpen
+              isRightPanelOpen || dockviewApiRef.current?.getPanel("dock_ai_chat")
                 ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
                 : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
             }`}
             title="Toggle AI Assistant Tool Window (Cmd+L)"
           >
-            <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-sky-400" />
             <span>AI Chat</span>
           </button>
 
@@ -896,7 +903,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }`}
             title="Toggle Primary Side Bar (Cmd+B)"
           >
-            <PanelLeft className="w-3.5 h-3.5" />
+            <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
           </button>
 
           {/* Toggle Bottom Panel Button */}
@@ -910,7 +917,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }`}
             title="Toggle Bottom Panel (Cmd+J / Ctrl+`)"
           >
-            <PanelBottom className="w-3.5 h-3.5" />
+            <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
           </button>
 
           {/* Toggle Right Tool Window Button */}
@@ -924,7 +931,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }`}
             title="Toggle AI Assistant Tool Window (Cmd+L)"
           >
-            <PanelRight className="w-3.5 h-3.5" />
+            <Icon icon={PanelRight} className="w-3.5 h-3.5" />
           </button>
         </div>
       </header>
@@ -947,11 +954,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }}
             className={`p-2 rounded-lg transition-all ${
               activeSidebarTab === "explorer" && isSidebarOpen
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-[var(--vscode-accent)] border-l-2 border-[var(--vscode-accent)] rounded-l-none"
+                ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
           >
-            <FolderCode className="w-4 h-4" />
+            <Icon icon={Folder} className="w-4 h-4" />
           </button>
 
           {/* Search Tab */}
@@ -969,11 +976,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }}
             className={`p-2 rounded-lg transition-all ${
               activeSidebarTab === "search" && isSidebarOpen
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-[var(--vscode-accent)] border-l-2 border-[var(--vscode-accent)] rounded-l-none"
+                ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
           >
-            <Search className="w-4 h-4" />
+            <Icon icon={Search} className="w-4 h-4" />
           </button>
 
           {/* Source Control Tab */}
@@ -990,11 +997,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }}
             className={`p-2 rounded-lg transition-all ${
               activeSidebarTab === "sourceControl" && isSidebarOpen
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-[var(--vscode-accent)] border-l-2 border-[var(--vscode-accent)] rounded-l-none"
+                ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
           >
-            <GitPullRequest className="w-4 h-4" />
+            <Icon icon={GitPullRequest} className="w-4 h-4" />
           </button>
 
 
@@ -1006,11 +1013,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onClick={openMonitorTab}
             className={`p-2 rounded-lg transition-all ${
               activeDockPanelId === "dock_monitor"
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-emerald-400 border-l-2 border-emerald-400 rounded-l-none"
+                ? "bg-white/10 text-emerald-400 rounded-md"
                 : "text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/60"
             }`}
           >
-            <Activity className="w-4 h-4" />
+            <Icon icon={Activity} className="w-4 h-4" />
           </button>
 
           {/* Model Management & Providers (Opens Full Page Dashboard) */}
@@ -1020,11 +1027,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onClick={openAiManagerTab}
             className={`p-2 rounded-lg transition-all ${
               activeDockPanelId === "dock_ai_manager"
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-purple-400 border-l-2 border-purple-400 rounded-l-none"
+                ? "bg-white/10 text-purple-400 rounded-md"
                 : "text-zinc-400 hover:text-purple-400 hover:bg-zinc-800/60"
             }`}
           >
-            <Cpu className="w-4 h-4" />
+            <Icon icon={Cpu} className="w-4 h-4" />
           </button>
 
           {/* Extensions & Open VSX Marketplace Tab */}
@@ -1041,11 +1048,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }}
             className={`p-2 rounded-lg transition-all ${
               activeSidebarTab === "extensions" && isSidebarOpen
-                ? "bg-[var(--vscode-tab-inactive-bg)] text-[var(--vscode-accent)] border-l-2 border-[var(--vscode-accent)] rounded-l-none"
+                ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
           >
-            <Boxes className="w-4 h-4" />
+            <Icon icon={Package} className="w-4 h-4" />
           </button>
 
           <div className="flex-1" />
@@ -1057,7 +1064,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onClick={openSettings}
             className="p-2 text-zinc-400 hover:text-zinc-100 rounded-lg transition-all mb-1"
           >
-            <Settings className="w-4 h-4" />
+            <Icon icon={Settings} className="w-4 h-4" />
           </button>
         </aside>
 
@@ -1134,7 +1141,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
         {isRightPanelOpen && (
-          <aside className="w-[410px] border-l border-[var(--vscode-border)] bg-[#141416] flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
+          <aside className="w-[410px] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
             <AiAssistantChat
               prompt={prompt}
               setPrompt={setPrompt}
@@ -1161,103 +1168,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
       </div>
 
-      {/* ── Bottom VS Code Status Bar ────────────────────────────────────── */}
-      <footer className="h-6 bg-[var(--vscode-statusbar-bg)] border-t border-[var(--vscode-border)] text-zinc-300 flex items-center justify-between px-3 text-xs select-none shrink-0 font-sans">
-        {/* Left Status Bar Items */}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSidebarTab("sourceControl");
-              setIsSidebarOpen(true);
-            }}
-            className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors"
-            title="Switch branch or view source control"
-          >
-            <GitBranch className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-mono">{gitBranch}</span>
-          </button>
-          <div className="flex items-center gap-1 text-zinc-300">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>0 Errors</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsBottomPanelOpen((prev) => !prev)}
-            className="flex items-center gap-1.5 hover:text-white cursor-pointer transition-colors text-zinc-300"
-          >
-            <Terminal className="w-3.5 h-3.5" />
-            <span>Terminal</span>
-          </button>
-        </div>
-
-        {/* Right Status Bar Items */}
-        <div className="flex items-center gap-3">
-          <span className="text-zinc-400">UTF-8</span>
-
-          {/* Theme Indicator & Direct Theme Editor Opener */}
-          <button
-            type="button"
-            onClick={openThemeEditor}
-            className="capitalize hover:text-white cursor-pointer flex items-center gap-1.5 transition-colors text-zinc-300"
-            title="Workbench Theme (click to open Theme Editor)"
-          >
-            <Palette className="w-3.5 h-3.5 text-pink-400" />
-            <span>{PRESET_THEMES[themeId]?.name || themeId}</span>
-          </button>
-
-          {/* Active AI Model Indicator with authentic brand logo */}
-          <button
-            type="button"
-            onClick={openAiManagerTab}
-            className="capitalize hover:text-white cursor-pointer flex items-center gap-1.5 transition-colors text-zinc-300"
-            title="Active AI Provider & Model (click to open model management)"
-          >
-            <ProviderLogo providerId={aiSettings.provider || "ollama"} className="w-3.5 h-3.5" />
-            <span className="font-mono text-[11px]">
-              {aiSettings.model ||
-                (aiSettings.provider === "ollama"
-                  ? "Ollama"
-                  : aiSettings.provider === "local"
-                    ? "Local AI"
-                    : aiSettings.provider === "openai"
-                      ? "OpenAI"
-                      : "No model selected")}
-            </span>
-          </button>
-
-          {/* Local AI / Ollama Quick Wizard Opener */}
-          <button
-            type="button"
-            onClick={openOllamaSetupWizard}
-            className="hover:text-purple-300 cursor-pointer flex items-center gap-1 transition-colors text-zinc-400"
-            title="Local AI Engine Setup & Model Puller (Ollama)"
-          >
-            <Cpu className="w-3.5 h-3.5 text-purple-400" />
-            <span>Local AI</span>
-          </button>
-
-          {/* Host Telemetry Indicators */}
-          {systemMetrics && (
-            <button
-              type="button"
-              onClick={openMonitorTab}
-              className="hover:text-white cursor-pointer flex items-center gap-1.5 transition-colors text-zinc-300"
-              title="System Load (click for detailed health metrics)"
-            >
-              <Activity className="w-3.5 h-3.5 text-emerald-400" />
-              <span>CPU {Math.round(systemMetrics.cpu_usage_percent)}%</span>
-              <span className="text-zinc-500">•</span>
-              <span>RAM {Math.round(systemMetrics.memory_usage_percent)}%</span>
-            </button>
-          )}
-
-          <div className="flex items-center gap-1.5 text-zinc-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Engine Ready</span>
-          </div>
-        </div>
-      </footer>
+      <StatusBar gitBranch={gitBranch} metrics={systemMetrics} />
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
       <CloneModal

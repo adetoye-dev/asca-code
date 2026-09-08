@@ -10,25 +10,12 @@
  */
 
 import { useState, useEffect } from "react";
-import {
-  Star,
-  CheckCircle2,
-  RefreshCw,
-  AlertCircle,
-  Eye,
-  EyeOff,
-  Cpu,
-  Zap,
-  Globe,
-  Lock,
-  Loader2,
-  Play,
-  Download,
-  Trash2,
-} from "lucide-react";
+import { Trash2, Globe, Star, CheckCircle2, RefreshCw, Eye, Download, Loader2, Zap, Play, Cpu, AlertCircle, ShieldCheck } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import { ProviderLogo } from "../ui/BrandLogos";
 import { OllamaSetupWizard } from "../ui/OllamaSetupWizard";
 import { HashProgressBar } from "../ui/HashProgressBar";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { AIProviderConfig, AIProviderId } from "../../types/workbench";
 import {
   loadAllProviders,
@@ -161,6 +148,8 @@ export function AiManagementDashboard({
     }
   };
 
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
+
   const handleDeleteModel = async (tag: string) => {
     if (isDeletingModel) return;
     setIsDeletingModel(tag);
@@ -179,6 +168,7 @@ export function AiManagementDashboard({
       }
     } finally {
       setIsDeletingModel(null);
+      setConfirmDeleteTag(null);
     }
   };
 
@@ -267,17 +257,17 @@ export function AiManagementDashboard({
 
   return (
     <>
-    <div className="h-full w-full overflow-y-auto bg-[#0d0d10] text-zinc-200 p-6 lg:p-8 font-sans select-none">
-      <div className="max-w-5xl mx-auto space-y-6">
+    <div className="h-full w-full bg-workbench text-zinc-200 p-4 md:p-6 font-sans select-none overflow-hidden flex flex-col">
+      <div className="max-w-6xl w-full mx-auto h-full flex flex-col min-h-0 space-y-4">
         {/* ── Top Header Toolbar ────────────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-800/80">
+        <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
           <div>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-                <Cpu className="w-5 h-5 text-purple-400" />
+              <div className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+                <Icon icon={Cpu} className="w-4 h-4 text-purple-400" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight text-white">AI Models & Providers</h1>
+                <h1 className="text-lg font-bold tracking-tight text-white">AI Models & Providers</h1>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   Configure local and cloud AI inference engines. Designate your global default model or switch on the fly.
                 </p>
@@ -289,19 +279,19 @@ export function AiManagementDashboard({
             <span className="text-xs font-mono text-zinc-400 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center gap-2">
               <span className="text-zinc-500">Default:</span>
               <span className="font-semibold text-white">{defaultProvider.name}</span>
-              <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+              <Icon icon={Star} className="w-3 h-3 fill-amber-400 text-amber-400" />
             </span>
           </div>
         </div>
 
         {/* ── Main Two-Column Workbench Container ────────────────────────── */}
-        <div className="flex flex-col md:flex-row rounded-2xl bg-[#131317] border border-zinc-800/80 overflow-hidden shadow-xl min-h-[580px]">
-          {/* Left Column: Fixed-Width Providers Sidebar */}
-          <div className="w-full md:w-72 shrink-0 border-b md:border-b-0 md:border-r border-zinc-800/80 p-4 space-y-5 bg-[#101014]/60">
+        <div className="flex-1 min-h-0 flex flex-col md:flex-row rounded-2xl bg-workbench border border-zinc-800/80 overflow-hidden shadow-xl">
+          {/* Left Column: Independently scrollable, compact fixed-width providers sidebar */}
+          <div className="w-full md:w-64 lg:w-72 shrink-0 h-full overflow-y-auto border-b md:border-b-0 md:border-r border-zinc-800/80 p-3 space-y-4 bg-workbench/60">
             {/* Group 1: Local Engines */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                <Zap className="w-3 h-3 text-emerald-400" />
+                <Icon icon={Zap} className="w-3 h-3 text-emerald-400" />
                 <span>Local Engines (Offline)</span>
               </div>
               <div className="space-y-1">
@@ -332,7 +322,7 @@ export function AiManagementDashboard({
 
                       <div className="flex items-center gap-2 shrink-0 pl-1">
                         {p.isDefault && (
-                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                          <Icon icon={Star} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                         )}
                         <span
                           className={`w-2 h-2 rounded-full ${
@@ -351,7 +341,7 @@ export function AiManagementDashboard({
             {/* Group 2: Cloud LLMs */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                <Globe className="w-3 h-3 text-sky-400" />
+                <Icon icon={Globe} className="w-3 h-3 text-sky-400" />
                 <span>Cloud LLM APIs</span>
               </div>
               <div className="space-y-1">
@@ -380,7 +370,7 @@ export function AiManagementDashboard({
 
                       <div className="flex items-center gap-2 shrink-0 pl-1">
                         {p.isDefault && (
-                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                          <Icon icon={Star} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                         )}
                         <span
                           className={`w-2 h-2 rounded-full ${
@@ -395,8 +385,8 @@ export function AiManagementDashboard({
             </div>
           </div>
 
-          {/* Right Column: Selected Provider Configuration Panel */}
-          <div className="flex-1 p-6 lg:p-8 space-y-6 flex flex-col justify-between">
+          {/* Right Column: Independently scrollable provider configuration & models pane */}
+          <div className="flex-1 h-full min-h-0 overflow-y-auto p-5 md:p-6 space-y-6 flex flex-col justify-between">
             <div className="space-y-6">
               {/* Provider Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-800/80">
@@ -441,7 +431,7 @@ export function AiManagementDashboard({
                   }`}
                   title={!activeProvider.isConnected && activeProvider.id !== "ollama" ? "Connect or verify provider before setting as default" : ""}
                 >
-                  <Star className={`w-3.5 h-3.5 ${activeProvider.isDefault ? "fill-zinc-950 text-zinc-950" : ""}`} />
+                  <Icon icon={Star} className={`w-3.5 h-3.5 ${activeProvider.isDefault ? "fill-zinc-950 text-zinc-950" : ""}`} />
                   <span>{activeProvider.isDefault ? "Current Default" : "Set as Default"}</span>
                 </button>
               </div>
@@ -463,7 +453,7 @@ export function AiManagementDashboard({
 
                       <div className="flex items-center gap-2">
                         {ollamaStatus === null ? (
-                          <Loader2 className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
+                          <Icon icon={Loader2} className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
                         ) : (
                           <span
                             className={`flex items-center gap-1.5 text-xs font-mono font-semibold ${
@@ -509,7 +499,7 @@ export function AiManagementDashboard({
                           onClick={handleStartOllama}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-xs font-semibold text-sky-300 transition-colors disabled:opacity-50"
                         >
-                          {isStartingOllama ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                          {isStartingOllama ? <Icon icon={Loader2} className="w-3.5 h-3.5 animate-spin" /> : <Icon icon={Play} className="w-3.5 h-3.5" />}
                           <span>{isStartingOllama ? "Starting Daemon…" : "Start Ollama Server"}</span>
                         </button>
                       )}
@@ -519,7 +509,7 @@ export function AiManagementDashboard({
                         onClick={() => setShowOllamaWizard(true)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/60 text-xs font-semibold transition-colors"
                       >
-                        <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                        <Icon icon={RefreshCw} className="w-3.5 h-3.5 text-zinc-400" />
                         <span>Run Setup Wizard</span>
                       </button>
                     </div>
@@ -529,7 +519,7 @@ export function AiManagementDashboard({
                   <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-purple-400" />
+                        <Icon icon={Cpu} className="w-4 h-4 text-purple-400" />
                         <h3 className="text-xs font-bold text-white uppercase tracking-wider">
                           Installed Local Models ({ollamaStatus?.models.length || 0})
                         </h3>
@@ -546,6 +536,15 @@ export function AiManagementDashboard({
                             m === `${selectedModel}:latest` ||
                             selectedModel.startsWith(`${m}:`);
                           const isDeleting = isDeletingModel === m;
+                          const curated = CURATED_OLLAMA_MODELS.find(
+                            (c) =>
+                              c.tag === m ||
+                              `${c.tag}:latest` === m ||
+                              c.tag === `${m}:latest` ||
+                              m.startsWith(`${c.tag}:`) ||
+                              c.tag.startsWith(`${m}:`)
+                          );
+
                           return (
                             <div
                               key={m}
@@ -557,15 +556,23 @@ export function AiManagementDashboard({
                             >
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-mono text-xs font-bold text-zinc-100 truncate">{m}</span>
+                                  <span className="text-xs font-bold text-zinc-100 truncate">
+                                    {curated?.name || m}
+                                  </span>
                                   {isActive && (
                                     <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider">
                                       Active
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-zinc-400 font-mono mt-0.5 truncate">
-                                  {isActive ? "Selected for chat & inline tools" : "Available to use"}
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-[10px] text-zinc-400 font-mono truncate">{m}</span>
+                                  {curated?.size && (
+                                    <span className="text-[9px] font-mono text-zinc-500">· {curated.size}</span>
+                                  )}
+                                  {curated?.category && (
+                                    <span className="text-[9px] font-mono text-purple-400/80">· {curated.category}</span>
+                                  )}
                                 </div>
                               </div>
 
@@ -580,21 +587,21 @@ export function AiManagementDashboard({
                                   </button>
                                 ) : (
                                   <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                    <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
                                   </div>
                                 )}
                                 {ollamaStatus.models.length > 1 && (
                                   <button
                                     type="button"
                                     disabled={isDeleting}
-                                    onClick={() => handleDeleteModel(m)}
+                                    onClick={() => setConfirmDeleteTag(m)}
                                     className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-800/80 transition-colors"
                                     title={`Delete ${m} from disk`}
                                   >
                                     {isDeleting ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <Icon icon={Loader2} className="w-3.5 h-3.5 animate-spin" />
                                     ) : (
-                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <Icon icon={Trash2} className="w-3.5 h-3.5" />
                                     )}
                                   </button>
                                 )}
@@ -616,7 +623,7 @@ export function AiManagementDashboard({
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-xs font-mono">
                         <div className="flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />
+                          <Icon icon={Loader2} className="w-3.5 h-3.5 text-purple-400 animate-spin" />
                           <span className="text-zinc-400">Pulling</span>
                           <strong className="text-white font-bold">{pullingModelTag}</strong>
                         </div>
@@ -628,155 +635,150 @@ export function AiManagementDashboard({
                   {/* Success & Error Banners */}
                   {pullSuccessMsg && (
                     <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400 shrink-0" />
                       <span>{pullSuccessMsg}</span>
                     </div>
                   )}
                   {pullErrorMsg && (
                     <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-red-300 text-xs font-mono flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
                       <span>{pullErrorMsg}</span>
                     </div>
                   )}
 
-                  {/* 4. Curated Models to Download */}
-                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3.5">
-                    <div>
-                      <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <Download className="w-3.5 h-3.5 text-sky-400" />
-                        Download Additional Models
-                      </h3>
-                      <p className="text-[11px] text-zinc-400 mt-0.5">
-                        High-performance local models optimized for code completion, refactoring, and AI conversation.
-                      </p>
-                    </div>
+                  {/* 4. Curated Models to Download (De-duplicated: only uninstalled models) */}
+                  {(() => {
+                    const uninstalledCuratedModels = CURATED_OLLAMA_MODELS.filter((item) => {
+                      return !ollamaStatus?.models.some(
+                        (m) =>
+                          m === item.tag ||
+                          m === `${item.tag}:latest` ||
+                          item.tag === `${m}:latest` ||
+                          m.startsWith(`${item.tag}:`) ||
+                          item.tag.startsWith(`${m}:`)
+                      );
+                    });
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {CURATED_OLLAMA_MODELS.map((item) => {
-                        const isInstalled = ollamaStatus?.models.some(
-                          (m) =>
-                            m === item.tag ||
-                            m === `${item.tag}:latest` ||
-                            item.tag === `${m}:latest` ||
-                            m.startsWith(`${item.tag}:`) ||
-                            item.tag.startsWith(`${m}:`)
-                        );
-                        const isActive =
-                          isInstalled &&
-                          (selectedModel === item.tag ||
-                            selectedModel === `${item.tag}:latest` ||
-                            selectedModel.startsWith(`${item.tag}:`));
-                        const isPullingThis = pullingModelTag === item.tag;
+                    return (
+                      <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3.5">
+                        <div>
+                          <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                            <Icon icon={Download} className="w-3.5 h-3.5 text-sky-400" />
+                            Download Additional Models
+                          </h3>
+                          <p className="text-[11px] text-zinc-400 mt-0.5">
+                            High-performance local models optimized for code completion, refactoring, and AI conversation.
+                          </p>
+                        </div>
 
-                        return (
-                          <div
-                            key={item.tag}
-                            className="p-3.5 rounded-xl border border-zinc-800/80 bg-zinc-900/70 hover:border-zinc-700/80 transition-all flex flex-col justify-between space-y-2.5"
-                          >
-                            <div>
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <h4 className="text-xs font-bold text-zinc-100">{item.name}</h4>
-                                  <div className="font-mono text-[10px] text-purple-300 mt-0.5">{item.tag}</div>
-                                </div>
-                                <div className="flex flex-col items-end gap-1">
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/60">
-                                    {item.size}
-                                  </span>
-                                  <span className="text-[9px] text-zinc-500 font-mono">{item.recommendedRam}</span>
-                                </div>
-                              </div>
+                        {uninstalledCuratedModels.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {uninstalledCuratedModels.map((item) => {
+                              const isPullingThis = pullingModelTag === item.tag;
 
-                              <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
-                                {item.description}
-                              </p>
-                            </div>
-
-                            <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
-                              <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
-                                {item.category}
-                              </span>
-
-                              {isInstalled ? (
-                                isActive ? (
-                                  <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
-                                    <CheckCircle2 className="w-3.5 h-3.5" /> In Use
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSwitchModel(item.tag)}
-                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors border border-zinc-700/60"
-                                  >
-                                    Switch to
-                                  </button>
-                                )
-                              ) : isPullingThis ? (
-                                <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
-                                  <Loader2 className="w-3 h-3 animate-spin" /> Downloading…
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled={!!pullingModelTag}
-                                  onClick={() => handlePullModel(item.tag)}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shadow-sm"
+                              return (
+                                <div
+                                  key={item.tag}
+                                  className="p-3.5 rounded-xl border border-zinc-800/80 bg-zinc-900/70 hover:border-zinc-700/80 transition-all flex flex-col justify-between space-y-2.5"
                                 >
-                                  <Download className="w-3 h-3" />
-                                  <span>Pull ({item.size})</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                                  <div>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <h4 className="text-xs font-bold text-zinc-100">{item.name}</h4>
+                                        <div className="font-mono text-[10px] text-purple-300 mt-0.5">{item.tag}</div>
+                                      </div>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                                          {item.size}
+                                        </span>
+                                        <span className="text-[9px] text-zinc-500 font-mono">{item.recommendedRam}</span>
+                                      </div>
+                                    </div>
 
-                    {/* 5. Custom Model Tag Input Field */}
-                    <div className="pt-3 border-t border-zinc-800/80">
-                      <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
-                        Pull Custom Model by Tag
-                      </label>
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (customModelTag.trim()) {
-                            handlePullModel(customModelTag.trim());
-                            setCustomModelTag("");
-                          }
-                        }}
-                        className="flex items-center gap-2"
-                      >
-                        <input
-                          type="text"
-                          value={customModelTag}
-                          onChange={(e) => setCustomModelTag(e.target.value)}
-                          placeholder="e.g. llama3.2:1b, starcoder2:3b, deepseek-r1:14b..."
-                          disabled={!!pullingModelTag}
-                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
-                        />
-                        <button
-                          type="submit"
-                          disabled={!customModelTag.trim() || !!pullingModelTag}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shrink-0 shadow-sm"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Pull Model</span>
-                        </button>
-                      </form>
-                      <p className="text-[10px] text-zinc-500 mt-1">
-                        Supports any model tag from the official{" "}
-                        <a
-                          href="https://ollama.com/library"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-purple-400 hover:underline"
-                        >
-                          Ollama Library
-                        </a>.
-                      </p>
-                    </div>
-                  </div>
+                                    <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                                      {item.description}
+                                    </p>
+                                  </div>
+
+                                  <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
+                                    <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                                      {item.category}
+                                    </span>
+
+                                    {isPullingThis ? (
+                                      <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                                        <Icon icon={Loader2} className="w-3 h-3 animate-spin" /> Downloading…
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={!!pullingModelTag}
+                                        onClick={() => handlePullModel(item.tag)}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shadow-sm"
+                                      >
+                                        <Icon icon={Download} className="w-3 h-3" />
+                                        <span>Pull ({item.size})</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2.5">
+                            <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span>All recommended local models are installed on this machine. Ready for 100% offline inference.</span>
+                          </div>
+                        )}
+
+                        {/* 5. Custom Model Tag Input Field */}
+                        <div className="pt-3 border-t border-zinc-800/80">
+                          <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
+                            Pull Custom Model by Tag
+                          </label>
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              if (customModelTag.trim()) {
+                                handlePullModel(customModelTag.trim());
+                                setCustomModelTag("");
+                              }
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <input
+                              type="text"
+                              value={customModelTag}
+                              onChange={(e) => setCustomModelTag(e.target.value)}
+                              placeholder="e.g. llama3.2:1b, starcoder2:3b, deepseek-r1:14b..."
+                              disabled={!!pullingModelTag}
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
+                            />
+                            <button
+                              type="submit"
+                              disabled={!customModelTag.trim() || !!pullingModelTag}
+                              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shrink-0 shadow-sm"
+                            >
+                              <Icon icon={Download} className="w-3.5 h-3.5" />
+                              <span>Pull Model</span>
+                            </button>
+                          </form>
+                          <p className="text-[10px] text-zinc-500 mt-1">
+                            Supports any model tag from the official{" "}
+                            <a
+                              href="https://ollama.com/library"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-purple-400 hover:underline"
+                            >
+                              Ollama Library
+                            </a>.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 /* ── Standard Provider Configuration (Cloud & llama.cpp) ─── */
@@ -785,7 +787,7 @@ export function AiManagementDashboard({
                   {activeProvider.id === "llamacpp" && activeProvider.availableModels.length === 0 ? (
                     <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-2.5">
                       <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-                        <Cpu className="w-4 h-4 text-sky-400" />
+                        <Icon icon={Cpu} className="w-4 h-4 text-sky-400" />
                         <span>Local llama.cpp Server (Port 8080)</span>
                       </div>
                       <p className="text-[11px] text-zinc-400 leading-relaxed">
@@ -846,7 +848,7 @@ export function AiManagementDashboard({
                             className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
                             title={showApiKey ? "Hide key" : "Show key"}
                           >
-                            {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            {showApiKey ? <Icon icon={Eye} className="w-3.5 h-3.5" /> : <Icon icon={Eye} className="w-3.5 h-3.5" />}
                           </button>
                         </div>
                         <button
@@ -860,7 +862,7 @@ export function AiManagementDashboard({
                     </div>
                   ) : (
                     <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-start gap-2.5">
-                      <Lock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <Icon icon={ShieldCheck} className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                       <div>
                         <div className="font-semibold text-white">100% Offline & Private</div>
                         <p className="text-[11px] text-emerald-300/80 mt-0.5">
@@ -904,7 +906,7 @@ export function AiManagementDashboard({
                   onClick={handleTestConnection}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all shadow-sm"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-sky-400" : "text-zinc-400"}`} />
+                  <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-sky-400" : "text-zinc-400"}`} />
                   <span>{isTesting ? "Pinging Endpoint..." : "Test Connection"}</span>
                 </button>
 
@@ -917,9 +919,9 @@ export function AiManagementDashboard({
                     }`}
                   >
                     {testResult.ok ? (
-                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                      <Icon icon={CheckCircle2} className="w-4 h-4 shrink-0 text-emerald-400" />
                     ) : (
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                      <Icon icon={AlertCircle} className="w-4 h-4 shrink-0 text-red-400" />
                     )}
                     <span>
                       {testResult.ok
@@ -951,6 +953,19 @@ export function AiManagementDashboard({
             checkOllamaStatus().then(setOllamaStatus).catch(() => {});
             onModelSettingsChanged?.();
           }}
+        />
+      )}
+
+      {confirmDeleteTag && (
+        <ConfirmDialog
+          isOpen={true}
+          title="Delete Local Model"
+          message={`Are you sure you want to delete ${confirmDeleteTag} from your local machine? This action cannot be undone, though you can re-download the model later.`}
+          confirmText="Delete Model"
+          cancelText="Cancel"
+          isDestructive={true}
+          onConfirm={() => handleDeleteModel(confirmDeleteTag)}
+          onCancel={() => setConfirmDeleteTag(null)}
         />
       )}
     </>

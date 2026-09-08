@@ -146,6 +146,11 @@ export function applyGlobalWorkbenchTheme(themeId: string): IdeTheme {
     root.style.setProperty("--vscode-panel-bg", theme.colors.panelBg);
     root.style.setProperty("--vscode-tab-active-bg", theme.colors.tabActiveBg);
     root.style.setProperty("--vscode-tab-inactive-bg", theme.colors.tabInactiveBg);
+    // Sync design system semantic variables
+    root.style.setProperty("--surface-canvas", theme.colors.background);
+    root.style.setProperty("--surface-workbench", theme.colors.sidebarBg);
+    root.style.setProperty("--text-primary", theme.colors.foreground);
+    root.style.setProperty("--border-accent", theme.colors.accent);
   }
   return theme;
 }

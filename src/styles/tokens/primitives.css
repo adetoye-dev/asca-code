@@ -1,0 +1,70 @@
+/**
+ * primitives.css — Tier 1 Raw Visual Values
+ *
+ * Implements:
+ * - Apple Obsidian Dark Slate palette
+ * - Strict 4px grid spacing scale
+ * - Concentric radii tokens (R_outer = R_inner + Padding)
+ * - Dual-layer specular + ambient elevation shadows
+ */
+
+:root {
+  /* ── Apple Obsidian Dark Slate Palette ── */
+  --obsidian-950: #09090b; /* Deepest canvas floor */
+  --obsidian-900: #0f0f13; /* Workbench ground */
+  --obsidian-850: #141418; /* Sidebar background */
+  --obsidian-800: #1a1a22; /* Card / panel base */
+  --obsidian-750: #20202a; /* Dropdown & popover surface */
+  --obsidian-700: #262632; /* Modal overlay surface */
+  --obsidian-650: #2e2e3c; /* Floating inspector */
+  --obsidian-600: #383848; /* Border default */
+  --obsidian-500: #4a4a5e; /* Border subtle */
+  --obsidian-400: #717188; /* Text muted */
+  --obsidian-300: #9898ad; /* Text secondary */
+  --obsidian-200: #c4c4d4; /* Text primary subdued */
+  --obsidian-100: #e5e5ee; /* Text primary bright */
+  --obsidian-50:  #f4f4f9; /* Pure specular highlight */
+
+  /* ── Obsidian Accent Spectrum ── */
+  --obsidian-accent-blue: #38bdf8;
+  --obsidian-accent-emerald: #10b981;
+  --obsidian-accent-amber: #f59e0b;
+  --obsidian-accent-magenta: #ec4899;
+  --obsidian-accent-sky: #0284c7;
+  --obsidian-accent-purple: #8b5cf6;
+
+  /* ── 4px Grid Spacing Scale ── */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Concentric Geometry Radii Scale ──
+   * Law of concentric curves: R_outer = R_inner + Padding
+   * Inner items inside a 12px container with 4px padding must be 8px.
+   */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;   /* Inner item (for 12px container with 4px pad) */
+  --radius-lg: 10px;  /* Inner item (for 16px container with 6px pad) */
+  --radius-xl: 12px;  /* Outer dropdown & titlebar pill */
+  --radius-2xl: 16px; /* Outer modal container & command palette */
+  --radius-3xl: 20px;
+  --radius-full: 9999px;
+
+  /* ── Dual-Layer Elevation Shadows ──
+   * Top layer: Sub-pixel specular rim light (rgba 255,255,255)
+   * Bottom layer: Diffuse ambient occlusion drop shadow
+   */
+  --shadow-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --shadow-elevation-2: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-elevation-3: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}

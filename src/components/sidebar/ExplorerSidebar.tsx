@@ -30,7 +30,7 @@ export function ExplorerSidebar({
   touchedPaths,
 }: ExplorerSidebarProps) {
   return (
-    <div className="flex flex-col h-full w-full bg-[#18181b] select-none text-xs">
+    <div className="flex flex-col h-full w-full bg-workbench select-none text-xs">
       <FileTree
         files={files}
         activeFilePath={activeFilePath}

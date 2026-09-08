@@ -9,7 +9,8 @@
  */
 
 import { useState } from "react";
-import { GitFork, Folder, RefreshCw, CheckCircle2, AlertCircle, X } from "lucide-react";
+import { CheckCircle2, AlertCircle, GitFork, RefreshCw, Folder, X } from "lucide-react";
+import { Icon } from "../ui/Icon";
 
 interface CloneModalProps {
   isOpen: boolean;
@@ -87,13 +88,13 @@ export function CloneModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
-      <div className="w-full max-w-lg bg-[#1e1e22] border border-[#38383e] rounded-2xl shadow-2xl p-5 space-y-4 text-xs text-zinc-200">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
+      <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 p-5 space-y-4 text-xs text-zinc-200">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
-              <GitFork className="w-4 h-4" />
+              <Icon icon={GitFork} className="w-4 h-4" />
             </div>
             <div>
               <h3 className="font-bold text-sm text-zinc-100">Clone Repository</h3>
@@ -106,7 +107,7 @@ export function CloneModal({
             onClick={onClose}
             className="p-1 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"
           >
-            <X className="w-4 h-4" />
+            <Icon icon={X} className="w-4 h-4" />
           </button>
         </div>
 
@@ -120,7 +121,7 @@ export function CloneModal({
               value={repoUrl}
               onChange={(e) => handleUrlChange(e.target.value)}
               placeholder="https://github.com/username/repository.git or git@github.com:..."
-              className="w-full mt-1 bg-[#141416] border border-[#38383e] rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
+              className="w-full mt-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
             />
           </div>
 
@@ -133,14 +134,14 @@ export function CloneModal({
                 value={targetDir}
                 onChange={(e) => setTargetDir(e.target.value)}
                 placeholder="~/Desktop/my-project"
-                className="flex-1 bg-[#141416] border border-[#38383e] rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
+                className="flex-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
               />
               <button
                 type="button"
                 onClick={handleBrowseDestination}
                 className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-medium text-xs flex items-center gap-1.5 transition-colors shrink-0"
               >
-                <Folder className="w-3.5 h-3.5 text-sky-400" />
+                <Icon icon={Folder} className="w-3.5 h-3.5 text-sky-400" />
                 <span>Browse...</span>
               </button>
             </div>
@@ -158,9 +159,9 @@ export function CloneModal({
                 : "bg-red-950/40 border-red-500/40 text-red-300"
             }`}
           >
-            {statusMsg.type === "info" && <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0 mt-0.5" />}
-            {statusMsg.type === "success" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />}
-            {statusMsg.type === "error" && <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />}
+            {statusMsg.type === "info" && <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin shrink-0 mt-0.5" />}
+            {statusMsg.type === "success" && <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />}
+            {statusMsg.type === "error" && <Icon icon={AlertCircle} className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />}
             <span className="font-mono break-all">{statusMsg.text}</span>
           </div>
         )}
@@ -187,12 +188,12 @@ export function CloneModal({
           >
             {isCloning ? (
               <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin" />
                 <span>Cloning...</span>
               </>
             ) : (
               <>
-                <GitFork className="w-3.5 h-3.5" />
+                <Icon icon={GitFork} className="w-3.5 h-3.5" />
                 <span>Clone</span>
               </>
             )}

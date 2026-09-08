@@ -88,3 +88,28 @@ export function subscribeChatHistory(
     window.removeEventListener("storage", handleStorage);
   };
 }
+
+/** Export chat messages as a JSON string */
+export function exportChatHistory(projectRoot?: string): string {
+  const history = loadChatHistory(projectRoot);
+  return JSON.stringify(history, null, 2);
+}
+
+/** Import chat messages from a JSON string */
+export function importChatHistory(jsonString: string, projectRoot?: string): boolean {
+  try {
+    const parsed = JSON.parse(jsonString) as ChatMessage[];
+    if (!Array.isArray(parsed)) return false;
+    const valid = parsed.filter(
+      (m): m is ChatMessage =>
+        !!m &&
+        typeof m.content === "string" &&
+        (m.role === "user" || m.role === "assistant")
+    );
+    if (valid.length === 0) return false;
+    saveChatHistory(valid, projectRoot);
+    return true;
+  } catch {
+    return false;
+  }
+}

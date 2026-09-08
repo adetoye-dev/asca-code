@@ -7,17 +7,10 @@
  */
 
 import { useState, useMemo } from "react";
-import {
-  ChevronRight,
-  ChevronDown,
-  Plus,
-  Trash2,
-  RefreshCw,
-  FolderPlus,
-  FilePlus,
-  FolderOpen,
-  X,
-} from "lucide-react";
+import { Trash2, Plus, ChevronRight, FolderPlus, ChevronDown, RefreshCw, Folder, X } from "lucide-react";
+import { Icon } from "./ui/Icon";
+import { ConfirmDialog } from './ui/ConfirmDialog';
+
 import { FileIcon } from "./ui/FileIcon";
 
 export interface FileNode {
@@ -88,6 +81,7 @@ export function FileTree({
     parentPath: string;
     isDir: boolean;
   } | null>(null);
+  const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
   const [newEntryName, setNewEntryName] = useState("");
 
   const folderOptions = useMemo(() => {
@@ -173,9 +167,9 @@ export function FileTree({
             {isDir ? (
               <span className="text-zinc-400 hover:text-zinc-200">
                 {isExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                  <Icon icon={ChevronDown} className="w-3.5 h-3.5 shrink-0" />
                 ) : (
-                  <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                  <Icon icon={ChevronRight} className="w-3.5 h-3.5 shrink-0" />
                 )}
               </span>
             ) : (
@@ -202,7 +196,7 @@ export function FileTree({
                   }}
                   className="p-0.5 text-zinc-400 hover:text-sky-300 rounded"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Icon icon={Plus} className="w-3.5 h-3.5" />
                 </button>
                 <button
                   type="button"
@@ -214,7 +208,7 @@ export function FileTree({
                   }}
                   className="p-0.5 text-zinc-400 hover:text-amber-300 rounded"
                 >
-                  <FolderPlus className="w-3.5 h-3.5" />
+                  <Icon icon={FolderPlus} className="w-3.5 h-3.5" />
                 </button>
               </>
             )}
@@ -223,13 +217,11 @@ export function FileTree({
               title="Delete"
               onClick={(e) => {
                 e.stopPropagation();
-                if (confirm(`Delete ${node.name}?`)) {
-                  onDeleteFile(node.path);
-                }
+                setConfirmDeletePath(node.path);
               }}
               className="p-0.5 text-zinc-400 hover:text-red-400 rounded"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Icon icon={Trash2} className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -271,7 +263,7 @@ export function FileTree({
               }}
               className="p-1 hover:text-amber-300 hover:bg-zinc-800 rounded transition-colors"
             >
-              <FolderPlus className="w-3.5 h-3.5" />
+              <Icon icon={FolderPlus} className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
@@ -282,7 +274,7 @@ export function FileTree({
               }}
               className="p-1 hover:text-sky-300 hover:bg-zinc-800 rounded transition-colors"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Icon icon={Plus} className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
@@ -290,7 +282,7 @@ export function FileTree({
               onClick={onRefresh}
               className="p-1 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -298,13 +290,13 @@ export function FileTree({
 
       {/* ── Project-Scoped File / Folder Creation Panel ──────────────────────── */}
       {newEntryModal && (
-        <div className="border-b border-zinc-700/80 bg-[#1f1f23] p-3 shadow-lg text-[13px] animate-in fade-in slide-in-from-top-2 duration-150 shrink-0 font-sans">
+        <div className="border-b border-zinc-700/80 bg-workbench p-3 shadow-lg text-[13px] animate-in fade-in slide-in-from-top-2 duration-150 shrink-0 font-sans">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5 font-semibold text-zinc-100 text-xs">
               {newEntryModal.isDir ? (
-                <FolderPlus className="w-4 h-4 text-amber-400" />
+                <Icon icon={FolderPlus} className="w-4 h-4 text-amber-400" />
               ) : (
-                <FilePlus className="w-4 h-4 text-sky-400" />
+                <Icon icon={Plus} className="w-4 h-4 text-sky-400" />
               )}
               <span>New {newEntryModal.isDir ? "Folder" : "File"} in Project</span>
             </div>
@@ -314,7 +306,7 @@ export function FileTree({
               className="text-zinc-400 hover:text-zinc-200 p-0.5 rounded hover:bg-zinc-800"
               title="Cancel (Esc)"
             >
-              <X className="w-3.5 h-3.5" />
+              <Icon icon={X} className="w-3.5 h-3.5" />
             </button>
           </div>
 
@@ -329,7 +321,7 @@ export function FileTree({
                 onChange={(e) =>
                   setNewEntryModal((prev) => (prev ? { ...prev, parentPath: e.target.value } : null))
                 }
-                className="w-full bg-[#18181b] border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 focus:outline-none focus:border-sky-500 font-sans cursor-pointer transition-colors"
+                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 focus:outline-none focus:border-sky-500 font-sans cursor-pointer transition-colors"
               >
                 {folderOptions.map((opt) => (
                   <option key={opt.path || "root"} value={opt.path}>
@@ -359,7 +351,7 @@ export function FileTree({
                     setNewEntryModal(null);
                   }
                 }}
-                className="w-full bg-[#18181b] border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-sans transition-colors"
+                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-sans transition-colors"
               />
             </div>
 
@@ -405,7 +397,7 @@ export function FileTree({
                 onClick={onOpenFolder}
                 className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-sky-400 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 mx-auto"
               >
-                <FolderOpen className="w-3.5 h-3.5" />
+                <Icon icon={Folder} className="w-3.5 h-3.5" />
                 <span>Open Project Folder</span>
               </button>
             )}
@@ -424,6 +416,22 @@ export function FileTree({
           files.map((node) => renderNode(node, 0))
         )}
       </div>
+
+      {confirmDeletePath && (
+        <ConfirmDialog
+          isOpen={true}
+          title="Delete"
+          message={`Delete "${confirmDeletePath}"? This cannot be undone.`}
+          confirmText="Delete"
+          cancelText="Cancel"
+          isDestructive={true}
+          onConfirm={() => {
+            onDeleteFile(confirmDeletePath);
+            setConfirmDeletePath(null);
+          }}
+          onCancel={() => setConfirmDeletePath(null)}
+        />
+      )}
     </div>
   );
 }

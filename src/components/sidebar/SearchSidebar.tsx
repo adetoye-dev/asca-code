@@ -7,31 +7,16 @@
  * 3. Expandable Replace input with Preserve Case (AB) and Replace All ([→]).
  * 4. Expandable Search Details with "files to include" and "files to exclude" glob filters.
  * 5. Results summary counter ("X results in Y files") and search progress indicator.
- * 6. Interactive results tree grouped by file with authentic FileIcon and match count badge.
+ * 6. Interactive results tree grouped by file with authentic and match count badge.
  * 7. Line match preview with highlighted search match text.
  * 8. Jump to exact line & column in Monaco Editor on click.
  * 9. Per-match replace, per-file replace, and workspace-wide replace with live tab buffer sync.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  Search,
-  Replace,
-  ReplaceAll,
-  RefreshCw,
-  X,
-  ChevronDown,
-  ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  MoreHorizontal,
-  CaseSensitive,
-  WholeWord,
-  Regex,
-  Check,
-  AlertCircle,
-  FolderSearch,
-} from "lucide-react";
+import React, { useRef, useCallback, useState, useEffect } from "react";
+import { Search, MoreHorizontal, ChevronRight, Check, ChevronDown, RefreshCw, AlertCircle, X, CaseSensitive, WholeWord, Regex, Replace, ReplaceAll } from "lucide-react";
+import { Icon } from "../ui/Icon";
+
 import { FileIcon } from "../ui/FileIcon";
 
 export interface SearchMatch {
@@ -397,7 +382,7 @@ export function SearchSidebar({
             disabled={isSearching}
             className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-50 transition-colors"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSearching ? "animate-spin text-sky-400" : ""}`} />
+            <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isSearching ? "animate-spin text-sky-400" : ""}`} />
           </button>
 
           {/* Clear Search */}
@@ -407,7 +392,7 @@ export function SearchSidebar({
             onClick={handleClear}
             className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
           >
-            <X className="w-3.5 h-3.5" />
+            <Icon icon={X} className="w-3.5 h-3.5" />
           </button>
 
           {/* Collapse/Expand All */}
@@ -419,9 +404,9 @@ export function SearchSidebar({
             className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
           >
             {areAllCollapsed ? (
-              <ChevronsUpDown className="w-3.5 h-3.5" />
+              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
             ) : (
-              <ChevronsDownUp className="w-3.5 h-3.5" />
+              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
             )}
           </button>
         </div>
@@ -439,9 +424,9 @@ export function SearchSidebar({
             className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
           >
             {isReplaceExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
             ) : (
-              <ChevronRight className="w-3.5 h-3.5" />
+              <Icon icon={ChevronRight} className="w-3.5 h-3.5" />
             )}
           </button>
 
@@ -474,7 +459,7 @@ export function SearchSidebar({
                     : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
                 }`}
               >
-                <CaseSensitive className="w-3.5 h-3.5" />
+                <Icon icon={CaseSensitive} className="w-3.5 h-3.5" />
               </button>
 
               <button
@@ -487,7 +472,7 @@ export function SearchSidebar({
                     : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
                 }`}
               >
-                <WholeWord className="w-3.5 h-3.5" />
+                <Icon icon={WholeWord} className="w-3.5 h-3.5" />
               </button>
 
               <button
@@ -500,7 +485,7 @@ export function SearchSidebar({
                     : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
                 }`}
               >
-                <Regex className="w-3.5 h-3.5" />
+                <Icon icon={Regex} className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -547,7 +532,7 @@ export function SearchSidebar({
                   disabled={isReplacing || results.length === 0 || !query}
                   className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
                 >
-                  <ReplaceAll className={`w-3.5 h-3.5 ${isReplacing ? "animate-pulse text-amber-400" : ""}`} />
+                  <Icon icon={ReplaceAll} className={`w-3.5 h-3.5 ${isReplacing ? "animate-pulse text-amber-400" : ""}`} />
                 </button>
               </div>
             </div>
@@ -561,7 +546,7 @@ export function SearchSidebar({
             onClick={() => setShowDetails((prev) => !prev)}
             className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
           >
-            <MoreHorizontal className="w-3.5 h-3.5" />
+            <Icon icon={MoreHorizontal} className="w-3.5 h-3.5" />
             <span>{showDetails ? "Hide filters" : "Toggle filters (include / exclude)"}</span>
           </button>
         </div>
@@ -601,14 +586,14 @@ export function SearchSidebar({
       {/* ── Status & Feedback Banner ─────────────────────────────────────── */}
       {notification && (
         <div className="px-3 py-1.5 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-300 flex items-center gap-2 text-xs animate-fadeIn">
-          <Check className="w-3.5 h-3.5 shrink-0" />
+          <Icon icon={Check} className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">{notification}</span>
         </div>
       )}
 
       {errorMessage && (
         <div className="px-3 py-1.5 bg-red-500/10 border-b border-red-500/20 text-red-300 flex items-center gap-2 text-xs">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <Icon icon={AlertCircle} className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">{errorMessage}</span>
         </div>
       )}
@@ -617,7 +602,7 @@ export function SearchSidebar({
       <div className="px-3 py-1.5 text-xs text-zinc-300 border-b border-zinc-800/60 bg-zinc-900/40 flex items-center justify-between shrink-0">
         {isSearching ? (
           <span className="flex items-center gap-1.5 text-zinc-300">
-            <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+            <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-sky-400" />
             Searching workspace...
           </span>
         ) : query ? (
@@ -649,9 +634,9 @@ export function SearchSidebar({
                   {/* Chevron Toggle */}
                   <span className="text-zinc-500 group-hover/file:text-zinc-300">
                     {isCollapsed ? (
-                      <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                      <Icon icon={ChevronRight} className="w-3.5 h-3.5 shrink-0" />
                     ) : (
-                      <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                      <Icon icon={ChevronDown} className="w-3.5 h-3.5 shrink-0" />
                     )}
                   </span>
 
@@ -683,7 +668,7 @@ export function SearchSidebar({
                         disabled={isReplacing}
                         className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors"
                       >
-                        <Replace className="w-3 h-3" />
+                        <Icon icon={ReplaceAll} className="w-3 h-3" />
                       </button>
                     )}
                     <button
@@ -692,7 +677,7 @@ export function SearchSidebar({
                       onClick={(e) => handleDismissFile(e, file.filePath)}
                       className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
-                      <X className="w-3 h-3" />
+                      <Icon icon={X} className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
@@ -747,7 +732,7 @@ export function SearchSidebar({
                                 disabled={isReplacing}
                                 className="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors"
                               >
-                                <Replace className="w-3 h-3" />
+                                <Icon icon={Replace} className="w-3 h-3" />
                               </button>
                             )}
                             <button
@@ -756,7 +741,7 @@ export function SearchSidebar({
                               onClick={(e) => handleDismissMatch(e, matchKey)}
                               className="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors"
                             >
-                              <X className="w-3 h-3" />
+                              <Icon icon={X} className="w-3 h-3" />
                             </button>
                           </div>
                         </div>
@@ -770,7 +755,7 @@ export function SearchSidebar({
         ) : query && !isSearching ? (
           /* Empty Search Results */
           <div className="flex flex-col items-center justify-center p-6 text-center text-zinc-400 font-sans">
-            <FolderSearch className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
+            <Icon icon={Search} className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
             <p className="text-[13px] text-zinc-200 font-medium mb-1">No results found</p>
             <p className="text-xs text-zinc-400">
               No occurrences for &quot;{query}&quot;. Review your search term, case sensitivity, or filters.
@@ -779,7 +764,7 @@ export function SearchSidebar({
         ) : !query ? (
           /* Idle Initial Prompt */
           <div className="flex flex-col items-center justify-center p-6 text-center text-zinc-400 font-sans">
-            <Search className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
+            <Icon icon={Search} className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
             <p className="text-[13px] text-zinc-200 font-medium mb-1">Search Files</p>
             <p className="text-xs text-zinc-400 max-w-[200px]">
               Type a term above to search across all files in <span className="text-zinc-200 font-mono">{projectName}</span>.

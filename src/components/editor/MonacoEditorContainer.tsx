@@ -117,7 +117,7 @@ export function MonacoEditorContainer({
   }, []);
 
   return (
-    <div className="h-full w-full bg-[#1e1e1e] overflow-hidden">
+    <div className="h-full w-full bg-workbench overflow-hidden">
       <Editor
         path={path}
         height="100%"

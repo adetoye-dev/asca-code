@@ -8,7 +8,8 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { Terminal, FileCode } from "lucide-react";
+import { FileText, Terminal } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import type { FileNode } from "../../types/workbench";
 
 export interface CommandItem {
@@ -118,7 +119,7 @@ export function CommandPalette({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-[var(--vscode-titlebar-bg)] border border-[var(--vscode-border)] rounded-xl shadow-2xl overflow-hidden flex flex-col text-xs animate-in fade-in zoom-in-95 duration-100"
+        className="w-full max-w-xl bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 overflow-hidden flex flex-col text-xs animate-in fade-in zoom-in-95 duration-100"
       >
         {/* Search Input Bar */}
         <div className="p-2.5 border-b border-[var(--vscode-border)] flex items-center gap-2 bg-[var(--vscode-editor-bg)]">
@@ -146,7 +147,7 @@ export function CommandPalette({
           ) : isCommandMode ? (
             filteredCommands.map((cmd, idx) => {
               const isSelected = idx === selectedIndex;
-              const Icon = cmd.icon;
+              const CmdIcon = cmd.icon || Terminal;
               return (
                 <div
                   key={cmd.id}
@@ -161,11 +162,7 @@ export function CommandPalette({
                   }`}
                 >
                   <div className="flex items-center gap-2.5 truncate">
-                    {Icon ? (
-                      <Icon className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
-                    ) : (
-                      <Terminal className="w-4 h-4 text-zinc-400" />
-                    )}
+                    <CmdIcon className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
                     <span className="truncate">
                       {cmd.category && (
                         <span className={isSelected ? "text-sky-200" : "text-zinc-500"}>
@@ -207,7 +204,7 @@ export function CommandPalette({
                   }`}
                 >
                   <div className="flex items-center gap-2.5 truncate">
-                    <FileCode className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
+                    <Icon icon={FileText} className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
                     <span className="font-medium text-xs truncate">{file.name}</span>
                     <span
                       className={`text-[10px] truncate ${

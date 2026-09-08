@@ -48,7 +48,14 @@ export type AIProviderId =
   | "mistral"
   | "deepseek"
   | "xai"
-  | "moonshot";
+  | "moonshot"
+  | "cohere"
+  | "perplexity"
+  | "huggingface"
+  | "together"
+  | "openrouter";
+
+export type ModelCapability = "autocomplete" | "reasoning" | "code" | "chat" | "vision" | "embedding";
 
 export interface AIProviderConfig {
   id: AIProviderId;
@@ -62,6 +69,7 @@ export interface AIProviderConfig {
   availableModels: string[];
   speedBadge?: "Fast" | "Medium" | "Thinking" | "Offline";
   latencyMs?: number;
+  capabilities?: ModelCapability[];
 }
 
 export interface StorageCategory {

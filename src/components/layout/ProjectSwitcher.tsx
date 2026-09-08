@@ -1,21 +1,16 @@
 /**
  * ProjectSwitcher.tsx — Sleek Project Switcher & Actions Dropdown
  *
- * Replicates the authentic modern IDE project pill & dropdown menu:
- * 1. Compact titlebar pill with colored project initial badge & chevron.
- * 2. Dropdown actions: "+ New Project...", "Open... ⌘O", "Clone Repository...".
- * 3. "Open Projects" list with highlighted active project and physical disk path.
- * 4. Recent projects memory persisted in localStorage.
+ * Implements:
+ * 1. Mathematical Concentric Radii (R_outer = 12px, P = 4px, R_item = 8px)
+ * 2. Standardized Lucide iconography through the shared `Icon` component
+ * 3. Full Keyboard Navigation (ArrowUp/Down, Enter, Escape, Cmd/Ctrl+O)
+ * 4. Apple Obsidian palette & dual-layer elevation styling
  */
 
 import { useState, useRef, useEffect } from "react";
-import {
-  ChevronDown,
-  Plus,
-  Folder,
-  GitFork,
-  Check,
-} from "lucide-react";
+import { Plus, Check, GitFork, ChevronDown, Folder } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import type { ProjectMeta } from "../../hooks/usePipeline";
 
 interface ProjectSwitcherProps {
@@ -37,6 +32,7 @@ export function ProjectSwitcher({
 }: ProjectSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [recentProjects, setRecentProjects] = useState<ProjectMeta[]>([]);
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Load and update recent projects
@@ -77,7 +73,7 @@ export function ProjectSwitcher({
     };
   }, [isOpen]);
 
-  // Keyboard shortcut: Cmd+O / Ctrl+O to open folder
+  // Global Cmd+O / Ctrl+O keyboard shortcut to open folder
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
@@ -89,6 +85,59 @@ export function ProjectSwitcher({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onOpenFolder]);
+
+  // Reset keyboard focus index on open/close
+  useEffect(() => {
+    if (isOpen) {
+      setFocusedIndex(0);
+    } else {
+      setFocusedIndex(-1);
+    }
+  }, [isOpen]);
+
+  // Keyboard navigation within dropdown
+  const totalActions = 3; // New, Open, Clone
+  const totalItems = totalActions + recentProjects.length;
+
+  const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
+    if (!isOpen) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedIndex((prev) => (prev + 1) % totalItems);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedIndex((prev) => (prev - 1 + totalItems) % totalItems);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setIsOpen(false);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      executeItem(focusedIndex);
+    }
+  };
+
+  const executeItem = (index: number) => {
+    if (index === 0) {
+      setIsOpen(false);
+      onNewProject();
+    } else if (index === 1) {
+      setIsOpen(false);
+      onOpenFolder();
+    } else if (index === 2) {
+      setIsOpen(false);
+      onCloneRepo();
+    } else if (index >= 3) {
+      const projectIndex = index - 3;
+      const targetProject = recentProjects[projectIndex];
+      if (targetProject) {
+        if (targetProject.path !== activeProject.path) {
+          onSelectRecentProject(targetProject.path);
+        }
+        setIsOpen(false);
+      }
+    }
+  };
 
   const formatPath = (fullPath: string) => {
     if (!fullPath || fullPath === "." || fullPath === "./") {
@@ -109,20 +158,24 @@ export function ProjectSwitcher({
   };
 
   return (
-    <div ref={dropdownRef} className="relative select-none text-[13px] font-sans">
+    <div
+      ref={dropdownRef}
+      onKeyDown={handleDropdownKeyDown}
+      className="relative select-none text-[13px] font-sans"
+    >
       {/* ── Project Switcher Pill Button ──────────────────────────────── */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border transition-all ${
+        className={`flex items-center gap-2 px-2.5 py-1 rounded-pill border transition-all ${
           isOpen
-            ? "bg-[#27272a] border-zinc-600 text-white shadow-sm"
-            : "bg-[#222226] hover:bg-[#2c2c31] border-[#38383e] text-zinc-200"
+            ? "bg-surface border-zinc-500 text-white shadow-elevation-1"
+            : "bg-workbench hover:bg-surface border-hairline text-zinc-200 hover:text-white"
         }`}
         title={activeProject.path && activeProject.path !== "." ? `Active Project: ${activeProject.path}` : activeProject.name}
       >
         {/* Project Initial Colored Rounded Badge */}
-        <div className="w-5 h-5 rounded bg-emerald-600/90 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+        <div className="w-5 h-5 rounded-md bg-emerald-600/90 text-white font-bold flex items-center justify-center text-xs shadow-sm">
           {getInitial(activeProject.name)}
         </div>
 
@@ -131,60 +184,83 @@ export function ProjectSwitcher({
           {activeProject.name}
         </span>
 
-        {/* Subtle Chevron Down */}
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-150 ${
+        {/* Subtle Hugeicon Chevron Down */}
+        <Icon icon={ChevronDown}
+          size="xs"
+          className={`text-zinc-400 transition-transform duration-150 ${
             isOpen ? "rotate-180 text-zinc-200" : ""
           }`}
         />
       </button>
 
-      {/* ── Dropdown Menu Window ────────────────────────────────────────── */}
+      {/* ── Dropdown Menu Window (Concentric R_outer = 12px, P = 4px, R_item = 8px) ── */}
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1.5 w-72 bg-[#1e1e22] border border-[#38383e] rounded-2xl shadow-2xl z-50 p-1.5 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-md font-sans">
+        <div
+          role="menu"
+          tabIndex={0}
+          className="absolute left-0 top-full mt-1.5 w-72 bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-50 p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-xl font-sans focus:outline-none"
+        >
           {/* Top Actions: New, Open, Clone */}
-          <div className="space-y-0.5 pb-1 border-b border-zinc-800/80">
-            {/* New Project */}
+          <div className="space-y-0.5 pb-1 border-b border-hairline">
+            {/* New Project (Index 0) */}
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setIsOpen(false);
                 onNewProject();
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-zinc-800/80 text-left text-zinc-200 hover:text-white transition-colors"
+              onMouseEnter={() => setFocusedIndex(0)}
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+                focusedIndex === 0
+                  ? "bg-surface-hover text-white ring-1 ring-white/10"
+                  : "text-zinc-200 hover:bg-surface-hover hover:text-white"
+              }`}
             >
-              <Plus className="w-4 h-4 text-zinc-400" />
+              <Icon icon={Plus} size="sm" className="text-zinc-400" />
               <span className="font-medium text-[13px]">New Project...</span>
             </button>
 
-            {/* Open Folder */}
+            {/* Open Folder (Index 1) */}
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setIsOpen(false);
                 onOpenFolder();
               }}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-zinc-800/80 text-left text-zinc-200 hover:text-white transition-colors"
+              onMouseEnter={() => setFocusedIndex(1)}
+              className={`w-full flex items-center justify-between px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+                focusedIndex === 1
+                  ? "bg-surface-hover text-white ring-1 ring-white/10"
+                  : "text-zinc-200 hover:bg-surface-hover hover:text-white"
+              }`}
             >
               <div className="flex items-center gap-2.5">
-                <Folder className="w-4 h-4 text-zinc-400" />
+                <Icon icon={Folder} size="sm" className="text-zinc-400" />
                 <span className="font-medium text-[13px]">Open...</span>
               </div>
-              <kbd className="text-[10px] font-mono text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700/60">
+              <kbd className="text-[10px] font-mono text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded border border-hairline">
                 ⌘O
               </kbd>
             </button>
 
-            {/* Clone Repository */}
+            {/* Clone Repository (Index 2) */}
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setIsOpen(false);
                 onCloneRepo();
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-zinc-800/80 text-left text-zinc-200 hover:text-white transition-colors"
+              onMouseEnter={() => setFocusedIndex(2)}
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+                focusedIndex === 2
+                  ? "bg-surface-hover text-white ring-1 ring-white/10"
+                  : "text-zinc-200 hover:bg-surface-hover hover:text-white"
+              }`}
             >
-              <GitFork className="w-4 h-4 text-zinc-400" />
+              <Icon icon={GitFork} size="sm" className="text-zinc-400" />
               <span className="font-medium text-[13px]">Clone Repository...</span>
             </button>
           </div>
@@ -195,41 +271,49 @@ export function ProjectSwitcher({
               Open Projects
             </div>
 
-            <div className="space-y-1 mt-0.5">
-              {recentProjects.map((p) => {
+            <div className="space-y-0.5 mt-0.5">
+              {recentProjects.map((p, idx) => {
+                const itemIndex = totalActions + idx;
                 const isActive = p.path === activeProject.path;
+                const isFocused = focusedIndex === itemIndex;
 
                 return (
                   <button
                     key={p.path}
                     type="button"
+                    role="menuitem"
                     onClick={() => {
                       if (!isActive) {
                         onSelectRecentProject(p.path);
                       }
                       setIsOpen(false);
                     }}
-                    className={`flex items-start gap-2.5 p-2 rounded-xl cursor-pointer transition-all ${
-                      isActive
-                        ? "bg-[#1c3150] border border-[#264573] text-white shadow-sm"
-                        : "hover:bg-zinc-800/60 text-zinc-300"
+                    onMouseEnter={() => setFocusedIndex(itemIndex)}
+                    className={`w-full flex items-start gap-2.5 p-2 rounded-[8px] cursor-pointer transition-all ${
+                      isActive && isFocused
+                        ? "bg-sky-500/25 border border-sky-400 text-white ring-1 ring-sky-400/60 shadow-sm"
+                        : isActive
+                        ? "bg-sky-500/15 border border-sky-500/30 text-white shadow-sm"
+                        : isFocused
+                        ? "bg-surface-hover text-white ring-1 ring-white/10"
+                        : "hover:bg-surface-hover text-zinc-300"
                     }`}
                   >
                     {/* Badge */}
                     <div
-                      className={`w-6 h-6 rounded-lg text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5 ${
+                      className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5 ${
                         isActive ? "bg-emerald-600" : "bg-zinc-700 text-zinc-300"
                       }`}
                     >
                       {getInitial(p.name)}
                     </div>
 
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 text-left">
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-[13px] text-zinc-100 truncate">
                           {p.name}
                         </span>
-                        {isActive && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                        {isActive && <Icon icon={Check} size="xs" className="text-sky-400 shrink-0" />}
                       </div>
                       {formatPath(p.path) ? (
                         <div className="text-xs text-zinc-400 truncate mt-0.5 font-mono">

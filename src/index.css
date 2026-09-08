@@ -1,6 +1,8 @@
 @import "dockview/dist/styles/dockview.css";
-@import "@vscode/codicons/dist/codicon.css";
 @import "@xterm/xterm/css/xterm.css";
+@import "./styles/tokens/primitives.css";
+@import "./styles/tokens/semantics.css";
+@import "./styles/tokens/components.css";
 
 @tailwind base;
 @tailwind components;

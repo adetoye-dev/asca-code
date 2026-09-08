@@ -295,7 +295,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     return (
       <div
         onClick={() => termRef.current?.focus()}
-        className="h-full w-full bg-[#121214] overflow-hidden select-none cursor-text relative"
+        className="h-full w-full bg-workbench overflow-hidden select-none cursor-text relative"
       >
         <div
           ref={containerRef}

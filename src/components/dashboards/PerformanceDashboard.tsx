@@ -14,15 +14,8 @@
  */
 
 import { useState, useEffect } from "react";
-import {
-  Activity,
-  Trash2,
-  RefreshCw,
-  CheckCircle2,
-  ShieldCheck,
-  Sparkles,
-  Server,
-} from "lucide-react";
+import { Trash2, Wand2, CheckCircle2, Activity, RefreshCw, ShieldCheck, Cpu } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import type { SystemMetrics, StorageMetrics, RunningProcessItem } from "../../types/workbench";
 
 interface PerformanceDashboardProps {
@@ -151,13 +144,13 @@ export function PerformanceDashboard({
     : 98;
 
   return (
-    <div className="h-full w-full overflow-y-auto bg-[#0d0d10] text-zinc-200 p-6 lg:p-8 font-sans select-none">
+    <div className="h-full w-full overflow-y-auto bg-workbench text-zinc-200 p-6 lg:p-8 font-sans select-none">
       <div className="max-w-6xl mx-auto space-y-7">
         {/* ── Top Header Toolbar ────────────────────────────────────────── */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-800/80">
           <div className="flex items-center gap-3.5">
             <div className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-              <Activity className="w-5 h-5 text-emerald-400" />
+              <Icon icon={Activity} className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <div className="flex items-center gap-2.5">
@@ -185,9 +178,9 @@ export function PerformanceDashboard({
               }`}
             >
               {isCleaning ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <Icon icon={Wand2} className="w-3.5 h-3.5 text-amber-500" />
               )}
               <span>{isCleaning ? "Optimizing..." : `Safe Purge (${storage.cacheReclaimableMb.toFixed(0)} MB)`}</span>
             </button>
@@ -199,7 +192,7 @@ export function PerformanceDashboard({
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-300 hover:text-white transition-all"
               title="Refresh live metrics"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-sky-400" : "text-zinc-400"}`} />
+              <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-sky-400" : "text-zinc-400"}`} />
               <span>Refresh</span>
             </button>
           </div>
@@ -210,7 +203,7 @@ export function PerformanceDashboard({
           <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between gap-4 animate-in fade-in duration-200">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-                <Sparkles className="w-4 h-4" />
+                <Icon icon={Wand2} className="w-4 h-4" />
               </div>
               <div>
                 <h4 className="text-xs font-bold text-white">System Optimized Successfully</h4>
@@ -230,7 +223,7 @@ export function PerformanceDashboard({
         {/* ── 3 High-Impact Telemetry Metric Cards ───────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* 1. Host Compute (CPU) */}
-          <div className="p-5 rounded-2xl bg-[#131317] border border-zinc-800/80 flex flex-col justify-between space-y-4">
+          <div className="p-5 rounded-2xl bg-workbench border border-zinc-800/80 flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                 CPU Utilization
@@ -265,7 +258,7 @@ export function PerformanceDashboard({
           </div>
 
           {/* 2. System Memory (RAM) */}
-          <div className="p-5 rounded-2xl bg-[#131317] border border-zinc-800/80 flex flex-col justify-between space-y-4">
+          <div className="p-5 rounded-2xl bg-workbench border border-zinc-800/80 flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                 Memory Allocation
@@ -295,7 +288,7 @@ export function PerformanceDashboard({
           </div>
 
           {/* 3. Physical Disk Storage */}
-          <div className="p-5 rounded-2xl bg-[#131317] border border-zinc-800/80 flex flex-col justify-between space-y-4">
+          <div className="p-5 rounded-2xl bg-workbench border border-zinc-800/80 flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                 Physical Storage (/)
@@ -326,7 +319,7 @@ export function PerformanceDashboard({
         {/* ── Storage Breakdown & Safe PC Health Optimizer (2 Cols) ───────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left 2 Cols: Storage Breakdown Table */}
-          <div className="lg:col-span-2 p-6 rounded-2xl bg-[#131317] border border-zinc-800/80 space-y-5">
+          <div className="lg:col-span-2 p-6 rounded-2xl bg-workbench border border-zinc-800/80 space-y-5">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">Project & System Storage Breakdown</h3>
@@ -379,10 +372,10 @@ export function PerformanceDashboard({
           </div>
 
           {/* Right Col: Safe PC Health Optimizer Panel */}
-          <div className="p-6 rounded-2xl bg-[#131317] border border-zinc-800/80 flex flex-col justify-between space-y-5">
+          <div className="p-6 rounded-2xl bg-workbench border border-zinc-800/80 flex flex-col justify-between space-y-5">
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <Trash2 className="w-4 h-4 text-sky-400" />
+                <Icon icon={Trash2} className="w-4 h-4 text-sky-400" />
                 <h3 className="text-sm font-bold text-white">Safe PC Health Optimizer</h3>
               </div>
               <p className="text-xs text-zinc-400">
@@ -421,9 +414,9 @@ export function PerformanceDashboard({
                 }`}
               >
                 {isCleaning ? (
-                  <RefreshCw className="w-4 h-4 animate-spin text-zinc-900" />
+                  <Icon icon={RefreshCw} className="w-4 h-4 animate-spin text-zinc-900" />
                 ) : (
-                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <Icon icon={Wand2} className="w-4 h-4 text-amber-500" />
                 )}
                 <span>{isCleaning ? "Optimizing PC Health..." : "Optimize PC Health Now"}</span>
               </button>
@@ -435,10 +428,10 @@ export function PerformanceDashboard({
         </div>
 
         {/* ── Autonomous Verification Gauntlet Matrix ────────────────────── */}
-        <div className="p-6 rounded-2xl bg-[#131317] border border-zinc-800/80 space-y-4">
+        <div className="p-6 rounded-2xl bg-workbench border border-zinc-800/80 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <Icon icon={ShieldCheck} className="w-4 h-4 text-emerald-400" />
               <h3 className="text-sm font-bold text-white">Autonomous Gauntlet Verification Gates</h3>
             </div>
             <span className="text-xs text-zinc-400 font-mono">Continuous runtime gates</span>
@@ -448,7 +441,7 @@ export function PerformanceDashboard({
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/70 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-zinc-400 font-medium">
                 <span>1. Python AST Gate</span>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
               </div>
               <div className="text-sm font-bold text-white">ast.parse() Active</div>
               <p className="text-[11px] text-zinc-500">Rejects broken AST syntax before saving to disk</p>
@@ -457,7 +450,7 @@ export function PerformanceDashboard({
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/70 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-zinc-400 font-medium">
                 <span>2. Property Fuzzing</span>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
               </div>
               <div className="text-sm font-bold text-white">Hypothesis Oracle</div>
               <p className="text-[11px] text-zinc-500">Randomized invariants & property verification</p>
@@ -466,7 +459,7 @@ export function PerformanceDashboard({
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/70 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-zinc-400 font-medium">
                 <span>3. Isolated Sandbox</span>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
               </div>
               <div className="text-sm font-bold text-white">Syscall Jail Active</div>
               <p className="text-[11px] text-zinc-500">Resource limits & thermal watchdog enforced</p>
@@ -475,7 +468,7 @@ export function PerformanceDashboard({
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/70 space-y-1.5">
               <div className="flex items-center justify-between text-xs text-zinc-400 font-medium">
                 <span>4. Atomic Applier</span>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
               </div>
               <div className="text-sm font-bold text-white">Zero Corruption</div>
               <p className="text-[11px] text-zinc-500">Transactional unified diff patch engine</p>
@@ -484,10 +477,10 @@ export function PerformanceDashboard({
         </div>
 
         {/* ── Active Background IDE Services Table ───────────────────────── */}
-        <div className="p-6 rounded-2xl bg-[#131317] border border-zinc-800/80 space-y-4">
+        <div className="p-6 rounded-2xl bg-workbench border border-zinc-800/80 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Server className="w-4 h-4 text-sky-400" />
+              <Icon icon={Cpu} className="w-4 h-4 text-sky-400" />
               <h3 className="text-sm font-bold text-white">Active IDE Background Processes</h3>
             </div>
             <span className="text-xs text-zinc-400 font-mono">

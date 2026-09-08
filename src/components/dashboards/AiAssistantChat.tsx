@@ -10,24 +10,8 @@
  */
 
 import { useState, useRef, useEffect } from "react";
-import {
-  Sparkles,
-  ChevronDown,
-  Check,
-  Copy,
-  Send,
-  Code2,
-  GitCommit,
-  AlertTriangle,
-  StopCircle,
-  Maximize2,
-  X,
-  User,
-  Trash2,
-  Terminal,
-  Play,
-  RotateCw,
-} from "lucide-react";
+import { Icon } from "../ui/Icon";
+import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, Code, X, Bot, Send, Wand2, CheckCircle2, Plus, Folder, GitBranch, Sparkles } from "lucide-react";
 import type { PipelineStatus, PipelineOutputLine } from "../TelemetryScorecard";
 import {
   getConfiguredModelsList,
@@ -49,8 +33,9 @@ import {
   clearChatHistory,
   subscribeChatHistory,
 } from "../../services/aiChatPersistence";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 
-type AssistantMode = "chat" | "agent";
+
 
 interface AiAssistantChatProps {
   prompt: string;
@@ -77,7 +62,7 @@ export function AiAssistantChat({
   onPopOutWide,
   isWide = false,
 }: AiAssistantChatProps) {
-  const [mode, setMode] = useState<AssistantMode>("chat");
+
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelItem[]>(getConfiguredModelsList());
   const [selectedModelItem, setSelectedModelItem] = useState<ConfiguredModelItem | null>(() => {
     const list = getConfiguredModelsList();
@@ -88,13 +73,17 @@ export function AiAssistantChat({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
     loadChatHistory(projectRoot)
   );
+  const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const isStreamingRef = useRef(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const heroMenuRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const projectName = projectRoot ? projectRoot.split("/").filter(Boolean).pop() || "acsa-code" : "acsa-code";
 
   // Sync available models and listen for global updates
   useEffect(() => {
@@ -118,7 +107,6 @@ export function AiAssistantChat({
   // Listen for focus requests / Start Coding with Ollama triggers
   useEffect(() => {
     const handleFocus = (e: any) => {
-      setMode("chat");
       const targetModel = e?.detail?.model;
       if (targetModel) {
         setSelectedModelItem((prev) => {
@@ -158,7 +146,10 @@ export function AiAssistantChat({
   // Close popup on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const clickedMenu = menuRef.current && menuRef.current.contains(target);
+      const clickedHeroMenu = heroMenuRef.current && heroMenuRef.current.contains(target);
+      if (!clickedMenu && !clickedHeroMenu) {
         setIsModelMenuOpen(false);
       }
     };
@@ -178,7 +169,12 @@ export function AiAssistantChat({
     const trimmed = textToSend.trim();
     if (!trimmed) return;
 
-    if (mode === "agent") {
+    // Determine intent from prompt
+    const isAgentIntent =
+      trimmed.startsWith("/") ||
+      /^(refactor|build|generate|create)\b/i.test(trimmed);
+
+    if (isAgentIntent) {
       if (status === "running") return;
       onRunPipeline(
         selectedModelItem
@@ -188,6 +184,19 @@ export function AiAssistantChat({
             }
           : undefined
       );
+      // Optional: add a user message to chat history too, so they see what they asked
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+        timestamp: Date.now(),
+      };
+      setChatMessages(prev => {
+        const next = [...prev, userMsg];
+        saveChatHistory(next, projectRoot);
+        return next;
+      });
+      setPrompt("");
       return;
     }
 
@@ -223,6 +232,8 @@ export function AiAssistantChat({
       role: "assistant",
       content: "",
       timestamp: Date.now(),
+      provider: selectedModelItem.providerId,
+      model: selectedModelItem.model,
       isStreaming: true,
     };
 
@@ -291,10 +302,10 @@ export function AiAssistantChat({
   };
 
   const handleStopStream = () => {
-    if (mode === "agent") {
+    if (status === "running") {
       onCancelPipeline();
-    } else {
-      abortControllerRef.current?.abort();
+    }
+    abortControllerRef.current?.abort();
       setIsStreaming(false);
       setChatMessages((prev) => {
         const updated = prev.map((msg) =>
@@ -303,7 +314,6 @@ export function AiAssistantChat({
         saveChatHistory(updated, projectRoot);
         return updated;
       });
-    }
   };
 
   const handleClearChat = () => {
@@ -316,50 +326,94 @@ export function AiAssistantChat({
     void handleSend(text);
   };
 
+  const renderModelMenu = (isCenterHero: boolean) => (
+    <div
+      className={`absolute ${
+        isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-1.5 left-0"
+      } w-64 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
+    >
+      <div className="text-[10px] font-semibold text-zinc-400 px-2 py-1 uppercase tracking-wider font-mono">
+        Installed AI Models
+      </div>
+      {configuredModels.length === 0 ? (
+        <div className="px-2.5 py-3 text-center text-xs text-zinc-500 font-mono">
+          No models installed yet
+        </div>
+      ) : (
+        configuredModels.map((item) => {
+          const isSelected =
+            item.model === selectedModelItem?.model && item.providerId === selectedModelItem?.providerId;
+          return (
+            <button
+              key={`${item.providerId}-${item.model}`}
+              type="button"
+              onClick={() => {
+                setSelectedModelItem(item);
+                setIsModelMenuOpen(false);
+                if (item.providerId === "ollama") {
+                  const all = loadAllProviders();
+                  if (all.ollama) {
+                    all.ollama.selectedModel = item.model;
+                    saveProviderConfig(all.ollama);
+                  }
+                }
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
+              }`}
+            >
+              <div className="flex items-center gap-2 truncate">
+                <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate font-mono text-[11px]">{item.model}</span>
+              </div>
+              {isSelected && <Icon icon={Check} className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
+            </button>
+          );
+        })
+      )}
+
+      <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between px-1">
+        <button
+          type="button"
+          onClick={() => {
+            setIsModelMenuOpen(false);
+            openAiManagementDashboard();
+          }}
+          className="text-[10px] text-purple-400 hover:text-purple-300 py-1 transition-colors font-mono font-medium"
+        >
+          + Download More Models
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-[#141416] text-zinc-200 font-sans select-none overflow-hidden border-l border-[var(--vscode-border)]">
-      {/* ── Header: Title, Mode Switcher, Pop-out, Close ────────────────── */}
+      {/* ── Header: Title, Mode Indicator, Pop-out, Close ────────────────── */}
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-sky-400" />
+          <Icon icon={Bot} className="w-4 h-4 text-sky-400" />
           <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">AI Assistant</span>
-
-          {/* Mode Pill Switcher */}
-          <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 ml-1">
-            <button
-              type="button"
-              onClick={() => setMode("chat")}
-              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-                mode === "chat"
-                  ? "bg-purple-600/30 text-purple-300 font-semibold border border-purple-500/40"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              💬 Chat
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("agent")}
-              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-                mode === "agent"
-                  ? "bg-sky-600/30 text-sky-300 font-semibold border border-sky-500/40"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              ⚡ Agent Gauntlet
-            </button>
-          </div>
+          {isWide ? (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-400 font-medium">
+              Center Stage
+            </span>
+          ) : (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-800/80 border border-zinc-700/50 text-zinc-400">
+              Side Dock
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
-          {mode === "chat" && chatMessages.length > 0 && (
+          {chatMessages.length > 0 && (
             <button
               type="button"
-              onClick={handleClearChat}
-              className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              onClick={() => setConfirmClearChat(true)}
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
               title="Clear Conversation"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Icon icon={Trash2} className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -367,32 +421,158 @@ export function AiAssistantChat({
             <button
               type="button"
               onClick={onPopOutWide}
-              className="p-1.5 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
               title={isWide ? "Dock to Side Tool Window" : "Open in Center Stage Editor Tab"}
             >
-              <Maximize2 className="w-3.5 h-3.5" />
+              <Icon icon={isWide ? Minimize2 : Maximize2} className="w-3.5 h-3.5" />
             </button>
           )}
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
-              title="Close AI Tool Window (Cmd+L)"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              title="Close AI Assistant (Cmd+L)"
             >
-              <X className="w-3.5 h-3.5" />
+              <Icon icon={X} className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
       </div>
 
       {/* ── Main Scroll Area ────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 font-sans">
+      <div className="flex-1 overflow-y-auto p-4 font-sans">
         {/* ── 1. Chat Mode Content ──────────────────────────────────────── */}
-        {mode === "chat" && (
-          <>
-            {/* Empty State / Welcome Screen */}
-            {chatMessages.length === 0 && (
+        <>
+          {/* Empty State / Welcome Screen */}
+          {chatMessages.length === 0 && (
+            isWide ? (
+              /* Center Stage Hero Mode (Full Canvas Omnibar) */
+              <div className="h-full min-h-[460px] flex flex-col items-center justify-center p-6">
+                <div className="w-full max-w-2xl space-y-4">
+                  {/* Context pill strip */}
+                  <div className="flex items-center justify-between px-1 text-xs text-zinc-400">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
+                        <Icon icon={Folder} className="w-3 h-3 text-sky-400" />
+                        <span className="font-mono text-[11px]">{projectName}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
+                        <Icon icon={GitBranch} className="w-3 h-3 text-emerald-400" />
+                        <span className="font-mono text-[11px]">main</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-400">
+                      <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3 h-3" />
+                      <span className="font-mono text-[11px] text-zinc-300">{selectedModelItem?.model || "AI Model"}</span>
+                    </div>
+                  </div>
+
+                  {/* Centered Floating Hero Omnibar Card */}
+                  <div className="relative rounded-2xl bg-[#1c1c24]/95 backdrop-blur-xl border border-zinc-700/60 shadow-2xl p-4 space-y-3">
+                    <textarea
+                      ref={textareaRef}
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void handleSend();
+                        }
+                      }}
+                      placeholder="Ask anything, / for commands, @ for context"
+                      rows={3}
+                      className="w-full bg-transparent border-0 text-sm text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-1"
+                    />
+
+                    {/* Bottom control bar inside card */}
+                    <div className="flex items-center justify-between pt-2.5 border-t border-zinc-800/80">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAction("Explain codebase structure and key modules")}
+                          className="p-1.5 rounded-lg bg-zinc-800/60 hover:bg-zinc-700/60 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 transition-colors"
+                          title="Add Context / Actions"
+                        >
+                          <Icon icon={Plus} className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="p-1.5 rounded-lg bg-zinc-800/60 hover:bg-zinc-700/60 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 transition-colors"
+                          title="Model Management & Tuning"
+                        >
+                          <Icon icon={Sparkles} className="w-3.5 h-3.5 text-purple-400" />
+                        </button>
+
+                        {/* Model Selector Pill */}
+                        <div className="relative" ref={heroMenuRef}>
+                          <button
+                            type="button"
+                            onClick={() => setIsModelMenuOpen((prev) => !prev)}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700/60 text-xs text-zinc-200 font-medium transition-all shadow-sm"
+                          >
+                            <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
+                            <span className="font-mono text-[11px]">{selectedModelItem?.model || "Select Model"}</span>
+                            <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
+                          </button>
+
+                          {isModelMenuOpen && renderModelMenu(true)}
+                        </div>
+
+                        {/* Speed badge */}
+                        <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-800/40 border border-zinc-700/40 text-[11px] font-mono text-zinc-400">
+                          <span>High · Fast</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSend()}
+                        disabled={!prompt.trim()}
+                        className="flex items-center justify-center w-8 h-8 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600 text-white shadow-md transition-all"
+                        title="Send (Enter)"
+                      >
+                        <Icon icon={Send} className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Prompt suggestion chips */}
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAction("Give me a breakdown of the recent changes in this project.")}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition-all group"
+                    >
+                      <Icon icon={GitCommit} className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                      <span>Recent changes breakdown</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAction("Explain the architecture and main components of this codebase.")}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition-all group"
+                    >
+                      <Icon icon={Code} className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+                      <span>Explain project architecture</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAction("How do I test and verify recent modifications in this workspace?")}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition-all group"
+                    >
+                      <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+                      <span>Test & verification guide</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Compact Side Dock Empty State */
               <div className="space-y-5 max-w-xl mx-auto py-2">
                 <div>
                   <h2 className="text-sm font-bold text-zinc-100 tracking-tight flex items-center gap-2">
@@ -420,7 +600,7 @@ export function AiAssistantChat({
                       className="w-full flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800/80 text-left transition-all group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <GitCommit className="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <Icon icon={GitCommit} className="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
                         <span className="text-xs font-medium text-zinc-200 group-hover:text-zinc-100 truncate">
                           Give me a breakdown of the recent changes
                         </span>
@@ -434,7 +614,7 @@ export function AiAssistantChat({
                       className="w-full flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800/80 text-left transition-all group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Code2 className="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <Icon icon={Code} className="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform" />
                         <span className="text-xs font-medium text-zinc-200 group-hover:text-zinc-100 truncate">
                           Explain project architecture & key files
                         </span>
@@ -448,7 +628,7 @@ export function AiAssistantChat({
                       className="w-full flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800/80 text-left transition-all group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <Icon icon={CheckCircle2} className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
                         <span className="text-xs font-medium text-zinc-200 group-hover:text-zinc-100 truncate">
                           How to test and verify recent modifications
                         </span>
@@ -458,58 +638,62 @@ export function AiAssistantChat({
                   </div>
                 </div>
               </div>
-            )}
+            )
+          )}
 
-            {/* Conversation Messages */}
-            {chatMessages.length > 0 && (
-              <div className="space-y-4">
-                {chatMessages.map((msg) => (
+          {/* Conversation Messages */}
+          {chatMessages.length > 0 && (
+            <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 py-2" : "space-y-4"}>
+              {chatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${
+                    msg.role === "user" ? "items-end" : "items-start"
+                  }`}
+                >
+                  {/* Role Header */}
+                  <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400">
+                    {msg.role === "user" ? (
+                      <>
+                        <span className="font-semibold text-zinc-300">You</span>
+                        <Icon icon={User} className="w-3 h-3 text-zinc-400" />
+                      </>
+                    ) : (
+                      <>
+                        {msg.provider ? (
+                          <ProviderLogo providerId={msg.provider} className="w-3 h-3" />
+                        ) : (
+                          <Icon icon={Bot} className="w-3 h-3 text-zinc-400" />
+                        )}
+                        <span className="font-semibold text-purple-300">{msg.model || "AI Assistant"}</span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Message Bubble */}
                   <div
-                    key={msg.id}
-                    className={`flex flex-col ${
-                      msg.role === "user" ? "items-end" : "items-start"
+                    className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
+                      msg.role === "user"
+                        ? "bg-purple-950/40 border border-purple-500/30 text-purple-100 rounded-tr-sm"
+                        : msg.error
+                        ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
+                        : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
                     }`}
                   >
-                    {/* Role Header */}
-                    <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400">
-                      {msg.role === "user" ? (
-                        <>
-                          <span className="font-semibold text-zinc-300">You</span>
-                          <User className="w-3 h-3 text-zinc-400" />
-                        </>
-                      ) : (
-                        <>
-                          <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3 h-3" />
-                          <span className="font-semibold text-purple-300">{selectedModelItem?.model || "AI Assistant"}</span>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Message Bubble */}
-                    <div
-                      className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
-                        msg.role === "user"
-                          ? "bg-purple-950/40 border border-purple-500/30 text-purple-100 rounded-tr-sm"
-                          : msg.error
-                          ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
-                          : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
-                      }`}
-                    >
-                      <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
-                    </div>
+                    <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
                   </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
 
         {/* ── 2. Agent Gauntlet Mode Content ────────────────────────────── */}
-        {mode === "agent" && (
-          <div className="space-y-4 font-sans">
+        {activityLog.length > 0 && (
+          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 font-sans mt-8 border-t border-zinc-800 pt-6" : "space-y-4 font-sans mt-8 border-t border-zinc-800 pt-6"}>
             <div className="p-3 rounded-xl bg-sky-950/20 border border-sky-500/30 text-xs text-sky-200/90">
               <span className="font-bold text-white flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5 text-sky-400" />
+                <Icon icon={Wand2} className="w-3.5 h-3.5 text-sky-400" />
                 Autonomous Verification Gauntlet
               </span>
               <p className="mt-1 text-[11px] text-zinc-300">
@@ -517,183 +701,130 @@ export function AiAssistantChat({
               </p>
             </div>
 
-            {activityLog.length === 0 && (
-              <div className="py-6 text-center text-xs text-zinc-500">
-                <Play className="w-6 h-6 mx-auto mb-2 text-zinc-600" />
-                Enter a code refactoring task below and click <b>Run Agent Gauntlet</b>.
+            <div className="space-y-3 font-sans">
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-800 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-zinc-200">
+                  <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5" />
+                  <span>Engine Output: {selectedModelItem?.model || "AI Gauntlet"}</span>
+                </div>
+                <span
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
+                    status === "running"
+                      ? "bg-sky-500/20 text-sky-400 animate-pulse"
+                      : status === "success"
+                      ? "bg-emerald-500/20 text-emerald-400"
+                      : "bg-red-500/20 text-red-400"
+                  }`}
+                >
+                  {status.toUpperCase()}
+                </span>
               </div>
-            )}
 
-            {activityLog.length > 0 && (
-              <div className="space-y-3 font-sans">
-                <div className="flex items-center justify-between pb-2 border-b border-zinc-800 text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-zinc-200">
-                    <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5" />
-                    <span>Engine Output: {selectedModelItem?.model || "AI Gauntlet"}</span>
-                  </div>
-                  <span
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
-                      status === "running"
-                        ? "bg-sky-500/20 text-sky-400 animate-pulse"
-                        : status === "success"
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : "bg-red-500/20 text-red-400"
+              <div className="space-y-1 font-mono text-[11px]">
+                {activityLog.map((line, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-2 rounded-lg border transition-colors break-words ${
+                      line.stream === "stderr"
+                        ? "bg-red-950/20 border-red-500/30 text-red-300"
+                        : line.content.startsWith("---") || line.content.startsWith("@@")
+                        ? "bg-sky-950/20 border-sky-500/30 text-sky-300"
+                        : "bg-zinc-900/60 border-zinc-800/80 text-zinc-200"
                     }`}
                   >
-                    {status.toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="space-y-1 font-mono text-[11px]">
-                  {activityLog.map((line, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-2 rounded-lg border transition-colors break-words ${
-                        line.stream === "stderr"
-                          ? "bg-red-950/20 border-red-500/30 text-red-300"
-                          : line.content.startsWith("---") || line.content.startsWith("@@")
-                          ? "bg-sky-950/20 border-sky-500/30 text-sky-300"
-                          : "bg-zinc-900/60 border-zinc-800/80 text-zinc-200"
-                      }`}
-                    >
-                      {line.content}
-                    </div>
-                  ))}
-                </div>
+                    {line.content}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
           </div>
         )}
 
         <div ref={chatBottomRef} />
       </div>
 
-      {/* ── Input Box & Controls ────────────────────────────────────────── */}
-      <div className="p-3 border-t border-[var(--vscode-border)] bg-[#18181b] space-y-2 shrink-0 font-sans">
-        <div className="relative">
-          <textarea
-            ref={textareaRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void handleSend();
-              }
-            }}
-            placeholder={
-              mode === "chat"
-                ? `Ask ${selectedModelItem?.model || "AI"} anything (Shift+Enter for new line)…`
-                : "Describe the task to build, refactor, or verify through the gauntlet…"
-            }
-            rows={mode === "chat" ? 2 : 3}
-            className="w-full bg-zinc-900/90 border border-zinc-800 focus:border-purple-500 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans transition-all"
-          />
-        </div>
+      {/* ── Input Box & Controls (Only shown when not in empty Center Stage mode) ── */}
+      {(!isWide || chatMessages.length > 0) && (
+        <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
+          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-2.5" : "space-y-2"}>
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSend();
+                  }
+                }}
+                placeholder={`Ask ${selectedModelItem?.model || "AI"} anything, or describe a task (Shift+Enter for new line)…`}
+                rows={2}
+                className="w-full bg-zinc-900/90 border border-zinc-800 focus:border-purple-500 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans transition-all"
+              />
+            </div>
 
-        <div className="flex items-center justify-between gap-2">
-          {/* Model Selector Dropdown Button */}
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setIsModelMenuOpen((prev) => !prev)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-200 transition-colors"
-            >
-              <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono text-[11px] truncate max-w-[120px]">
-                {selectedModelItem?.model || "Select Model"}
-              </span>
-              <ChevronDown className="w-3 h-3 text-zinc-400" />
-            </button>
+            <div className="flex items-center justify-between gap-2">
+              {/* Model Selector Dropdown Button */}
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsModelMenuOpen((prev) => !prev)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-200 transition-colors"
+                >
+                  <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
+                  <span className="font-mono text-[11px] truncate max-w-[120px]">
+                    {selectedModelItem?.model || "Select Model"}
+                  </span>
+                  <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
+                </button>
 
-            {/* Model Selector Menu */}
-            {isModelMenuOpen && (
-              <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-1.5 z-50 space-y-1">
-                <div className="text-[10px] font-semibold text-zinc-400 px-2 py-1 uppercase tracking-wider font-mono">
-                  Installed AI Models
-                </div>
-                {configuredModels.length === 0 ? (
-                  <div className="px-2.5 py-3 text-center text-xs text-zinc-500 font-mono">
-                    No models installed yet
-                  </div>
-                ) : (
-                  configuredModels.map((item) => {
-                    const isSelected =
-                      item.model === selectedModelItem?.model && item.providerId === selectedModelItem?.providerId;
-                    return (
-                      <button
-                        key={`${item.providerId}-${item.model}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedModelItem(item);
-                          setIsModelMenuOpen(false);
-                          if (item.providerId === "ollama") {
-                            const all = loadAllProviders();
-                            if (all.ollama) {
-                              all.ollama.selectedModel = item.model;
-                              saveProviderConfig(all.ollama);
-                            }
-                          }
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                          isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate font-mono text-[11px]">{item.model}</span>
-                        </div>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
-                      </button>
-                    );
-                  })
-                )}
+                {isModelMenuOpen && renderModelMenu(false)}
+              </div>
 
-                <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between px-1">
+              {/* Action Buttons */}
+              <div className="flex items-center gap-1.5">
+                {(isStreaming || status === "running") ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsModelMenuOpen(false);
-                      openAiManagementDashboard();
-                    }}
-                    className="text-[10px] text-purple-400 hover:text-purple-300 py-1 transition-colors font-mono font-medium"
+                    onClick={handleStopStream}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-xs font-semibold text-red-300 transition-colors"
                   >
-                    + Download More Models
+                    <Icon icon={Square} className="w-3.5 h-3.5" />
+                    <span>Stop</span>
                   </button>
-                </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSend()}
+                    disabled={!prompt.trim()}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40`}
+                  >
+                    <Icon icon={Send} className="w-3 h-3" />
+                    <span>Send</span>
+                  </button>
+                )}
               </div>
-            )}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-1.5">
-            {(isStreaming || status === "running") ? (
-              <button
-                type="button"
-                onClick={handleStopStream}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-xs font-semibold text-red-300 transition-colors"
-              >
-                <StopCircle className="w-3.5 h-3.5" />
-                <span>Stop</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleSend()}
-                disabled={!prompt.trim()}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
-                  mode === "agent"
-                    ? "bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-40"
-                    : "bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40"
-                }`}
-              >
-                <Send className="w-3 h-3" />
-                <span>{mode === "agent" ? "Run Gauntlet" : "Send"}</span>
-              </button>
-            )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {confirmClearChat && (
+        <ConfirmDialog
+          isOpen={true}
+          title="Clear Conversation"
+          message="Are you sure you want to clear the entire chat history? This cannot be undone."
+          confirmText="Clear Chat"
+          cancelText="Cancel"
+          isDestructive={true}
+          onConfirm={() => {
+            handleClearChat();
+            setConfirmClearChat(false);
+          }}
+          onCancel={() => setConfirmClearChat(false)}
+        />
+      )}
     </div>
   );
 }
@@ -703,7 +834,7 @@ function FormattedMarkdown({ content, isStreaming }: { content: string; isStream
   if (!content && isStreaming) {
     return (
       <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
-        <RotateCw className="w-3 h-3 animate-spin text-purple-400" />
+        <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
         <span>Thinking…</span>
       </div>
     );
@@ -779,7 +910,7 @@ function FormattedParagraph({ text }: { text: string }) {
         // Blockquote: >
         if (trimmed.startsWith("> ")) {
           return (
-            <div key={i} className="border-l-2 border-purple-500/50 pl-2 text-zinc-400 italic">
+            <div key={i} className="bg-purple-500/10 border border-purple-500/20 rounded-md px-3 py-1.5 text-zinc-300 italic">
               {renderInlineStyles(trimmed.slice(2))}
             </div>
           );
@@ -841,7 +972,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
           onClick={handleCopy}
           className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition-colors"
         >
-          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          {copied ? <Icon icon={Check} className="w-3 h-3 text-emerald-400" /> : <Icon icon={Copy} className="w-3 h-3" />}
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
