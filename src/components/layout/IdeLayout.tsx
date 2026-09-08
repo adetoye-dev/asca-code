@@ -39,6 +39,7 @@ import {
   Save,
   Terminal,
   Palette,
+  Download,
 } from "lucide-react";
 import { IdeBrandLogo, ProviderLogo } from "../ui/BrandLogos";
 
@@ -61,6 +62,7 @@ import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
 import { PRESET_THEMES, applyGlobalWorkbenchTheme } from "../../services/themeManager";
+import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
@@ -248,6 +250,27 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       existing.api.setActive();
     }
   };
+
+  // ── Listen for Programmatic Open AI Manager Requests ──────────────────────
+  useEffect(() => {
+    const handleOpenAiManager = () => {
+      openAiManagerTab();
+    };
+    window.addEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
+    return () => window.removeEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
+  }, []);
+
+  // ── Listen for Programmatic Start Coding with Ollama Requests ─────────────
+  useEffect(() => {
+    const handleStartCoding = () => {
+      setIsRightPanelOpen(true);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("acsa:focus-ai-chat-input"));
+      }, 80);
+    };
+    window.addEventListener(EVENT_START_CODING_WITH_OLLAMA, handleStartCoding);
+    return () => window.removeEventListener(EVENT_START_CODING_WITH_OLLAMA, handleStartCoding);
+  }, []);
 
   // ── Global Keyboard Shortcuts Engine ──────────────────────────────────────
   useEffect(() => {
@@ -520,6 +543,20 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       action: openAiManagerTab,
     },
     {
+      id: "ai.setupOllama",
+      title: "AI: Setup Local AI Engine (Ollama Setup Wizard)",
+      category: "AI",
+      icon: Cpu,
+      action: openOllamaSetupWizard,
+    },
+    {
+      id: "ai.pullModel",
+      title: "AI: Pull / Download Local AI Model...",
+      category: "AI",
+      icon: Download,
+      action: openAiManagerTab,
+    },
+    {
       id: "view.openAiChat",
       title: "AI: Open AI Assistant Chat",
       category: "AI",
@@ -647,6 +684,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         setPrompt={setPrompt}
         status={status}
         activityLog={activityLog}
+        projectRoot={activeProject.path}
         onRunPipeline={(override) => {
           if (override) {
             setAiSettings({
@@ -819,6 +857,17 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
+          {/* Local AI (Ollama) Wizard Opener */}
+          <button
+            type="button"
+            onClick={openOllamaSetupWizard}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-300 hover:text-white bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 transition-all cursor-pointer shadow-sm"
+            title="Configure Local AI Models & Ollama"
+          >
+            <Cpu className="w-3.5 h-3.5 text-purple-400" />
+            <span>Local AI</span>
+          </button>
+
           {/* AI Chat Button (Toggles Right AI Panel) */}
           <button
             type="button"
@@ -1091,6 +1140,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               setPrompt={setPrompt}
               status={status}
               activityLog={activityLog}
+              projectRoot={activeProject.path}
               onRunPipeline={(override) => {
                 if (override) {
                   setAiSettings({
@@ -1163,12 +1213,28 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             className="capitalize hover:text-white cursor-pointer flex items-center gap-1.5 transition-colors text-zinc-300"
             title="Active AI Provider & Model (click to open model management)"
           >
-            <ProviderLogo providerId={aiSettings.provider} className="w-3.5 h-3.5" />
-            <span>
-              {aiSettings.provider === "deterministic"
-                ? "Deterministic AST"
-                : aiSettings.model || aiSettings.provider}
+            <ProviderLogo providerId={aiSettings.provider || "ollama"} className="w-3.5 h-3.5" />
+            <span className="font-mono text-[11px]">
+              {aiSettings.model ||
+                (aiSettings.provider === "ollama"
+                  ? "Ollama"
+                  : aiSettings.provider === "local"
+                    ? "Local AI"
+                    : aiSettings.provider === "openai"
+                      ? "OpenAI"
+                      : "No model selected")}
             </span>
+          </button>
+
+          {/* Local AI / Ollama Quick Wizard Opener */}
+          <button
+            type="button"
+            onClick={openOllamaSetupWizard}
+            className="hover:text-purple-300 cursor-pointer flex items-center gap-1 transition-colors text-zinc-400"
+            title="Local AI Engine Setup & Model Puller (Ollama)"
+          >
+            <Cpu className="w-3.5 h-3.5 text-purple-400" />
+            <span>Local AI</span>
           </button>
 
           {/* Host Telemetry Indicators */}

@@ -21,14 +21,30 @@ import {
   Zap,
   Globe,
   Lock,
+  Loader2,
+  Play,
+  Download,
+  Trash2,
 } from "lucide-react";
 import { ProviderLogo } from "../ui/BrandLogos";
+import { OllamaSetupWizard } from "../ui/OllamaSetupWizard";
+import { HashProgressBar } from "../ui/HashProgressBar";
 import type { AIProviderConfig, AIProviderId } from "../../types/workbench";
 import {
   loadAllProviders,
   saveProviderConfig,
   setDefaultProvider,
+  syncOllamaModels,
 } from "../../services/aiModelManager";
+import {
+  checkOllamaStatus,
+  startOllamaServer,
+  pullOllamaModel,
+  deleteOllamaModel,
+  CURATED_OLLAMA_MODELS,
+  type OllamaStatus,
+  type OllamaProgressEvent,
+} from "../../services/ollamaSetup";
 
 interface AiManagementDashboardProps {
   onModelSettingsChanged?: () => void;
@@ -38,15 +54,27 @@ export function AiManagementDashboard({
   onModelSettingsChanged,
 }: AiManagementDashboardProps) {
   const [providers, setProviders] = useState<Record<AIProviderId, AIProviderConfig>>(loadAllProviders());
-  const [selectedId, setSelectedId] = useState<AIProviderId>("deterministic");
+  const [selectedId, setSelectedId] = useState<AIProviderId>("ollama");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [baseUrlInput, setBaseUrlInput] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; message?: string } | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [isStartingOllama, setIsStartingOllama] = useState(false);
+  const [showOllamaWizard, setShowOllamaWizard] = useState(false);
 
-  const activeProvider = providers[selectedId] || providers.deterministic;
+  // Model pulling & downloader state
+  const [pullingModelTag, setPullingModelTag] = useState<string | null>(null);
+  const [pullPercent, setPullPercent] = useState(0);
+  const [pullStatusText, setPullStatusText] = useState("");
+  const [pullSuccessMsg, setPullSuccessMsg] = useState<string | null>(null);
+  const [pullErrorMsg, setPullErrorMsg] = useState<string | null>(null);
+  const [customModelTag, setCustomModelTag] = useState("");
+  const [isDeletingModel, setIsDeletingModel] = useState<string | null>(null);
+
+  const activeProvider = providers[selectedId] || providers.ollama;
 
   // Sync inputs when selected provider changes
   useEffect(() => {
@@ -57,13 +85,112 @@ export function AiManagementDashboard({
       setTestResult(null);
       setShowApiKey(false);
     }
+    // When switching to Ollama, check its live status
+    if (selectedId === "ollama") {
+      setOllamaStatus(null);
+      checkOllamaStatus().then((s) => {
+        setOllamaStatus(s);
+        if (s.running && s.models.length > 0) {
+          const updated = syncOllamaModels(s.models);
+          setProviders(updated);
+          if (updated.ollama) {
+            setSelectedModel(updated.ollama.selectedModel);
+          }
+        }
+      }).catch(() => {});
+    }
   }, [selectedId]);
 
+  const handleStartOllama = async () => {
+    setIsStartingOllama(true);
+    const ok = await startOllamaServer();
+    if (ok) {
+      // Re-check to refresh model list
+      const s = await checkOllamaStatus();
+      setOllamaStatus(s);
+      if (s.models.length > 0) {
+        const updatedProviders = syncOllamaModels(s.models);
+        setProviders(updatedProviders);
+      } else {
+        const updated: AIProviderConfig = { ...activeProvider, isConnected: true };
+        const newMap = saveProviderConfig(updated);
+        setProviders(newMap);
+      }
+    }
+    setIsStartingOllama(false);
+  };
+
+  const handlePullModel = async (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed || pullingModelTag) return;
+
+    setPullingModelTag(trimmed);
+    setPullPercent(0);
+    setPullStatusText(`Connecting to Ollama service for ${trimmed}…`);
+    setPullSuccessMsg(null);
+    setPullErrorMsg(null);
+
+    try {
+      const model = await pullOllamaModel(trimmed, (evt: OllamaProgressEvent) => {
+        setPullPercent(evt.percent);
+        setPullStatusText(evt.status);
+      });
+
+      const s = await checkOllamaStatus();
+      setOllamaStatus(s);
+      const updated = syncOllamaModels(s.models.length > 0 ? s.models : [model], model);
+      setProviders(updated);
+      setSelectedModel(model);
+      onModelSettingsChanged?.();
+
+      setPullSuccessMsg(`Successfully pulled and activated ${model}`);
+      setTimeout(() => setPullSuccessMsg(null), 6000);
+    } catch (err: any) {
+      setPullErrorMsg(err.message || "Model pull failed.");
+    } finally {
+      setPullingModelTag(null);
+    }
+  };
+
+  const handleSwitchModel = (tag: string) => {
+    setSelectedModel(tag);
+    handleSaveProvider(tag, baseUrlInput);
+    if (ollamaStatus?.models) {
+      const updated = syncOllamaModels(ollamaStatus.models, tag);
+      setProviders(updated);
+    }
+  };
+
+  const handleDeleteModel = async (tag: string) => {
+    if (isDeletingModel) return;
+    setIsDeletingModel(tag);
+    try {
+      const ok = await deleteOllamaModel(tag);
+      if (ok) {
+        const s = await checkOllamaStatus();
+        setOllamaStatus(s);
+        const updated = syncOllamaModels(s.models);
+        setProviders(updated);
+        if (selectedModel === tag && s.models.length > 0) {
+          setSelectedModel(s.models[0]);
+          handleSaveProvider(s.models[0], baseUrlInput);
+        }
+        onModelSettingsChanged?.();
+      }
+    } finally {
+      setIsDeletingModel(null);
+    }
+  };
+
   const handleSaveProvider = (modelValue = selectedModel, baseUrlValue = baseUrlInput) => {
-    const isConnected = !!(
-      activeProvider.category === "local" ||
-      (apiKeyInput && apiKeyInput.trim().length > 3)
-    );
+    let isConnected = false;
+    if (activeProvider.id === "ollama") {
+      isConnected = ollamaStatus?.running ?? activeProvider.isConnected;
+    } else if (activeProvider.id === "llamacpp") {
+      isConnected = activeProvider.isConnected;
+    } else if (activeProvider.category === "cloud") {
+      isConnected = !!(apiKeyInput && apiKeyInput.trim().length > 3);
+    }
 
     const updated: AIProviderConfig = {
       ...activeProvider,
@@ -103,28 +230,43 @@ export function AiManagementDashboard({
       if (res.ok) {
         const data = await res.json();
         setTestResult(data);
-        if (data.ok) {
-          const updated: AIProviderConfig = {
-            ...activeProvider,
-            isConnected: true,
-            latencyMs: data.latencyMs,
-          };
-          const newMap = saveProviderConfig(updated);
-          setProviders(newMap);
+        const updated: AIProviderConfig = {
+          ...activeProvider,
+          isConnected: !!data.ok,
+          latencyMs: data.latencyMs,
+          availableModels: data.models && data.models.length > 0 ? data.models : activeProvider.availableModels,
+          selectedModel: data.models?.[0] || activeProvider.selectedModel,
+        };
+        const newMap = saveProviderConfig(updated);
+        setProviders(newMap);
+        if (data.models?.[0]) {
+          setSelectedModel(data.models[0]);
         }
+      } else {
+        setTestResult({ ok: false, message: `Server returned HTTP ${res.status}` });
+        const updated: AIProviderConfig = { ...activeProvider, isConnected: false };
+        const newMap = saveProviderConfig(updated);
+        setProviders(newMap);
       }
     } catch (err: any) {
       setTestResult({ ok: false, message: `Ping failed: ${err.message}` });
+      const updated: AIProviderConfig = { ...activeProvider, isConnected: false };
+      const newMap = saveProviderConfig(updated);
+      setProviders(newMap);
     } finally {
       setIsTesting(false);
     }
   };
 
-  const localProviders = Object.values(providers).filter((p) => p.category === "local");
+  const localProviders = Object.values(providers).filter(
+    (p) => p.category === "local" && (p.id as string) !== "deterministic"
+  );
   const cloudProviders = Object.values(providers).filter((p) => p.category === "cloud");
-  const defaultProvider = Object.values(providers).find((p) => p.isDefault) || providers.deterministic;
+  const defaultProvider = Object.values(providers).find((p) => p.isDefault) || providers.ollama;
+
 
   return (
+    <>
     <div className="h-full w-full overflow-y-auto bg-[#0d0d10] text-zinc-200 p-6 lg:p-8 font-sans select-none">
       <div className="max-w-5xl mx-auto space-y-6">
         {/* ── Top Header Toolbar ────────────────────────────────────────── */}
@@ -182,7 +324,9 @@ export function AiManagementDashboard({
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold">{p.name}</div>
-                          <div className="truncate text-[10px] text-zinc-500 font-mono">{p.selectedModel}</div>
+                          <div className="truncate text-[10px] text-zinc-500 font-mono">
+                            {p.selectedModel || (p.isConnected ? "Active" : "Offline")}
+                          </div>
                         </div>
                       </div>
 
@@ -190,7 +334,13 @@ export function AiManagementDashboard({
                         {p.isDefault && (
                           <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                         )}
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            p.isConnected
+                              ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                              : "bg-zinc-700"
+                          }`}
+                        />
                       </div>
                     </button>
                   );
@@ -268,7 +418,11 @@ export function AiManagementDashboard({
                         }`}
                       />
                       <span className="text-[11px] font-mono text-zinc-400 font-medium">
-                        {activeProvider.isConnected ? "Connected & Verified" : "Not Configured"}
+                        {activeProvider.isConnected
+                          ? "Connected & Verified"
+                          : activeProvider.category === "local"
+                          ? "Offline / Not Running"
+                          : "Not Configured"}
                       </span>
                     </div>
                   </div>
@@ -277,85 +431,445 @@ export function AiManagementDashboard({
                 <button
                   type="button"
                   onClick={handleSetDefault}
+                  disabled={!activeProvider.isConnected && activeProvider.id !== "ollama"}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-sm ${
                     activeProvider.isDefault
                       ? "bg-amber-400 text-zinc-950 shadow-amber-400/20"
+                      : !activeProvider.isConnected && activeProvider.id !== "ollama"
+                      ? "bg-zinc-800/40 text-zinc-500 border border-zinc-800/60 cursor-not-allowed"
                       : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60"
                   }`}
+                  title={!activeProvider.isConnected && activeProvider.id !== "ollama" ? "Connect or verify provider before setting as default" : ""}
                 >
                   <Star className={`w-3.5 h-3.5 ${activeProvider.isDefault ? "fill-zinc-950 text-zinc-950" : ""}`} />
                   <span>{activeProvider.isDefault ? "Current Default" : "Set as Default"}</span>
                 </button>
               </div>
 
-              {/* Model Selection Dropdown */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-300">
-                  Active Model
-                </label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    handleSaveProvider(e.target.value, baseUrlInput);
-                  }}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-sky-500 transition-colors cursor-pointer"
-                >
-                  {activeProvider.availableModels.map((m) => (
-                    <option key={m} value={m} className="bg-zinc-900 text-zinc-100">
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-zinc-500">
-                  Powers inline completions, code suggestions, syntax repair, and AI assistant conversations.
-                </p>
-              </div>
+              {/* ── Ollama Control Plane (when Ollama tab is active) ─── */}
+              {selectedId === "ollama" ? (
+                <div className="space-y-5">
+                  {/* 1. Server Status & Hardware Specs Header */}
+                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/60 p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-zinc-200">Ollama Daemon Service</span>
+                        {ollamaStatus?.running && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
+                            Port 11434 · Ready
+                          </span>
+                        )}
+                      </div>
 
-              {/* API Key Input (if cloud provider) */}
-              {activeProvider.category === "cloud" ? (
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
-                    <span>API Key / Secret Token</span>
-                    <span className="text-[11px] text-zinc-500 font-normal">Stored in browser local storage on this device</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type={showApiKey ? "text" : "password"}
-                        value={apiKeyInput}
-                        onChange={(e) => setApiKeyInput(e.target.value)}
-                        placeholder="sk-••••••••••••••••••••••••"
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
-                      />
+                      <div className="flex items-center gap-2">
+                        {ollamaStatus === null ? (
+                          <Loader2 className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
+                        ) : (
+                          <span
+                            className={`flex items-center gap-1.5 text-xs font-mono font-semibold ${
+                              ollamaStatus.running
+                                ? "text-emerald-400"
+                                : ollamaStatus.installed
+                                  ? "text-amber-400"
+                                  : "text-red-400"
+                            }`}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                ollamaStatus.running
+                                  ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+                                  : ollamaStatus.installed
+                                    ? "bg-amber-400"
+                                    : "bg-red-400"
+                              }`}
+                            />
+                            {ollamaStatus.running
+                              ? "Running"
+                              : ollamaStatus.installed
+                                ? "Stopped"
+                                : "Not installed"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {ollamaStatus?.totalRamGb ? (
+                      <div className="text-[11px] text-zinc-400 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-zinc-800/60 font-mono">
+                        <span>Hardware: <strong className="text-zinc-200 font-semibold">{ollamaStatus.totalRamGb} GB RAM</strong></span>
+                        <span>Recommended Default: <strong className="text-purple-300 font-semibold">{ollamaStatus.recommendedModel}</strong></span>
+                      </div>
+                    ) : null}
+
+                    {/* Action buttons if not running or need wizard */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {!ollamaStatus?.running && ollamaStatus?.installed && (
+                        <button
+                          type="button"
+                          disabled={isStartingOllama}
+                          onClick={handleStartOllama}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-xs font-semibold text-sky-300 transition-colors disabled:opacity-50"
+                        >
+                          {isStartingOllama ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                          <span>{isStartingOllama ? "Starting Daemon…" : "Start Ollama Server"}</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        onClick={() => setShowApiKey((prev) => !prev)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
-                        title={showApiKey ? "Hide key" : "Show key"}
+                        onClick={() => setShowOllamaWizard(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/60 text-xs font-semibold transition-colors"
                       >
-                        {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>Run Setup Wizard</span>
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleSaveProvider()}
-                      className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-xs font-bold text-white transition-colors shadow-sm"
-                    >
-                      Save Key
-                    </button>
+                  </div>
+
+                  {/* 2. Installed Local Models Panel */}
+                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Cpu className="w-4 h-4 text-purple-400" />
+                        <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                          Installed Local Models ({ollamaStatus?.models.length || 0})
+                        </h3>
+                      </div>
+                      <span className="text-[11px] text-zinc-500 font-mono">100% offline on this machine</span>
+                    </div>
+
+                    {ollamaStatus && ollamaStatus.models.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                        {ollamaStatus.models.map((m) => {
+                          const isActive =
+                            selectedModel === m ||
+                            selectedModel === `${m}:latest` ||
+                            m === `${selectedModel}:latest` ||
+                            selectedModel.startsWith(`${m}:`);
+                          const isDeleting = isDeletingModel === m;
+                          return (
+                            <div
+                              key={m}
+                              className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-2.5 ${
+                                isActive
+                                  ? "bg-purple-950/20 border-purple-500/50 shadow-sm"
+                                  : "bg-zinc-900/80 border-zinc-800 hover:border-zinc-700"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs font-bold text-zinc-100 truncate">{m}</span>
+                                  {isActive && (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider">
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-zinc-400 font-mono mt-0.5 truncate">
+                                  {isActive ? "Selected for chat & inline tools" : "Available to use"}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {!isActive ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSwitchModel(m)}
+                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white transition-colors border border-zinc-700/60"
+                                  >
+                                    Use Model
+                                  </button>
+                                ) : (
+                                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  </div>
+                                )}
+                                {ollamaStatus.models.length > 1 && (
+                                  <button
+                                    type="button"
+                                    disabled={isDeleting}
+                                    onClick={() => handleDeleteModel(m)}
+                                    className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-800/80 transition-colors"
+                                    title={`Delete ${m} from disk`}
+                                  >
+                                    {isDeleting ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center space-y-1">
+                        <p className="text-xs text-zinc-400">No models currently downloaded to Ollama.</p>
+                        <p className="text-[11px] text-zinc-500">Pick a recommended model below to download it locally.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3. Active In-Progress Download Bar */}
+                  {pullingModelTag && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />
+                          <span className="text-zinc-400">Pulling</span>
+                          <strong className="text-white font-bold">{pullingModelTag}</strong>
+                        </div>
+                      </div>
+                      <HashProgressBar percent={pullPercent} statusText={pullStatusText} />
+                    </div>
+                  )}
+
+                  {/* Success & Error Banners */}
+                  {pullSuccessMsg && (
+                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{pullSuccessMsg}</span>
+                    </div>
+                  )}
+                  {pullErrorMsg && (
+                    <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/40 text-red-300 text-xs font-mono flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span>{pullErrorMsg}</span>
+                    </div>
+                  )}
+
+                  {/* 4. Curated Models to Download */}
+                  <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3.5">
+                    <div>
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <Download className="w-3.5 h-3.5 text-sky-400" />
+                        Download Additional Models
+                      </h3>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        High-performance local models optimized for code completion, refactoring, and AI conversation.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {CURATED_OLLAMA_MODELS.map((item) => {
+                        const isInstalled = ollamaStatus?.models.some(
+                          (m) =>
+                            m === item.tag ||
+                            m === `${item.tag}:latest` ||
+                            item.tag === `${m}:latest` ||
+                            m.startsWith(`${item.tag}:`) ||
+                            item.tag.startsWith(`${m}:`)
+                        );
+                        const isActive =
+                          isInstalled &&
+                          (selectedModel === item.tag ||
+                            selectedModel === `${item.tag}:latest` ||
+                            selectedModel.startsWith(`${item.tag}:`));
+                        const isPullingThis = pullingModelTag === item.tag;
+
+                        return (
+                          <div
+                            key={item.tag}
+                            className="p-3.5 rounded-xl border border-zinc-800/80 bg-zinc-900/70 hover:border-zinc-700/80 transition-all flex flex-col justify-between space-y-2.5"
+                          >
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <h4 className="text-xs font-bold text-zinc-100">{item.name}</h4>
+                                  <div className="font-mono text-[10px] text-purple-300 mt-0.5">{item.tag}</div>
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                                    {item.size}
+                                  </span>
+                                  <span className="text-[9px] text-zinc-500 font-mono">{item.recommendedRam}</span>
+                                </div>
+                              </div>
+
+                              <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                                {item.description}
+                              </p>
+                            </div>
+
+                            <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
+                              <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                                {item.category}
+                              </span>
+
+                              {isInstalled ? (
+                                isActive ? (
+                                  <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                                    <CheckCircle2 className="w-3.5 h-3.5" /> In Use
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSwitchModel(item.tag)}
+                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors border border-zinc-700/60"
+                                  >
+                                    Switch to
+                                  </button>
+                                )
+                              ) : isPullingThis ? (
+                                <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                                  <Loader2 className="w-3 h-3 animate-spin" /> Downloading…
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={!!pullingModelTag}
+                                  onClick={() => handlePullModel(item.tag)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shadow-sm"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span>Pull ({item.size})</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 5. Custom Model Tag Input Field */}
+                    <div className="pt-3 border-t border-zinc-800/80">
+                      <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
+                        Pull Custom Model by Tag
+                      </label>
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (customModelTag.trim()) {
+                            handlePullModel(customModelTag.trim());
+                            setCustomModelTag("");
+                          }
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <input
+                          type="text"
+                          value={customModelTag}
+                          onChange={(e) => setCustomModelTag(e.target.value)}
+                          placeholder="e.g. llama3.2:1b, starcoder2:3b, deepseek-r1:14b..."
+                          disabled={!!pullingModelTag}
+                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!customModelTag.trim() || !!pullingModelTag}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-40 shrink-0 shadow-sm"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Pull Model</span>
+                        </button>
+                      </form>
+                      <p className="text-[10px] text-zinc-500 mt-1">
+                        Supports any model tag from the official{" "}
+                        <a
+                          href="https://ollama.com/library"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-purple-400 hover:underline"
+                        >
+                          Ollama Library
+                        </a>.
+                      </p>
+                    </div>
                   </div>
                 </div>
               ) : (
-                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-start gap-2.5">
-                  <Lock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <div>
-                    <div className="font-semibold text-white">100% Offline & Private</div>
-                    <p className="text-[11px] text-emerald-300/80 mt-0.5">
-                      This model runs locally on your machine. Zero network traffic, zero third-party telemetry, zero API keys required.
-                    </p>
-                  </div>
-                </div>
+                /* ── Standard Provider Configuration (Cloud & llama.cpp) ─── */
+                <>
+                  {/* Model Selection Dropdown or llama.cpp guide */}
+                  {activeProvider.id === "llamacpp" && activeProvider.availableModels.length === 0 ? (
+                    <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-2.5">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
+                        <Cpu className="w-4 h-4 text-sky-400" />
+                        <span>Local llama.cpp Server (Port 8080)</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        llama.cpp allows running raw quantized <code className="text-purple-300 font-mono">.gguf</code> models locally. Start your server with:
+                      </p>
+                      <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-[11px] text-zinc-300 space-y-1">
+                        <div className="text-zinc-500"># Start local server with GGUF model:</div>
+                        <div className="text-emerald-400">./llama-server -m /path/to/model.gguf --port 8080</div>
+                      </div>
+                      <p className="text-[10px] text-zinc-500">
+                        Click <strong>Test Connection</strong> below to verify the server and auto-discover loaded models.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-zinc-300">Active Model</label>
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => {
+                          setSelectedModel(e.target.value);
+                          handleSaveProvider(e.target.value, baseUrlInput);
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-sky-500 transition-colors cursor-pointer"
+                      >
+                        {activeProvider.availableModels.map((m) => (
+                          <option key={m} value={m} className="bg-zinc-900 text-zinc-100">
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-zinc-500">
+                        Powers inline completions, code suggestions, syntax repair, and AI assistant conversations.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* API Key Input (if cloud provider) */}
+                  {activeProvider.category === "cloud" ? (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                        <span>API Key / Secret Token</span>
+                        <span className="text-[11px] text-zinc-500 font-normal">
+                          Stored in browser local storage on this device
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type={showApiKey ? "text" : "password"}
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            placeholder="sk-••••••••••••••••••••••••"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey((prev) => !prev)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                            title={showApiKey ? "Hide key" : "Show key"}
+                          >
+                            {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveProvider()}
+                          className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-xs font-bold text-white transition-colors shadow-sm"
+                        >
+                          Save Key
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-start gap-2.5">
+                      <Lock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-semibold text-white">100% Offline & Private</div>
+                        <p className="text-[11px] text-emerald-300/80 mt-0.5">
+                          This model runs locally on your machine. Zero network traffic, zero third-party telemetry, zero API keys required.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Base URL / Endpoint */}
@@ -426,6 +940,20 @@ export function AiManagementDashboard({
         </div>
       </div>
     </div>
+
+      {/* Inline Ollama Setup Wizard (triggered from status card) */}
+      {showOllamaWizard && (
+        <OllamaSetupWizard
+          onClose={() => setShowOllamaWizard(false)}
+          onComplete={() => {
+            setShowOllamaWizard(false);
+            setProviders(loadAllProviders());
+            checkOllamaStatus().then(setOllamaStatus).catch(() => {});
+            onModelSettingsChanged?.();
+          }}
+        />
+      )}
+    </>
   );
 }
 

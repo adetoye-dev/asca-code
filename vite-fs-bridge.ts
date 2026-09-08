@@ -1796,10 +1796,30 @@ export function realFilesystemPlugin(): Plugin {
                 return;
               } else if (provider === "llamacpp") {
                 const url = baseUrl || "http://127.0.0.1:8080";
-                const check = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
-                const latency = Date.now() - start;
-                res.end(JSON.stringify({ ok: check.ok, latencyMs: latency }));
-                return;
+                try {
+                  const check = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+                  const latency = Date.now() - start;
+                  let models: string[] = [];
+                  if (check.ok) {
+                    try {
+                      const mRes = await fetch(`${url}/v1/models`, { signal: AbortSignal.timeout(2000) });
+                      if (mRes.ok) {
+                        const mData = await mRes.json();
+                        models = (mData.data || []).map((m: any) => m.id);
+                      }
+                    } catch {}
+                  }
+                  res.end(JSON.stringify({
+                    ok: check.ok,
+                    latencyMs: latency,
+                    models,
+                    message: check.ok ? `llama.cpp server is online (${url})` : `llama.cpp returned HTTP ${check.status}`
+                  }));
+                  return;
+                } catch (err: any) {
+                  res.end(JSON.stringify({ ok: false, error: `llama.cpp server is not running at ${url}` }));
+                  return;
+                }
               } else if (provider === "deterministic") {
                 res.end(JSON.stringify({ ok: true, latencyMs: 2, message: "Deterministic AST compiler ready" }));
                 return;
@@ -1814,6 +1834,622 @@ export function realFilesystemPlugin(): Plugin {
               res.end(JSON.stringify({ ok: false, error: err.message }));
               return;
             }
+          }
+
+          // ── POST /api/ai/chat (SSE streaming conversational AI) ─────────────
+          if (pathname === "/api/ai/chat" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const {
+              provider = "ollama",
+              model = "llama3.2",
+              messages = [],
+              projectRoot = "",
+              baseUrl = "",
+              apiKey = "",
+            } = body;
+
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+              "Access-Control-Allow-Origin": "*",
+            });
+
+            const sendDelta = (token: string) => {
+              res.write(`data: ${JSON.stringify({ delta: token })}\n\n`);
+            };
+
+            const sendDone = (metadata?: object) => {
+              res.write(`data: ${JSON.stringify({ done: true, ...metadata })}\n\n`);
+              res.end();
+            };
+
+            const sendError = (errMessage: string) => {
+              res.write(`data: ${JSON.stringify({ error: errMessage, done: true })}\n\n`);
+              res.end();
+            };
+
+            // Inspect recent workspace git context
+            let workspaceContext = "";
+            const safeMessages = Array.isArray(messages) ? messages : [];
+            const lastUserMsg = [...safeMessages].reverse().find((m: any) => m.role === "user")?.content || "";
+            const needsGitContext = /change|recent|git|diff|status|commit|history|modified|update|what did|breakdown/i.test(lastUserMsg);
+
+            if (projectRoot && fs.existsSync(projectRoot)) {
+              try {
+                if (needsGitContext) {
+                  const resolvedProjectRoot = resolveProjectRoot(projectRoot);
+                  const gitStatus = await new Promise<string>((resolve) => {
+                    execFile("git", ["-C", resolvedProjectRoot, "status", "-s"], { timeout: 3000 }, (err, stdout) => resolve((stdout || "").trim()));
+                  });
+                  const gitLog = await new Promise<string>((resolve) => {
+                    execFile("git", ["-C", resolvedProjectRoot, "log", "-n", "5", "--oneline"], { timeout: 3000 }, (err, stdout) => resolve((stdout || "").trim()));
+                  });
+                  const gitDiffStat = await new Promise<string>((resolve) => {
+                    execFile("git", ["-C", resolvedProjectRoot, "diff", "--stat"], { timeout: 3000 }, (err, stdout) => resolve((stdout || "").trim()));
+                  });
+
+                  workspaceContext = `\n\n--- Current Workspace Git Context ---\nProject directory: ${projectRoot}\n`;
+                  if (gitStatus) workspaceContext += `Uncommitted changes (git status):\n${gitStatus}\n\n`;
+                  if (gitDiffStat) workspaceContext += `Diff summary:\n${gitDiffStat}\n\n`;
+                  if (gitLog) workspaceContext += `Recent commits:\n${gitLog}\n`;
+                  workspaceContext += `--- End of Workspace Context ---\n`;
+                }
+              } catch {}
+            }
+
+            const systemPrompt = `You are ACSA Code AI Assistant, an expert, thoughtful, and pragmatic coding companion integrated into ACSA Code. Help the user understand, write, review, debug, and navigate their code. Provide clear explanations and clean markdown code blocks with language tags when showing code.${workspaceContext ? `\n${workspaceContext}` : ""}`;
+
+            const fullMessages = [
+              { role: "system", content: systemPrompt },
+              ...safeMessages.map((m: any) => ({ role: m.role, content: m.content })),
+            ];
+
+            // 1. Ollama Provider
+            if (provider === "ollama") {
+              const url = baseUrl || "http://127.0.0.1:11434";
+              let targetModel = (model || "").trim();
+
+              // Check installed models in Ollama and auto-fallback if requested model is unpulled
+              try {
+                const tagsRes = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(2000) });
+                if (tagsRes.ok) {
+                  const tagsData = await tagsRes.json();
+                  const installed: string[] = (tagsData.models || []).map((m: any) => m.name as string);
+                  if (installed.length > 0) {
+                    const match = installed.find(
+                      (m) =>
+                        m === targetModel ||
+                        m === `${targetModel}:latest` ||
+                        targetModel === `${m}:latest` ||
+                        m.startsWith(`${targetModel}:`) ||
+                        targetModel.startsWith(`${m}:`)
+                    );
+                    if (match) {
+                      targetModel = match;
+                    } else if (!targetModel || !installed.includes(targetModel)) {
+                      console.log(`[ai-chat] Requested model "${targetModel}" not installed. Auto-fallback to installed model "${installed[0]}".`);
+                      targetModel = installed[0];
+                    }
+                  }
+                }
+              } catch {}
+
+              if (!targetModel) targetModel = "qwen2.5-coder:7b";
+
+              try {
+                const ollamaRes = await fetch(`${url}/api/chat`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: targetModel,
+                    messages: fullMessages,
+                    stream: true,
+                  }),
+                });
+
+                if (!ollamaRes.ok) {
+                  const txt = await ollamaRes.text().catch(() => "");
+                  sendError(`Ollama service returned HTTP ${ollamaRes.status}: ${txt || ollamaRes.statusText}. Is the model "${targetModel}" pulled? You can download models in the AI Management Dashboard.`);
+                  return;
+                }
+
+                if (!ollamaRes.body) {
+                  sendError("No response stream received from Ollama.");
+                  return;
+                }
+
+                const reader = ollamaRes.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+
+                  for (const l of lines) {
+                    const line = l.trim();
+                    if (!line) continue;
+                    try {
+                      const data = JSON.parse(line);
+                      if (data.message?.content) {
+                        sendDelta(data.message.content);
+                      }
+                      if (data.done) {
+                        sendDone({ totalDuration: data.total_duration });
+                        return;
+                      }
+                    } catch {}
+                  }
+                }
+                sendDone();
+                return;
+              } catch (err: any) {
+                sendError(`Cannot connect to Ollama at ${url} (${err.message}). Make sure Ollama is running via the "Local AI" button in the top bar.`);
+                return;
+              }
+            }
+
+            // 2. OpenAI / Groq / DeepSeek / Mistral / Compatible providers
+            if (provider === "openai" || provider === "groq" || provider === "deepseek" || provider === "mistral" || provider === "moonshot" || provider === "xai") {
+              const defaultEndpoints: Record<string, string> = {
+                openai: "https://api.openai.com/v1",
+                groq: "https://api.groq.com/openai/v1",
+                deepseek: "https://api.deepseek.com/v1",
+                mistral: "https://api.mistral.ai/v1",
+                moonshot: "https://api.moonshot.cn/v1",
+                xai: "https://api.x.ai/v1",
+              };
+              const url = baseUrl || defaultEndpoints[provider] || "https://api.openai.com/v1";
+
+              if (!apiKey || apiKey.trim().length < 4) {
+                sendError(`API Key is required to chat with ${provider}. Please configure it in AI Management Dashboard.`);
+                return;
+              }
+
+              try {
+                const aiRes = await fetch(`${url}/chat/completions`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${apiKey.trim()}`,
+                  },
+                  body: JSON.stringify({
+                    model: model || "gpt-4o",
+                    messages: fullMessages,
+                    stream: true,
+                  }),
+                });
+
+                if (!aiRes.ok) {
+                  const txt = await aiRes.text().catch(() => "");
+                  sendError(`${provider} API error (${aiRes.status}): ${txt}`);
+                  return;
+                }
+
+                if (!aiRes.body) {
+                  sendError("No response stream received.");
+                  return;
+                }
+
+                const reader = aiRes.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+
+                  for (const l of lines) {
+                    const line = l.trim();
+                    if (!line || !line.startsWith("data: ")) continue;
+                    const payload = line.slice(6).trim();
+                    if (payload === "[DONE]") {
+                      sendDone();
+                      return;
+                    }
+                    try {
+                      const data = JSON.parse(payload);
+                      const delta = data.choices?.[0]?.delta?.content;
+                      if (delta) sendDelta(delta);
+                    } catch {}
+                  }
+                }
+                sendDone();
+                return;
+              } catch (err: any) {
+                sendError(`Error calling ${provider} endpoint: ${err.message}`);
+                return;
+              }
+            }
+
+            // 3. Deterministic AST / Offline Assistant Fallback
+            sendDelta("### ACSA Code Offline Assistant\n\n");
+            if (needsGitContext && workspaceContext) {
+              sendDelta(`Here is a breakdown of the recent changes in **${path.basename(projectRoot || "workspace")}**:\n\n`);
+              sendDelta("```text\n" + workspaceContext.replace(/---\s*.*?\s*---/g, "").trim() + "\n```\n\n");
+              sendDelta("The above files have been recently modified or added. You can ask for further details or switch to a live model like Ollama from the top **Local AI** button.");
+            } else {
+              sendDelta(`You are using the **Deterministic AST engine** (offline mode). You asked: \n\n> *${lastUserMsg}*\n\n`);
+              sendDelta("To chat with dynamic generative AI models like `qwen2.5-coder` or `llama3.2`, start **Ollama** via the **Local AI** button in the titlebar, or configure cloud API credentials in the Model Management tab.");
+            }
+            sendDone();
+            return;
+          }
+
+          // ── POST /api/ollama/status ──────────────────────────────────────────
+          // ── Ollama Helper Utilities ────────────────────────────────────────
+          function resolveOllamaBin(): string {
+            const candidates = [
+              "/Applications/Ollama.app/Contents/Resources/ollama",
+              path.join(os.homedir(), "Applications", "Ollama.app", "Contents", "Resources", "ollama"),
+              path.join(os.homedir(), ".local", "bin", "ollama"),
+              "/opt/homebrew/bin/ollama",
+              "/usr/local/bin/ollama",
+            ];
+            for (const c of candidates) {
+              if (fs.existsSync(c)) return c;
+            }
+            return "ollama";
+          }
+
+          function ensureOllamaSymlink(): void {
+            const appBin = "/Applications/Ollama.app/Contents/Resources/ollama";
+            if (!fs.existsSync(appBin)) return;
+            try {
+              const localBin = path.join(os.homedir(), ".local", "bin");
+              if (!fs.existsSync(localBin)) {
+                fs.mkdirSync(localBin, { recursive: true });
+              }
+              const linkPath = path.join(localBin, "ollama");
+              if (!fs.existsSync(linkPath)) {
+                fs.symlinkSync(appBin, linkPath);
+              }
+            } catch {}
+            try {
+              const usrLocal = "/usr/local/bin/ollama";
+              if (!fs.existsSync(usrLocal)) {
+                fs.symlinkSync(appBin, usrLocal);
+              }
+            } catch {}
+          }
+
+          // ── POST /api/ollama/status ──────────────────────────────────────────
+          if (pathname === "/api/ollama/status" && req.method === "POST") {
+            try {
+              ensureOllamaSymlink();
+              const bin = resolveOllamaBin();
+              let installed = false;
+              if (bin !== "ollama" && fs.existsSync(bin)) {
+                installed = true;
+              } else {
+                installed = await new Promise<boolean>((resolve) => {
+                  exec("which ollama", (err) => resolve(!err));
+                });
+              }
+
+              // Check if server is reachable
+              let running = false;
+              let models: string[] = [];
+              if (installed) {
+                try {
+                  const check = await fetch("http://127.0.0.1:11434/api/tags", {
+                    signal: AbortSignal.timeout(2000),
+                  });
+                  if (check.ok) {
+                    running = true;
+                    const data = await check.json();
+                    models = (data.models || []).map((m: any) => m.name as string);
+                  }
+                } catch {}
+              }
+
+              // Detect total RAM to pick recommended model
+              const totalRamGb = os.totalmem() / (1024 ** 3);
+              let recommendedModel = "qwen2.5-coder:1.5b";
+              if (totalRamGb >= 16) {
+                recommendedModel = "qwen2.5-coder:7b";
+              } else if (totalRamGb >= 8) {
+                recommendedModel = "qwen2.5-coder:3b";
+              }
+
+              res.end(JSON.stringify({ installed, running, models, recommendedModel, totalRamGb: Math.round(totalRamGb), binaryPath: bin }));
+            } catch (err: any) {
+              res.end(JSON.stringify({ installed: false, running: false, models: [], error: err.message }));
+            }
+            return;
+          }
+
+          // ── POST /api/ollama/install  (SSE streaming with progress %) ────────
+          if (pathname === "/api/ollama/install" && req.method === "POST") {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+              "Access-Control-Allow-Origin": "*",
+            });
+            const sendProgress = (percent: number, status: string, log?: string) => {
+              res.write(`data: ${JSON.stringify({ percent, status, log })}\n\n`);
+            };
+
+            const existingBin = resolveOllamaBin();
+            if (existingBin !== "ollama" && fs.existsSync(existingBin)) {
+              ensureOllamaSymlink();
+              sendProgress(100, "Ollama is installed and ready.");
+              res.write(`data: ${JSON.stringify({ done: true, percent: 100 })}\n\n`);
+              res.end();
+              return;
+            }
+
+            // If macOS, download zip directly, unzip to /Applications, link to ~/.local/bin/ollama (100% passwordless, NO sudo)
+            if (process.platform === "darwin") {
+              sendProgress(5, "Connecting to ollama.com...");
+              const tmpZip = path.join(os.tmpdir(), "Ollama-darwin.zip");
+              const curlProc = spawn("curl", ["-#", "-L", "-o", tmpZip, "https://ollama.com/download/Ollama-darwin.zip"]);
+              curlProc.stderr.on("data", (d: Buffer) => {
+                const str = d.toString();
+                const m = str.match(/(\d+(?:\.\d+)?)%/);
+                if (m) {
+                  const pct = Math.min(85, Math.round(parseFloat(m[1]) * 0.85));
+                  sendProgress(pct, `Downloading Ollama (${m[1]}%)...`, str);
+                }
+              });
+              curlProc.on("close", (curlCode) => {
+                if (curlCode !== 0) {
+                  res.write(`data: ${JSON.stringify({ done: true, error: `Download failed with code ${curlCode}` })}\n\n`);
+                  res.end();
+                  return;
+                }
+                sendProgress(90, "Extracting to /Applications/Ollama.app...");
+                exec(`unzip -q -o "${tmpZip}" -d /Applications && rm -f "${tmpZip}"`, (unzipErr) => {
+                  if (unzipErr) {
+                    res.write(`data: ${JSON.stringify({ done: true, error: `Extraction failed: ${unzipErr.message}` })}\n\n`);
+                    res.end();
+                    return;
+                  }
+                  sendProgress(98, "Configuring PATH...");
+                  ensureOllamaSymlink();
+                  sendProgress(100, "✓ Ollama installed successfully!");
+                  res.write(`data: ${JSON.stringify({ done: true, percent: 100 })}\n\n`);
+                  res.end();
+                });
+              });
+              return;
+            }
+
+            // Linux fallback
+            sendProgress(10, "Running Linux installer...");
+            const installProc = spawn("bash", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"]);
+            installProc.stdout.on("data", (d: Buffer) => {
+              const text = d.toString();
+              const m = text.match(/(\d+(?:\.\d+)?)%/);
+              const pct = m ? Math.round(parseFloat(m[1])) : 50;
+              sendProgress(pct, text.trim().slice(0, 80), text);
+            });
+            installProc.stderr.on("data", (d: Buffer) => {
+              const text = d.toString();
+              const m = text.match(/(\d+(?:\.\d+)?)%/);
+              const pct = m ? Math.round(parseFloat(m[1])) : 50;
+              sendProgress(pct, text.trim().slice(0, 80), text);
+            });
+            installProc.on("close", (code) => {
+              if (code === 0) {
+                ensureOllamaSymlink();
+                sendProgress(100, "✓ Ollama installed successfully!");
+                res.write(`data: ${JSON.stringify({ done: true, percent: 100 })}\n\n`);
+              } else {
+                res.write(`data: ${JSON.stringify({ done: true, error: `Installer exited with code ${code}` })}\n\n`);
+              }
+              res.end();
+            });
+            return;
+          }
+
+          // ── POST /api/ollama/pull  (SSE streaming with clean progress %) ──────────
+          if (pathname === "/api/ollama/pull" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const model: string = body.model || "qwen2.5-coder:3b";
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+              "Access-Control-Allow-Origin": "*",
+            });
+            const sendProgress = (percent: number, status: string, log?: string) => {
+              res.write(`data: ${JSON.stringify({ percent, status, log })}\n\n`);
+            };
+
+            sendProgress(0, `Connecting to Ollama service for ${model}...`);
+
+            // 1. First attempt: Native Ollama HTTP REST API (clean JSON, exact bytes, zero ANSI codes)
+            let restSuccess = false;
+            try {
+              const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: model, stream: true }),
+              });
+
+              if (pullResponse.ok && pullResponse.body) {
+                restSuccess = true;
+                const reader = pullResponse.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+                let lastSentPercent = -1;
+                let lastSentTime = 0;
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+
+                  for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                      const data = JSON.parse(trimmed) as {
+                        status?: string;
+                        completed?: number;
+                        total?: number;
+                        error?: string;
+                      };
+
+                      if (data.error) {
+                        res.write(`data: ${JSON.stringify({ done: true, error: data.error })}\n\n`);
+                        res.end();
+                        return;
+                      }
+
+                      let pct = 0;
+                      let statusText = data.status || `Pulling ${model}...`;
+
+                      if (data.total && data.completed) {
+                        pct = Math.min(99, Math.round((data.completed / data.total) * 100));
+                        const curMb = (data.completed / (1024 * 1024)).toFixed(0);
+                        const totMb = (data.total / (1024 * 1024)).toFixed(0);
+                        statusText = `${data.status || "Downloading"}: ${curMb} MB / ${totMb} MB (${pct}%)`;
+                      }
+
+                      const now = Date.now();
+                      const isMilestone =
+                        data.status === "success" ||
+                        data.status === "verifying sha256 digest" ||
+                        data.status === "writing manifest";
+
+                      // Throttle updates: only send if percent changed OR 250ms passed OR milestone
+                      if (pct !== lastSentPercent || now - lastSentTime > 250 || isMilestone) {
+                        lastSentPercent = pct;
+                        lastSentTime = now;
+                        sendProgress(pct, statusText, statusText);
+                      }
+
+                      if (data.status === "success") {
+                        sendProgress(100, `✓ Model ${model} ready.`);
+                        res.write(`data: ${JSON.stringify({ done: true, model, percent: 100 })}\n\n`);
+                        res.end();
+                        return;
+                      }
+                    } catch {}
+                  }
+                }
+
+                sendProgress(100, `✓ Model ${model} ready.`);
+                res.write(`data: ${JSON.stringify({ done: true, model, percent: 100 })}\n\n`);
+                res.end();
+                return;
+              }
+            } catch {
+              restSuccess = false;
+            }
+
+            // 2. Fallback if REST API was unavailable: spawn CLI process with ANSI stripping and throttling
+            if (!restSuccess) {
+              const bin = resolveOllamaBin();
+              const pullProc = spawn(bin, ["pull", model], {
+                env: { ...process.env, HOME: os.homedir() },
+              });
+              let lastPercent = 0;
+              let lastSentTime = 0;
+
+              const handleOutput = (d: Buffer) => {
+                // Strip all ANSI escape sequences
+                const raw = d.toString().replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+                const m = raw.match(/(\d+(?:\.\d+)?)%/);
+                if (m) {
+                  lastPercent = Math.min(99, Math.round(parseFloat(m[1])));
+                }
+                const cleanLine = raw.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+                const now = Date.now();
+                if (cleanLine && (now - lastSentTime > 300 || lastPercent === 100)) {
+                  lastSentTime = now;
+                  sendProgress(lastPercent, cleanLine.slice(0, 90), cleanLine);
+                }
+              };
+              pullProc.stdout.on("data", handleOutput);
+              pullProc.stderr.on("data", handleOutput);
+              pullProc.on("close", (code) => {
+                if (code === 0) {
+                  sendProgress(100, `✓ Model ${model} ready.`);
+                  res.write(`data: ${JSON.stringify({ done: true, model, percent: 100 })}\n\n`);
+                } else {
+                  res.write(`data: ${JSON.stringify({ done: true, error: `Pull exited with code ${code}` })}\n\n`);
+                }
+                res.end();
+              });
+            }
+            return;
+          }
+
+          // ── POST /api/ollama/delete ──────────────────────────────────────────
+          if (pathname === "/api/ollama/delete" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const model = (body.model || "").trim();
+              if (!model) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ ok: false, error: "model name required" }));
+                return;
+              }
+              const delRes = await fetch("http://127.0.0.1:11434/api/delete", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: model }),
+              });
+              if (delRes.ok) {
+                res.end(JSON.stringify({ ok: true }));
+              } else {
+                const txt = await delRes.text().catch(() => "");
+                res.end(JSON.stringify({ ok: false, error: txt || `HTTP ${delRes.status}` }));
+              }
+            } catch (err: any) {
+              res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+            return;
+          }
+
+          // ── POST /api/ollama/start ───────────────────────────────────────────
+          if (pathname === "/api/ollama/start" && req.method === "POST") {
+            try {
+              // First check if already running
+              try {
+                const check = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+                if (check.ok) {
+                  res.end(JSON.stringify({ ok: true, alreadyRunning: true }));
+                  return;
+                }
+              } catch {}
+
+              const bin = resolveOllamaBin();
+              // Start the server detached so it survives IDE restarts
+              const serveProc = spawn(bin, ["serve"], {
+                detached: true,
+                stdio: "ignore",
+                env: { ...process.env, HOME: os.homedir() },
+              });
+              serveProc.unref();
+
+              // Wait up to 6s for port to become available
+              let ready = false;
+              for (let i = 0; i < 12; i++) {
+                await new Promise((r) => setTimeout(r, 500));
+                try {
+                  const ping = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1000) });
+                  if (ping.ok) { ready = true; break; }
+                } catch {}
+              }
+              res.end(JSON.stringify({ ok: ready, alreadyRunning: false }));
+            } catch (err: any) {
+              res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+            return;
           }
 
           // ── POST /api/pipeline/run (Real Server-Sent Events child process) ──

@@ -10,32 +10,21 @@
 
 import type { AIProviderConfig, AIProviderId } from "../types/workbench";
 
-const STORAGE_KEY = "autonomous_ide_ai_providers_v2";
-const DEFAULT_PROVIDER_KEY = "autonomous_ide_default_provider_v2";
+const STORAGE_KEY = "acsa_code_ai_providers_v3";
+const DEFAULT_PROVIDER_KEY = "acsa_code_default_provider_v3";
+const LEGACY_STORAGE_KEY = "autonomous_ide_ai_providers_v2";
 
 export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
-  deterministic: {
-    id: "deterministic",
-    name: "Local Deterministic AST",
-    category: "local",
-    isConnected: true,
-    isDefault: true,
-    apiKey: "",
-    baseUrl: "local://ast-guard",
-    selectedModel: "ast-syntax-engine",
-    availableModels: ["ast-syntax-engine", "property-oracle-v2", "atomic-guard"],
-    speedBadge: "Offline",
-  },
   ollama: {
     id: "ollama",
     name: "Ollama (Local)",
     category: "local",
-    isConnected: false,
-    isDefault: false,
+    isConnected: true,
+    isDefault: true,
     apiKey: "",
     baseUrl: "http://127.0.0.1:11434",
-    selectedModel: "llama3.2",
-    availableModels: ["llama3.2", "codellama", "deepseek-r1:8b", "qwen2.5-coder:7b"],
+    selectedModel: "qwen2.5-coder:7b",
+    availableModels: ["qwen2.5-coder:7b"],
     speedBadge: "Fast",
   },
   llamacpp: {
@@ -46,8 +35,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "http://127.0.0.1:8080",
-    selectedModel: "default-gguf",
-    availableModels: ["default-gguf", "q4_k_m", "q8_0"],
+    selectedModel: "",
+    availableModels: [],
     speedBadge: "Fast",
   },
   openai: {
@@ -159,12 +148,52 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return cloneInitialProviders();
+    // Migration from legacy storage key
+    if (!raw) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        try {
+          const oldParsed = JSON.parse(legacy);
+          const migrated = cloneInitialProviders();
+          for (const key of Object.keys(oldParsed) as AIProviderId[]) {
+            if (migrated[key]) {
+              if (migrated[key].category === "cloud") {
+                migrated[key].apiKey = oldParsed[key]?.apiKey || "";
+                migrated[key].baseUrl = oldParsed[key]?.baseUrl || migrated[key].baseUrl;
+                migrated[key].isConnected = !!(oldParsed[key]?.apiKey);
+              }
+            }
+          }
+          delete (migrated as any).deterministic;
+          migrated.ollama.selectedModel = "qwen2.5-coder:7b";
+          migrated.ollama.availableModels = ["qwen2.5-coder:7b"];
+          migrated.ollama.isConnected = true;
+          migrated.ollama.isDefault = true;
+          migrated.llamacpp.isConnected = false;
+          migrated.llamacpp.selectedModel = "";
+          migrated.llamacpp.availableModels = [];
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+          localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
+          return migrated;
+        } catch {}
+      }
+      const initial = cloneInitialProviders();
+      delete (initial as any).deterministic;
+      return initial;
+    }
+
     const parsed = JSON.parse(raw);
-    const defaultId = (localStorage.getItem(DEFAULT_PROVIDER_KEY) || "deterministic") as AIProviderId;
+    let defaultId = (localStorage.getItem(DEFAULT_PROVIDER_KEY) || "ollama") as AIProviderId;
+    if (defaultId === ("deterministic" as AIProviderId)) {
+      defaultId = "ollama";
+      try {
+        localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
+      } catch {}
+    }
 
     const merged = cloneInitialProviders();
     for (const key of Object.keys(parsed) as AIProviderId[]) {
+      if (key === ("deterministic" as AIProviderId)) continue; // Purge deterministic
       if (merged[key]) {
         merged[key] = {
           ...merged[key],
@@ -173,14 +202,46 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
         };
       }
     }
+    delete (merged as any).deterministic;
+
+    // Sanitize llamacpp: prevent stale fake connected state from older sessions
+    if (merged.llamacpp) {
+      if (
+        merged.llamacpp.selectedModel === "default-gguf" ||
+        merged.llamacpp.availableModels.includes("default-gguf")
+      ) {
+        merged.llamacpp.selectedModel = "";
+        merged.llamacpp.availableModels = [];
+        merged.llamacpp.isConnected = false;
+      }
+    }
+
+    // Ensure default provider is valid
+    if (!merged[defaultId]) {
+      merged.ollama.isDefault = true;
+      try {
+        localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
+      } catch {}
+    }
+
+    // Resave cleaned storage if deterministic was stripped
+    if (parsed.deterministic || parsed.llamacpp?.selectedModel === "default-gguf") {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      } catch {}
+    }
+
     return merged;
   } catch {
-    return cloneInitialProviders();
+    const initial = cloneInitialProviders();
+    delete (initial as any).deterministic;
+    return initial;
   }
 }
 
 export function saveProviderConfig(config: AIProviderConfig): Record<AIProviderId, AIProviderConfig> {
   const all = loadAllProviders();
+  delete (all as any).deterministic;
   all[config.id] = { ...config };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
@@ -190,11 +251,15 @@ export function saveProviderConfig(config: AIProviderConfig): Record<AIProviderI
 
 export function setDefaultProvider(providerId: AIProviderId): Record<AIProviderId, AIProviderConfig> {
   const all = loadAllProviders();
+  delete (all as any).deterministic;
+  const targetId = providerId === ("deterministic" as AIProviderId) ? "ollama" : providerId;
   for (const id of Object.keys(all) as AIProviderId[]) {
-    all[id].isDefault = id === providerId;
+    if (all[id]) {
+      all[id].isDefault = id === targetId;
+    }
   }
   try {
-    localStorage.setItem(DEFAULT_PROVIDER_KEY, providerId);
+    localStorage.setItem(DEFAULT_PROVIDER_KEY, targetId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {}
   return all;
@@ -202,8 +267,59 @@ export function setDefaultProvider(providerId: AIProviderId): Record<AIProviderI
 
 export function getDefaultProvider(): AIProviderConfig {
   const all = loadAllProviders();
-  const defaultId = (localStorage.getItem(DEFAULT_PROVIDER_KEY) || "deterministic") as AIProviderId;
-  return all[defaultId] || all.deterministic;
+  const defaultId = (localStorage.getItem(DEFAULT_PROVIDER_KEY) || "ollama") as AIProviderId;
+  return all[defaultId] || all.ollama;
+}
+
+/**
+ * Dynamically synchronizes locally installed Ollama models with the active AI configuration.
+ * - Stores ONLY genuinely installed models in availableModels.
+ * - Ensures selectedModel points to an existing, valid downloaded model.
+ * - Dispatches 'acsa:models-updated' event to notify UI components.
+ */
+export function syncOllamaModels(
+  installedModels: string[],
+  activeModel?: string
+): Record<AIProviderId, AIProviderConfig> {
+  const all = loadAllProviders();
+  if (all.ollama) {
+    const cleanInstalled = Array.from(new Set(installedModels.filter(Boolean)));
+    // STRICT: Only genuinely downloaded models are available
+    all.ollama.availableModels = cleanInstalled;
+    all.ollama.isConnected = cleanInstalled.length > 0;
+
+    if (activeModel && cleanInstalled.some((m) => m === activeModel || m.startsWith(`${activeModel}:`))) {
+      all.ollama.selectedModel = activeModel;
+    } else {
+      const current = all.ollama.selectedModel || "";
+      const currentExists = cleanInstalled.some(
+        (m) =>
+          m === current ||
+          m === `${current}:latest` ||
+          current === `${m}:latest` ||
+          m.startsWith(`${current}:`) ||
+          current.startsWith(`${m}:`)
+      );
+      if (!currentExists && cleanInstalled.length > 0) {
+        all.ollama.selectedModel = cleanInstalled[0];
+      }
+    }
+
+    // Default to Ollama when models are installed
+    if (cleanInstalled.length > 0) {
+      all.ollama.isDefault = true;
+      try {
+        localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
+      } catch {}
+    }
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
+    }
+  } catch {}
+  return all;
 }
 
 export interface ConfiguredModelItem {
@@ -220,27 +336,48 @@ export function getConfiguredModelsList(): ConfiguredModelItem[] {
   const list: ConfiguredModelItem[] = [];
 
   for (const p of Object.values(all)) {
-    if (p.category === "local" || p.apiKey || p.isDefault) {
-      list.push({
-        providerId: p.id,
-        providerName: p.name,
-        model: p.selectedModel,
-        speedBadge: p.speedBadge || "Medium",
-        isDefault: p.isDefault,
-        category: p.category,
-      });
-    }
-  }
+    // Exclude deterministic AST engine: it is a code-gate compiler, not an LLM chat model
+    if ((p.id as string) === "deterministic") continue;
 
-  if (!list.some((m) => m.providerId === "deterministic")) {
-    list.unshift({
-      providerId: "deterministic",
-      providerName: "Local Deterministic AST",
-      model: "ast-syntax-engine",
-      speedBadge: "Offline",
-      isDefault: true,
-      category: "local",
-    });
+    if (p.id === "ollama") {
+      // List ONLY models that are actually installed and available
+      if (p.availableModels && p.availableModels.length > 0) {
+        for (const m of p.availableModels) {
+          list.push({
+            providerId: p.id,
+            providerName: p.availableModels.length > 1 ? `Ollama (${m})` : "Ollama (Local)",
+            model: m,
+            speedBadge: p.speedBadge || "Fast",
+            isDefault: p.isDefault && p.selectedModel === m,
+            category: p.category,
+          });
+        }
+      }
+    } else if (p.id === "llamacpp") {
+      // Only include llama.cpp if actually connected and has a model loaded
+      if (p.isConnected && p.selectedModel) {
+        list.push({
+          providerId: p.id,
+          providerName: p.name,
+          model: p.selectedModel,
+          speedBadge: p.speedBadge || "Fast",
+          isDefault: p.isDefault,
+          category: p.category,
+        });
+      }
+    } else if (p.category === "cloud") {
+      // Cloud providers: only show if user configured an API key
+      if (p.apiKey && p.apiKey.trim().length > 3) {
+        list.push({
+          providerId: p.id,
+          providerName: p.name,
+          model: p.selectedModel,
+          speedBadge: p.speedBadge || "Medium",
+          isDefault: p.isDefault,
+          category: p.category,
+        });
+      }
+    }
   }
 
   return list;

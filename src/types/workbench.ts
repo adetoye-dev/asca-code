@@ -39,7 +39,6 @@ export interface ExtensionManifest {
 }
 
 export type AIProviderId =
-  | "deterministic"
   | "ollama"
   | "llamacpp"
   | "openai"

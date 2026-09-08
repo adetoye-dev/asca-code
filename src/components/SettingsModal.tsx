@@ -238,10 +238,10 @@ export function SettingsModal({
 }: SettingsModalProps) {
   // Safe settings fallback to avoid undefined access crashes
   const currentSettings = settings || {
-    provider: "deterministic",
-    model: "",
+    provider: "ollama",
+    model: "qwen2.5-coder:7b",
     apiKey: "",
-    baseUrl: "",
+    baseUrl: "http://127.0.0.1:11434",
   };
 
   // Navigation & Category Selection
@@ -262,7 +262,7 @@ export function SettingsModal({
 
   // AI Settings State
   const [provider, setProvider] = useState<AISettings["provider"]>(
-    currentSettings.provider || "deterministic"
+    currentSettings.provider === "deterministic" ? "ollama" : (currentSettings.provider || "ollama")
   );
   const [model, setModel] = useState(currentSettings.model || "");
   const [apiKey, setApiKey] = useState(currentSettings.apiKey || "");
@@ -324,12 +324,12 @@ export function SettingsModal({
     setHistoryIndex(0);
 
     const safeSettings = settings || {
-      provider: "deterministic",
-      model: "",
+      provider: "ollama",
+      model: "qwen2.5-coder:7b",
       apiKey: "",
-      baseUrl: "",
+      baseUrl: "http://127.0.0.1:11434",
     };
-    setProvider(safeSettings.provider || "deterministic");
+    setProvider(safeSettings.provider === "deterministic" ? "ollama" : (safeSettings.provider || "ollama"));
     setModel(safeSettings.model || "");
     setApiKey(safeSettings.apiKey || "");
     setBaseUrl(safeSettings.baseUrl || "");
@@ -381,14 +381,6 @@ export function SettingsModal({
     setTestStatus("testing");
     setTestMessage("");
 
-    if (provider === "deterministic") {
-      setTimeout(() => {
-        setTestStatus("success");
-        setTestMessage("Built-in AST Engine ready. Zero external dependencies required.");
-      }, 150);
-      return;
-    }
-
     try {
       const targetUrl =
         provider === "ollama"
@@ -419,7 +411,7 @@ export function SettingsModal({
   const handleApply = () => {
     if (onSave) {
       onSave({
-        provider: provider || "deterministic",
+        provider: provider || "ollama",
         model: model || "",
         apiKey: apiKey || "",
         baseUrl: baseUrl || "",
@@ -442,7 +434,7 @@ export function SettingsModal({
   const handleOk = () => {
     if (onSave) {
       onSave({
-        provider: provider || "deterministic",
+        provider: provider || "ollama",
         model: model || "",
         apiKey: apiKey || "",
         baseUrl: baseUrl || "",
@@ -794,27 +786,7 @@ export function SettingsModal({
                   </div>
 
                   {/* Provider Selection Cards */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {/* Deterministic AST */}
-                    <div
-                      onClick={() => setProvider("deterministic")}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
-                        provider === "deterministic"
-                          ? "bg-[#2E436E]/40 border-[#3574F0] text-white ring-1 ring-[#3574F0]"
-                          : "bg-[#1E1F22] border-[#3E4147] hover:border-[#565960]"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <ProviderLogo providerId="deterministic" className="w-4 h-4" />
-                        <span className="font-semibold text-xs text-[#DFE1E5]">
-                          Offline AST Engine
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-[#868A91] leading-tight">
-                        Built-in offline syntax synthesizer. 100% private, zero API keys.
-                      </p>
-                    </div>
-
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {/* Local Ollama */}
                     <div
                       onClick={() => setProvider("ollama")}
@@ -828,6 +800,9 @@ export function SettingsModal({
                         <ProviderLogo providerId="ollama" className="w-4 h-4" />
                         <span className="font-semibold text-xs text-[#DFE1E5]">
                           Local Ollama
+                        </span>
+                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
+                          Default
                         </span>
                       </div>
                       <p className="text-[10px] text-[#868A91] leading-tight">
@@ -867,7 +842,7 @@ export function SettingsModal({
                       <div className="flex items-center gap-2 mb-1">
                         <ProviderLogo providerId="openai" className="w-4 h-4" />
                         <span className="font-semibold text-xs text-[#DFE1E5]">
-                          Cloud APIs (OpenAI / Claude)
+                          Cloud APIs
                         </span>
                       </div>
                       <p className="text-[10px] text-[#868A91] leading-tight">
@@ -877,102 +852,104 @@ export function SettingsModal({
                   </div>
 
                   {/* Provider Settings Details */}
-                  {provider !== "deterministic" && (
-                    <div className="space-y-3.5 pt-2 border-t border-[#393B40]">
+                  <div className="space-y-3.5 pt-2 border-t border-[#393B40]">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                        Model Identifier
+                      </label>
+                      <input
+                        type="text"
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        placeholder={
+                          provider === "ollama"
+                            ? "e.g. qwen2.5-coder:7b"
+                            : provider === "local"
+                            ? "e.g. qwen2.5-coder-7b-instruct.gguf"
+                            : "e.g. gpt-4o, claude-3-7-sonnet"
+                        }
+                        className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-[#DFE1E5]">
+                        Base URL
+                      </label>
+                      <input
+                        type="text"
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder={
+                          provider === "ollama"
+                            ? "http://127.0.0.1:11434"
+                            : provider === "local"
+                            ? "http://127.0.0.1:8080"
+                            : "https://api.openai.com/v1"
+                        }
+                        className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                      />
+                    </div>
+
+                    {provider === "openai" && (
                       <div className="space-y-1">
                         <label className="text-xs font-semibold text-[#DFE1E5]">
-                          Model Identifier
+                          API Key
                         </label>
-                        <input
-                          type="text"
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          placeholder={
-                            provider === "ollama" ? "qwen2.5-coder:7b" : "gpt-4o"
-                          }
-                          className="w-full rounded-md bg-[#1E1F22] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-xs font-semibold text-[#DFE1E5]">
-                          Base API URL
-                        </label>
-                        <input
-                          type="text"
-                          value={baseUrl}
-                          onChange={(e) => setBaseUrl(e.target.value)}
-                          placeholder={
-                            provider === "ollama"
-                              ? "http://127.0.0.1:11434"
-                              : provider === "local"
-                              ? "http://127.0.0.1:8080"
-                              : "https://api.openai.com/v1"
-                          }
-                          className="w-full rounded-md bg-[#1E1F22] border border-[#3E4147] px-3 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
-                        />
-                      </div>
-
-                      {provider === "openai" && (
-                        <div className="space-y-1">
-                          <label className="text-xs font-semibold text-[#DFE1E5]">
-                            API Key
-                          </label>
-                          <div className="relative flex items-center">
-                            <input
-                              type={showApiKey ? "text" : "password"}
-                              value={apiKey}
-                              onChange={(e) => setApiKey(e.target.value)}
-                              placeholder="sk-..."
-                              className="w-full rounded-md bg-[#1E1F22] border border-[#3E4147] pl-3 pr-9 py-1.5 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowApiKey(!showApiKey)}
-                              className="absolute right-2.5 text-[#6F737A] hover:text-[#DFE1E5]"
-                            >
-                              {showApiKey ? (
-                                <EyeOff className="w-3.5 h-3.5" />
-                              ) : (
-                                <Eye className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
+                        <div className="relative flex items-center">
+                          <input
+                            type={showApiKey ? "text" : "password"}
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder="sk-..."
+                            className="w-full bg-[#1E1F22] border border-[#3E4147] rounded px-3 py-1.5 pr-8 text-xs text-[#DFE1E5] font-mono focus:border-[#3574F0] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-2.5 text-[#6F737A] hover:text-[#DFE1E5]"
+                          >
+                            {showApiKey ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Test Connection Button */}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        disabled={testStatus === "testing"}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1E1F22] hover:bg-[#2B2D30] text-[#DFE1E5] text-xs font-medium transition border border-[#3E4147]"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${
+                            testStatus === "testing" ? "animate-spin text-[#3574F0]" : ""
+                          }`}
+                        />
+                        <span>Test Connection</span>
+                      </button>
+
+                      {testStatus === "success" && (
+                        <span className="flex items-center gap-1 text-[#61C554] text-xs">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>{testMessage}</span>
+                        </span>
                       )}
 
-                      {/* Test Connection Button */}
-                      <div className="flex items-center gap-3 pt-1">
-                        <button
-                          type="button"
-                          onClick={handleTestConnection}
-                          disabled={testStatus === "testing"}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1E1F22] hover:bg-[#2B2D30] text-[#DFE1E5] text-xs font-medium transition border border-[#3E4147]"
-                        >
-                          <RefreshCw
-                            className={`w-3.5 h-3.5 ${
-                              testStatus === "testing" ? "animate-spin text-[#3574F0]" : ""
-                            }`}
-                          />
-                          <span>Test Connection</span>
-                        </button>
-
-                        {testStatus === "success" && (
-                          <span className="flex items-center gap-1 text-[#61C554] text-xs">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>{testMessage}</span>
-                          </span>
-                        )}
-
-                        {testStatus === "error" && (
-                          <span className="flex items-center gap-1 text-[#ED6A5E] text-xs">
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            <span>{testMessage}</span>
-                          </span>
-                        )}
-                      </div>
+                      {testStatus === "error" && (
+                        <span className="flex items-center gap-1 text-[#ED6A5E] text-xs">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>{testMessage}</span>
+                        </span>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 

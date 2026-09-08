@@ -84,10 +84,10 @@ const DEFAULT_SLIDERS: SliderConfig = {
 };
 
 const DEFAULT_AI_SETTINGS: AISettings = {
-  provider: "deterministic",
-  model: "",
+  provider: "ollama",
+  model: "qwen2.5-coder:7b",
   apiKey: "",
-  baseUrl: "",
+  baseUrl: "http://127.0.0.1:11434",
 };
 
 export function usePipeline(): UsePipelineReturn {
@@ -102,11 +102,12 @@ export function usePipeline(): UsePipelineReturn {
       if (!saved) return DEFAULT_AI_SETTINGS;
       const parsed = JSON.parse(saved);
       if (parsed && typeof parsed === "object") {
+        const p = parsed.provider === "deterministic" ? "ollama" : (parsed.provider || DEFAULT_AI_SETTINGS.provider);
         return {
-          provider: parsed.provider || DEFAULT_AI_SETTINGS.provider,
-          model: parsed.model || DEFAULT_AI_SETTINGS.model,
+          provider: p,
+          model: parsed.model || (p === "ollama" ? "qwen2.5-coder:7b" : DEFAULT_AI_SETTINGS.model),
           apiKey: parsed.apiKey || DEFAULT_AI_SETTINGS.apiKey,
-          baseUrl: parsed.baseUrl || DEFAULT_AI_SETTINGS.baseUrl,
+          baseUrl: parsed.baseUrl || (p === "ollama" ? "http://127.0.0.1:11434" : DEFAULT_AI_SETTINGS.baseUrl),
         };
       }
       return DEFAULT_AI_SETTINGS;
