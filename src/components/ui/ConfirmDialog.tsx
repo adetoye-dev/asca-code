@@ -1,11 +1,12 @@
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { AlertTriangle, HelpCircle } from "lucide-react";
 import { Icon } from "./Icon";
 
 export interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
-  message: string;
+  message: string | React.ReactNode;
+  detail?: string;
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -17,6 +18,7 @@ export function ConfirmDialog({
   isOpen,
   title,
   message,
+  detail,
   confirmText = "Confirm",
   cancelText = "Cancel",
   onConfirm,
@@ -45,42 +47,58 @@ export function ConfirmDialog({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-200">
-      <div 
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150">
+      <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-sm bg-modal backdrop-blur-xl shadow-elevation-3 border-hairline rounded-modal p-6 transform transition-all duration-200 scale-100 opacity-100 flex flex-col gap-4"
+        className="w-full max-w-[420px] bg-zinc-900/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl p-5 flex flex-col gap-4 font-sans animate-in zoom-in-95 duration-150"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
       >
-        <div className="flex items-start gap-3">
-          <div className={`p-2 rounded-full ${isDestructive ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'} shrink-0 mt-0.5`}>
-            {isDestructive ? <Icon icon={AlertTriangle} size={20} /> : <Icon icon={HelpCircle} size={20} />}
+        <div className="flex items-start gap-3.5">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 border ${
+              isDestructive
+                ? "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                : "bg-purple-950/40 border-purple-500/40 text-purple-300"
+            }`}
+          >
+            <Icon icon={isDestructive ? AlertTriangle : HelpCircle} className="w-5 h-5" />
           </div>
-          <div className="flex-1">
-            <h3 id="confirm-dialog-title" className="text-base font-semibold text-content-strong mb-1">
+          <div className="flex-1 min-w-0">
+            <h3 id="confirm-dialog-title" className="text-sm font-semibold text-zinc-100 mb-1">
               {title}
             </h3>
-            <p className="text-[13px] leading-relaxed text-content-subtle tracking-[-0.011em]">
+            <div className="text-xs leading-relaxed text-zinc-400">
               {message}
-            </p>
+            </div>
+            {detail && (
+              <div
+                className="mt-2.5 px-2.5 py-1.5 bg-black/40 border border-white/5 rounded-lg text-[11px] font-mono text-zinc-300 truncate max-w-full select-all"
+                title={detail}
+              >
+                {detail}
+              </div>
+            )}
           </div>
         </div>
-        
-        <div className="flex items-center justify-end gap-3 mt-2">
+
+        <div className="flex items-center justify-end gap-2.5 pt-1">
           <button
+            type="button"
             onClick={onCancel}
-            className="px-4 py-2 rounded-md text-[13px] font-medium text-content hover:bg-surface-hover hover:text-content-strong active:bg-surface-active transition-colors"
+            className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700/60 transition-colors cursor-pointer"
           >
             {cancelText}
           </button>
           <button
+            type="button"
             onClick={onConfirm}
-            className={`px-4 py-2 rounded-md text-[13px] font-medium transition-colors ${
-              isDestructive 
-                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 active:bg-red-500/30' 
-                : 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 active:bg-blue-500/30'
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all shadow-sm cursor-pointer outline-none ${
+              isDestructive
+                ? "bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white focus:ring-2 focus:ring-rose-500/40"
+                : "bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white focus:ring-2 focus:ring-purple-500/40"
             }`}
           >
             {confirmText}
@@ -90,3 +108,5 @@ export function ConfirmDialog({
     </div>
   );
 }
+
+export default ConfirmDialog;

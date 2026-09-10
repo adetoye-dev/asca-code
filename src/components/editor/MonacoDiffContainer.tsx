@@ -9,6 +9,7 @@ import { useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { Check, X, Menu } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { applyMonacoTheme } from "../../services/themeManager";
 
 interface MonacoDiffContainerProps {
   originalContent: string;
@@ -99,7 +100,10 @@ export function MonacoDiffContainer({
           language={getLanguage(filePath)}
           original={originalContent}
           modified={modifiedContent}
-          theme="vs-dark"
+          theme="github-dark"
+          beforeMount={(monaco) => {
+            applyMonacoTheme(monaco, "github-dark");
+          }}
           options={{
             renderSideBySide,
             fontSize: 13,

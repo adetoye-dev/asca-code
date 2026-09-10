@@ -21,6 +21,7 @@ import type {
   SystemMetrics,
   PipelineStatus,
 } from "../components/TelemetryScorecard";
+import { systemMetricsService } from "../services/systemMetricsService";
 
 export interface ProjectMeta {
   name: string;
@@ -71,7 +72,7 @@ export interface UsePipelineReturn {
   setActiveCenterView: (v: "editor" | "diff") => void;
 
   // Pipeline Actions
-  runPipeline: (customPrompt?: string) => Promise<void>;
+  runPipeline: (customPrompt?: string, modelOverride?: { provider: string; model: string }) => Promise<void>;
   cancelPipeline: () => void;
   clearLog: () => void;
   isTauriAvailable: boolean;
@@ -535,41 +536,22 @@ export function usePipeline(): UsePipelineReturn {
     [isTauriAvailable, refreshProjectFiles]
   );
 
-  // ── Poll System Metrics ───────────────────────────────────────────────────
+  // ── Poll System Metrics via Central Service ──────────────────────────────
   useEffect(() => {
-    let timer: any = null;
-
-    const poll = async () => {
-      if (isTauriAvailable) {
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          const metrics = await invoke<SystemMetrics>("fetch_system_metrics");
-          setSystemMetrics(metrics);
-        } catch {}
-      } else {
-        try {
-          const res = await fetch("/api/system/metrics");
-          if (res.ok) {
-            const metrics = await res.json();
-            setSystemMetrics(metrics);
-          }
-        } catch {}
-      }
-    };
-
-    poll();
-    timer = setInterval(poll, 3000);
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isTauriAvailable]);
+    return systemMetricsService.subscribe((metrics) => {
+      setSystemMetrics(metrics);
+    });
+  }, []);
 
   // ── Run Pipeline (100% Real Subprocess Execution) ─────────────────────────
   const pipelineAbortRef = useRef<AbortController | null>(null);
 
   const runPipeline = useCallback(
-    async (customPrompt?: string) => {
+    async (customPrompt?: string, modelOverride?: { provider: string; model: string }) => {
       const activePrompt = customPrompt ?? prompt;
+      const activeAiSettings = modelOverride
+        ? { ...aiSettings, provider: modelOverride.provider, model: modelOverride.model }
+        : aiSettings;
       if (!activePrompt.trim()) return;
 
       setStatus("running");
@@ -621,10 +603,10 @@ export function usePipeline(): UsePipelineReturn {
               sliders,
               projectRoot: activeProject.path,
               language: "python",
-              provider: aiSettings.provider,
-              model: aiSettings.model,
-              apiKey: aiSettings.apiKey,
-              baseUrl: aiSettings.baseUrl,
+              provider: activeAiSettings.provider,
+              model: activeAiSettings.model,
+              apiKey: activeAiSettings.apiKey,
+              baseUrl: activeAiSettings.baseUrl,
             }),
           });
 

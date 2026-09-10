@@ -39,7 +39,6 @@ export function BottomPanel({
   const [activeTab, setActiveTab] = useState<PanelTab>("terminal");
   const [panelHeight, setPanelHeight] = useState<number>(240);
   const [isMaximized, setIsMaximized] = useState(false);
-  const [isTerminalConnected, setIsTerminalConnected] = useState(false);
   const terminalRef = useRef<XtermTerminalHandle>(null);
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
@@ -87,7 +86,7 @@ export function BottomPanel({
       {/* Draggable Top Resize Handle */}
       <div
         onMouseDown={handleMouseDown}
-        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-sky-500/50 transition-colors z-20"
+        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-zinc-600/40 transition-colors z-20"
         title="Drag to resize bottom panel"
       />
 
@@ -104,7 +103,7 @@ export function BottomPanel({
                 : "text-zinc-400 hover:text-zinc-200 font-medium"
             }`}
           >
-            <Icon icon={Terminal} className="w-3.5 h-3.5 text-sky-400" />
+            <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-300" />
             <span>TERMINAL</span>
           </button>
 
@@ -120,7 +119,7 @@ export function BottomPanel({
             <Icon icon={FileText} className="w-3.5 h-3.5 text-emerald-400" />
             <span>OUTPUT (GAUNTLET)</span>
             {status === "running" && (
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
             )}
           </button>
 
@@ -146,18 +145,7 @@ export function BottomPanel({
         {/* Right Action Controls */}
         <div className="flex items-center gap-1">
           {activeTab === "terminal" && (
-            <div className="flex items-center gap-1.5 mr-2">
-              <span className="flex items-center gap-1.5 text-zinc-400 font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/50">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    isTerminalConnected ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
-                  }`}
-                  title={isTerminalConnected ? "PTY Shell Connected" : "Connecting..."}
-                />
-                <span className="truncate max-w-[120px]">
-                  {activeProjectCwd ? activeProjectCwd.split("/").filter(Boolean).slice(-1)[0] : "zsh"}
-                </span>
-              </span>
+            <div className="flex items-center gap-1 mr-1">
               <button
                 type="button"
                 onClick={() => terminalRef.current?.restart()}
@@ -180,8 +168,8 @@ export function BottomPanel({
           {activeTab === "output" && (
             <div className="flex items-center gap-1.5 mr-1">
               {status === "running" && (
-                <span className="flex items-center gap-1 text-sky-400 font-mono text-[10px] px-1.5 py-0.5 rounded bg-sky-950/40 border border-sky-800/40">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                <span className="flex items-center gap-1 text-zinc-200 font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   <span>Streaming...</span>
                 </span>
               )}
@@ -229,7 +217,6 @@ export function BottomPanel({
             ref={terminalRef}
             cwd={activeProjectCwd}
             isVisible={activeTab === "terminal"}
-            onConnectionChange={setIsTerminalConnected}
           />
         </div>
 

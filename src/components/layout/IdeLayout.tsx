@@ -17,10 +17,12 @@ import {
   DockviewReadyEvent,
   DockviewApi,
   IDockviewPanelProps,
+  IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
-import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot } from "lucide-react";
+import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot, GitCompare, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { FileIcon } from "../ui/FileIcon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
 
 import { MonacoEditorContainer } from "../editor/MonacoEditorContainer";
@@ -29,6 +31,7 @@ import { BottomPanel } from "../panels/BottomPanel";
 import { AssetPreview } from "../editor/AssetPreview";
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { DockviewWatermark } from "./DockviewWatermark";
 import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
 import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
@@ -44,10 +47,42 @@ import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
 import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
+import { systemMetricsService } from "../../services/systemMetricsService";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
+
+const SPECIAL_PANELS = ["dock_diff", "diff_", "dock_monitor", "dock_ai_manager", "dock_ai_chat"];
+
+const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: any; onPointerUp?: any; onPointerLeave?: any }) => {
+  const { api, onPointerDown, onPointerUp, onPointerLeave } = props;
+  const [title, setTitle] = useState(api.title);
+
+  useEffect(() => {
+    const disposable = api.onDidTitleChange((event) => setTitle(event.title));
+    return () => disposable.dispose();
+  }, [api]);
+
+  const filePath = (props.params as any)?.filePath || api.id;
+  const renderIcon = () => {
+    if (api.id.startsWith("diff_") || api.id === "dock_diff") return <Icon icon={GitCompare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
+    if (api.id === "dock_ai_chat") return <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
+    if (api.id === "dock_monitor") return <Icon icon={Cpu} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
+    if (api.id === "dock_ai_manager") return <Icon icon={Settings} className="w-3.5 h-3.5 text-amber-400 shrink-0 mr-1.5" />;
+    return <FileIcon fileName={title || filePath} className="w-3.5 h-3.5 shrink-0 mr-1.5" />;
+  };
+
+  return (
+    <div data-testid="dockview-dv-default-tab" className="dv-default-tab flex items-center h-full px-2 cursor-pointer select-none" onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerLeave}>
+      {renderIcon()}
+      <span className="dv-default-tab-content truncate text-xs font-medium">{title}</span>
+      <button type="button" className="dv-default-tab-action ml-1 p-0.5 rounded hover:bg-white/10" aria-label="Close tab" onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.close(); }} onPointerDown={(e) => e.stopPropagation()}>
+        <Icon icon={X} className="w-3 h-3 text-zinc-400 hover:text-zinc-200" />
+      </button>
+    </div>
+  );
+};
 
 export function IdeLayout(pipeline: UsePipelineReturn) {
   const {
@@ -90,6 +125,53 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("acsa_sidebar_width");
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (!isNaN(num) && num >= 180 && num <= 500) return num;
+      }
+    } catch {}
+    return 240;
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+
+  const startResizingSidebar = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+
+    const startX = e.clientX;
+    const startWidth = sidebarWidthRef.current;
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(180, Math.min(500, startWidth + delta));
+      setSidebarWidth(newWidth);
+      sidebarWidthRef.current = newWidth;
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      try {
+        localStorage.setItem("acsa_sidebar_width", sidebarWidthRef.current.toString());
+      } catch {}
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  }, []);
+
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(true);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [activeDockPanelId, setActiveDockPanelId] = useState<string | null>(null);
@@ -97,7 +179,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [gitBranch, setGitBranch] = useState("main");
   const [paletteMode, setPaletteMode] = useState<"command" | "file">("command");
-  const [themeId, setThemeId] = useState<string>("vs-dark");
+  const [themeId, setThemeId] = useState<string>(
+    () => (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_theme") || "github-dark" : "github-dark")
+  );
   const [settingsModalTab, setSettingsModalTab] = useState<string>("agents");
   const [searchInitialReplace, setSearchInitialReplace] = useState(false);
   const [targetEditorLine, setTargetEditorLine] = useState<{
@@ -106,6 +190,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     column?: number;
     ts: number;
   } | null>(null);
+  const [selectedCode, setSelectedCode] = useState("");
   const dockviewApiRef = useRef<DockviewApi | null>(null);
 
   const handleOpenFileAtLocation = useCallback(
@@ -142,6 +227,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // Apply theme to entire workbench DOM
   useEffect(() => {
     applyGlobalWorkbenchTheme(themeId);
+    try {
+      localStorage.setItem("acsa_ide_theme", themeId);
+    } catch {
+      // Ignore localStorage write failures
+    }
   }, [themeId]);
 
   const refreshBranch = useCallback(async () => {
@@ -189,6 +279,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   };
 
   const openMonitorTab = () => {
+    // When opening monitoring tab, also close the terminal/bottom panel
+    setIsBottomPanelOpen(false);
     const api = dockviewApiRef.current;
     if (!api) return;
     const existing = api.getPanel("dock_monitor");
@@ -204,6 +296,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   };
 
   const openAiManagerTab = () => {
+    // When opening AI models & providers tab, also close the terminal/bottom panel
+    setIsBottomPanelOpen(false);
     const api = dockviewApiRef.current;
     if (!api) return;
     const existing = api.getPanel("dock_ai_manager");
@@ -221,6 +315,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const openAiChatTab = () => {
     // Mutual exclusivity: close right panel when opening center stage tab
     setIsRightPanelOpen(false);
+    // When opening full chat mode, also close the terminal/bottom panel section
+    setIsBottomPanelOpen(false);
     const api = dockviewApiRef.current;
     if (!api) return;
     const existing = api.getPanel("dock_ai_chat");
@@ -256,6 +352,35 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     return () => window.removeEventListener(EVENT_START_CODING_WITH_OLLAMA, handleStartCoding);
   }, []);
 
+  // ── Listen for Watermark / Global Quick Action Requests ───────────────────
+  useEffect(() => {
+    const handleOpenFileSearch = () => {
+      setPaletteMode("file");
+      setIsCommandPaletteOpen(true);
+    };
+    const handleOpenCommandPalette = () => {
+      setPaletteMode("command");
+      setIsCommandPaletteOpen(true);
+    };
+    const handleToggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+    const handleToggleTerminal = () => setIsBottomPanelOpen((prev) => !prev);
+    const handleToggleAi = () => setIsRightPanelOpen((prev) => !prev);
+
+    window.addEventListener("acsa:open-file-search", handleOpenFileSearch);
+    window.addEventListener("acsa:open-command-palette", handleOpenCommandPalette);
+    window.addEventListener("acsa:toggle-sidebar", handleToggleSidebar);
+    window.addEventListener("acsa:toggle-terminal", handleToggleTerminal);
+    window.addEventListener("acsa:toggle-ai", handleToggleAi);
+
+    return () => {
+      window.removeEventListener("acsa:open-file-search", handleOpenFileSearch);
+      window.removeEventListener("acsa:open-command-palette", handleOpenCommandPalette);
+      window.removeEventListener("acsa:toggle-sidebar", handleToggleSidebar);
+      window.removeEventListener("acsa:toggle-terminal", handleToggleTerminal);
+      window.removeEventListener("acsa:toggle-ai", handleToggleAi);
+    };
+  }, []);
+
   // ── Global Keyboard Shortcuts Engine ──────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -266,6 +391,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         e.preventDefault();
         setPaletteMode("command");
         setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      // Cmd+Shift+E: Explorer Sidebar
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        setActiveSidebarTab("explorer");
+        setIsSidebarOpen(true);
         return;
       }
 
@@ -317,17 +450,27 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         return;
       }
 
-      // Cmd+L: Toggle Right AI Assistant Tool Window (or close center tab and open right)
-      if (isCmdOrCtrl && e.key.toLowerCase() === "l") {
+      // Cmd+L / Ctrl+L: send the current editor selection to Chat/Ask
+      if (isCmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        const api = dockviewApiRef.current;
-        const centerPanel = api?.getPanel("dock_ai_chat");
-        if (centerPanel) {
-          api?.removePanel(centerPanel);
-          setIsRightPanelOpen(true);
-        } else {
-          setIsRightPanelOpen((prev) => !prev);
-        }
+        setIsRightPanelOpen(true);
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("acsa:ai-workflow", { detail: "chat" })), 0);
+        return;
+      }
+
+      // Cmd+I / Ctrl+I or Shift+Cmd+I: prepare an Agent edit from current selection
+      if (isCmdOrCtrl && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        setIsRightPanelOpen(true);
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("acsa:ai-workflow", { detail: "agent" })), 0);
+        return;
+      }
+
+      // Alt+Cmd+P / Ctrl+Alt+P: prepare an Architectural Plan / Brainstorm
+      if (isCmdOrCtrl && e.altKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setIsRightPanelOpen(true);
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("acsa:ai-workflow", { detail: "plan" })), 0);
         return;
       }
 
@@ -379,7 +522,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "ai.toggleChat",
-      title: "AI Assistant: Toggle AI Chat Tool Window",
+      title: "AI Assistant: Toggle Chat Panel (Open/Close)",
       category: "AI",
       shortcut: "⌘L",
       icon: MessageSquare,
@@ -426,39 +569,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       action: () => setIsProjectModalOpen(true),
     },
     {
-      id: "theme.dracula",
-      title: "Color Theme: Dracula Official",
-      category: "Preferences",
-      icon: Palette,
-      action: () => setThemeId("dracula"),
-    },
-    {
-      id: "theme.oneDark",
-      title: "Color Theme: One Dark Pro",
-      category: "Preferences",
-      icon: Palette,
-      action: () => setThemeId("one-dark"),
-    },
-    {
       id: "theme.githubDark",
       title: "Color Theme: GitHub Dark Default",
       category: "Preferences",
       icon: Palette,
       action: () => setThemeId("github-dark"),
-    },
-    {
-      id: "theme.catppuccin",
-      title: "Color Theme: Catppuccin Mocha",
-      category: "Preferences",
-      icon: Palette,
-      action: () => setThemeId("catppuccin"),
-    },
-    {
-      id: "theme.vsDark",
-      title: "Color Theme: Dark+ (default dark)",
-      category: "Preferences",
-      icon: Palette,
-      action: () => setThemeId("vs-dark"),
     },
     {
       id: "agent.run",
@@ -568,9 +683,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   // ── Dockview Components Dictionary ────────────────────────────────────────
   const components = {
-    
     // Asset Preview Tab
-    assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean }>) => (
+    assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean; projectRoot?: string }>) => (
       <AssetPreview {...props} />
     ),
     // Monaco Code Editor Tab
@@ -594,6 +708,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           targetLine={targetEditorLine?.path === tab.path ? targetEditorLine.line : undefined}
           targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
           revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
+          onSelectionChange={setSelectedCode}
         />
       );
     },
@@ -653,7 +768,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     monitor: () => (
       <PerformanceDashboard
         systemMetrics={systemMetrics}
-        onRefreshMetrics={refreshBranch}
+        onRefreshMetrics={() => {
+          refreshBranch();
+          systemMetricsService.fetchMetrics();
+        }}
       />
     ),
 
@@ -681,7 +799,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         status={status}
         activityLog={activityLog}
         projectRoot={activeProject.path}
-        onRunPipeline={(override) => {
+        onRunPipeline={(request, override) => {
           if (override) {
             setAiSettings({
               ...aiSettings,
@@ -689,10 +807,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               model: override.model,
             });
           }
-          runPipeline();
+          runPipeline(request, override);
         }}
         onCancelPipeline={cancelPipeline}
         isWide={true}
+        selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
+        failureDetail={orchestrationResult?.error_detail}
+        orchestrationResult={orchestrationResult}
         onClose={() => {
           const api = dockviewApiRef.current;
           const panel = api?.getPanel("dock_ai_chat");
@@ -720,23 +841,24 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         id: first.path,
         component: first.path.match(/\.(png|jpg|jpeg|svg|gif|webp|ico)$/i) ? "assetPreview" : "editor",
         title: first.name,
-        params: { filePath: first.path , isTauri: isTauriAvailable },
+        params: { filePath: first.path, isTauri: isTauriAvailable, projectRoot: activeProject.path },
       });
     }
 
-    const specialPanels = ["dock_diff", "diff_", "dock_monitor", "dock_ai_manager", "dock_ai_chat"];
-
     // Listen to panel active and close events
     event.api.onDidActivePanelChange((e) => {
-      const panelId = e.panel?.id;
+      const panelId = (e as any)?.panel?.id || (e as any)?.id;
       setActiveDockPanelId(panelId || null);
-      if (panelId && !specialPanels.some((p) => panelId.startsWith(p))) {
+      if (panelId === "dock_ai_chat" || panelId === "dock_monitor" || panelId === "dock_ai_manager") {
+        setIsBottomPanelOpen(false);
+      }
+      if (panelId && !SPECIAL_PANELS.some((p) => panelId.startsWith(p))) {
         selectTab(panelId);
       }
     });
 
     event.api.onDidRemovePanel((panel) => {
-      if (panel && panel.id && !specialPanels.some((p) => panel.id.startsWith(p))) {
+      if (panel && panel.id && !SPECIAL_PANELS.some((p) => panel.id.startsWith(p))) {
         closeTab(panel.id);
       }
       setActiveDockPanelId((prev) => (prev === panel?.id ? null : prev));
@@ -764,7 +886,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           id: tab.path,
           component: tab.path.match(/\.(png|jpg|jpeg|svg|gif|webp|ico)$/i) ? "assetPreview" : "editor",
           title: tab.name,
-          params: { filePath: tab.path , isTauri: isTauriAvailable },
+          params: { filePath: tab.path, isTauri: isTauriAvailable, projectRoot: activeProject.path },
         });
       }
     }
@@ -821,7 +943,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <div className="flex items-center gap-2 pr-1">
             <IdeBrandLogo className="w-5 h-5 shrink-0" />
             <span className="font-semibold tracking-tight text-zinc-100 text-[13px] flex items-center gap-1 font-sans">
-              ACSA <span className="text-sky-400 font-medium">Code</span>
+              ACSA <span className="text-zinc-400 font-medium">Code</span>
             </span>
           </div>
 
@@ -846,20 +968,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           />
         </div>
 
-        {/* Center: Quick Search Bar (Cmd+P / Cmd+Shift+P) */}
+        {/* Center: Command Palette / Omnibar Trigger */}
         <div
-          onClick={() => {
-            setPaletteMode("file");
-            setIsCommandPaletteOpen(true);
-          }}
-          className="flex-1 max-w-sm mx-4 flex items-center justify-between px-3 py-1.5 rounded-lg bg-[var(--vscode-editor-bg)] border border-[var(--vscode-border)] text-zinc-300 hover:text-zinc-100 hover:border-zinc-500 cursor-pointer transition-colors text-xs font-sans"
-          title="Search files or commands (Cmd+P)"
+          onClick={() => setIsCommandPaletteOpen(true)}
+          className="flex-1 max-w-xl mx-4 h-7 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 rounded-lg px-2.5 flex items-center justify-between cursor-pointer transition-colors shadow-sm group"
         >
-          <div className="flex items-center gap-2 truncate">
-            <Icon icon={Search} className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-            <span className="truncate">{activeProject.name} — Search files (Cmd+P)</span>
+          <div className="flex items-center gap-2 text-xs text-zinc-400 group-hover:text-zinc-300">
+            <Icon icon={Search} className="w-3.5 h-3.5" />
+            <span className="truncate">
+              {activeProject ? `${activeProject.name} — Search files (Cmd+P)` : "Search files (Cmd+P)"}
+            </span>
           </div>
-          <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
             ⌘P
           </kbd>
         </div>
@@ -881,12 +1001,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
               isRightPanelOpen || dockviewApiRef.current?.getPanel("dock_ai_chat")
-                ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
                 : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
             }`}
-            title="Toggle AI Assistant Tool Window (Cmd+L)"
+            title="Toggle AI Chat Panel (Cmd+L)"
           >
-            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-sky-400" />
+            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
             <span>AI Chat</span>
           </button>
 
@@ -929,7 +1049,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                 ? "bg-zinc-800 text-zinc-100"
                 : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
             }`}
-            title="Toggle AI Assistant Tool Window (Cmd+L)"
+            title="Toggle AI Chat Panel (Cmd+L)"
           >
             <Icon icon={PanelRight} className="w-3.5 h-3.5" />
           </button>
@@ -1027,8 +1147,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onClick={openAiManagerTab}
             className={`p-2 rounded-lg transition-all ${
               activeDockPanelId === "dock_ai_manager"
-                ? "bg-white/10 text-purple-400 rounded-md"
-                : "text-zinc-400 hover:text-purple-400 hover:bg-zinc-800/60"
+                ? "bg-white/10 text-white rounded-md"
+                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
             }`}
           >
             <Icon icon={Cpu} className="w-4 h-4" />
@@ -1069,59 +1189,85 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         </aside>
 
         {/* Primary Sidebar Area */}
-        {isSidebarOpen && (
-          <aside className="w-72 border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden">
-            {activeSidebarTab === "explorer" && (
-              <ExplorerSidebar
-                projectName={activeProject.name}
-                projectPath={activeProject.path}
-                files={projectFiles}
-                activeFilePath={activeTabPath}
-                onSelectFile={openFile}
-                onCreateFile={createFileOrFolder}
-                onDeleteFile={deleteFile}
-                onRefresh={refreshProjectFiles}
-                onOpenFolder={handleOpenFolder}
-                touchedPaths={touchedPaths}
-              />
-            )}
+        <aside
+          style={{ width: isSidebarOpen ? `${sidebarWidth}px` : 0 }}
+          className={`relative border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
+            isSidebarOpen ? "" : "hidden"
+          }`}
+        >
+          {activeSidebarTab === "explorer" && (
+            <ExplorerSidebar
+              projectName={activeProject.name}
+              projectPath={activeProject.path}
+              files={projectFiles}
+              activeFilePath={activeTabPath}
+              onSelectFile={openFile}
+              onCreateFile={createFileOrFolder}
+              onDeleteFile={deleteFile}
+              onRefresh={refreshProjectFiles}
+              onOpenFolder={handleOpenFolder}
+              touchedPaths={touchedPaths}
+            />
+          )}
 
-            {activeSidebarTab === "search" && (
-              <SearchSidebar
-                projectCwd={activeProject.path}
-                projectName={activeProject.name}
-                onOpenFile={handleOpenFileAtLocation}
-                onUpdateTabContent={updateTabContent}
-                onRefreshFiles={refreshProjectFiles}
-                initialReplaceExpanded={searchInitialReplace}
-              />
-            )}
+          {activeSidebarTab === "search" && (
+            <SearchSidebar
+              projectCwd={activeProject.path}
+              projectName={activeProject.name}
+              onOpenFile={handleOpenFileAtLocation}
+              onUpdateTabContent={updateTabContent}
+              onRefreshFiles={refreshProjectFiles}
+              initialReplaceExpanded={searchInitialReplace}
+            />
+          )}
 
-            {activeSidebarTab === "sourceControl" && (
-              <SourceControlSidebar
-                projectCwd={activeProject.path}
-                onOpenDiff={handleOpenGitDiff}
-                onRefreshFiles={() => {
-                  refreshProjectFiles();
-                  refreshBranch();
-                }}
-              />
-            )}
+          {activeSidebarTab === "sourceControl" && (
+            <SourceControlSidebar
+              projectCwd={activeProject.path}
+              onOpenDiff={handleOpenGitDiff}
+              onRefreshFiles={() => {
+                refreshProjectFiles();
+                refreshBranch();
+              }}
+            />
+          )}
 
+          {activeSidebarTab === "extensions" && (
+            <ExtensionsSidebar onApplyTheme={setThemeId} activeThemeId={themeId} />
+          )}
 
-
-            {activeSidebarTab === "extensions" && (
-              <ExtensionsSidebar onApplyTheme={setThemeId} activeThemeId={themeId} />
-            )}
-          </aside>
-        )}
+          {/* Draggable Resize Handle */}
+          <div
+            onMouseDown={startResizingSidebar}
+            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-20 select-none ${
+              isResizingSidebar ? "bg-zinc-500" : ""
+            }`}
+            title="Drag to resize sidebar"
+          />
+        </aside>
 
         {/* Center Stage: Dockview (Editors) + Dedicated Bottom Panel */}
         <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
           {/* Dockview Editors & Diff Surface */}
-          <div className="flex-1 w-full overflow-hidden">
+          <div className="flex-1 w-full overflow-hidden relative">
             <DockviewReact
               components={components}
+              defaultTabComponent={DockviewCustomTab}
+              watermarkComponent={() => (
+                <DockviewWatermark
+                  onOpenFile={() => {
+                    setPaletteMode("file");
+                    setIsCommandPaletteOpen(true);
+                  }}
+                  onOpenCommands={() => {
+                    setPaletteMode("command");
+                    setIsCommandPaletteOpen(true);
+                  }}
+                  onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                  onToggleTerminal={() => setIsBottomPanelOpen((prev) => !prev)}
+                  onToggleAi={() => setIsRightPanelOpen((prev) => !prev)}
+                />
+              )}
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
@@ -1148,7 +1294,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
-              onRunPipeline={(override) => {
+              onRunPipeline={(request, override) => {
                 if (override) {
                   setAiSettings({
                     ...aiSettings,
@@ -1156,12 +1302,15 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     model: override.model,
                   });
                 }
-                runPipeline();
+                runPipeline(request, override);
               }}
               onCancelPipeline={cancelPipeline}
               onClose={() => setIsRightPanelOpen(false)}
               onPopOutWide={openAiChatTab}
               isWide={false}
+              selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
+              failureDetail={orchestrationResult?.error_detail}
+              orchestrationResult={orchestrationResult}
             />
           </aside>
         )}

@@ -290,9 +290,9 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
     if (step === "start") {
       return (
         <div className="space-y-4">
-          <div className="flex items-start gap-3 p-3.5 rounded-xl bg-sky-950/30 border border-sky-500/25">
+          <div className="flex items-start gap-3 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/25">
             <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <div className="text-xs text-sky-200/90 leading-relaxed">
+            <div className="text-xs text-purple-200/90 leading-relaxed">
               <span className="font-semibold text-white">Ollama is installed on this device.</span>
               <p className="mt-0.5 text-zinc-300">
                 The local daemon service is not currently running. Click below to launch the background server.
@@ -325,7 +325,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
             <button
               type="button"
               onClick={runStart}
-              className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-xs font-bold text-white transition-colors shadow-sm"
+              className="flex items-center gap-2 w-full justify-center px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-bold text-white transition-colors shadow-sm"
             >
               <Icon icon={Play} className="w-3.5 h-3.5" />
               Start Ollama Server

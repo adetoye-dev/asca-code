@@ -10,8 +10,9 @@
 
 import type { AIProviderConfig, AIProviderId } from "../types/workbench";
 
-const STORAGE_KEY = "acsa_code_ai_providers_v3";
-const DEFAULT_PROVIDER_KEY = "acsa_code_default_provider_v3";
+const STORAGE_KEY = "acsa_code_ai_providers_v4";
+const DEFAULT_PROVIDER_KEY = "acsa_code_default_provider_v4";
+const PREV_STORAGE_KEY_V3 = "acsa_code_ai_providers_v3";
 const LEGACY_STORAGE_KEY = "autonomous_ide_ai_providers_v2";
 
 export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
@@ -47,9 +48,9 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.openai.com/v1",
-    selectedModel: "gpt-5.5",
-    availableModels: ["gpt-5.5", "gpt-5.4", "gpt-5.6-sol", "o3", "o3-pro", "o4-mini", "gpt-4o"],
-    speedBadge: "Medium",
+    selectedModel: "gpt-4o",
+    availableModels: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1", "o1-mini", "chatgpt-4o-latest"],
+    speedBadge: "Fast",
   },
   anthropic: {
     id: "anthropic",
@@ -59,8 +60,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.anthropic.com/v1",
-    selectedModel: "claude-fable-5-1",
-    availableModels: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-3-7-sonnet-latest"],
+    selectedModel: "claude-3-7-sonnet-latest",
+    availableModels: ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
     speedBadge: "Thinking",
   },
   google: {
@@ -71,8 +72,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://generativelanguage.googleapis.com",
-    selectedModel: "gemini-3.8-flash",
-    availableModels: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro", "gemini-3.5-flash-lite"],
+    selectedModel: "gemini-2.0-flash",
+    availableModels: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
     speedBadge: "Fast",
   },
   groq: {
@@ -84,7 +85,7 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     apiKey: "",
     baseUrl: "https://api.groq.com/openai/v1",
     selectedModel: "llama-3.3-70b-versatile",
-    availableModels: ["llama-3.3-70b-versatile", "gpt-oss-120b", "gpt-oss-20b", "qwen-3.8-27b", "mixtral-8x7b-32768"],
+    availableModels: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "mixtral-8x7b-32768"],
     speedBadge: "Fast",
   },
   mistral: {
@@ -95,8 +96,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.mistral.ai/v1",
-    selectedModel: "mistral-large-3",
-    availableModels: ["mistral-large-3", "mistral-medium-3.5", "devstral-2", "mistral-small-4", "codestral-latest"],
+    selectedModel: "codestral-latest",
+    availableModels: ["codestral-latest", "mistral-large-latest", "mistral-small-latest", "ministral-8b-latest"],
     speedBadge: "Medium",
   },
   deepseek: {
@@ -107,8 +108,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.deepseek.com/v1",
-    selectedModel: "deepseek-v4-pro",
-    availableModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+    selectedModel: "deepseek-chat",
+    availableModels: ["deepseek-chat", "deepseek-reasoner"],
     speedBadge: "Thinking",
   },
   xai: {
@@ -119,9 +120,9 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.x.ai/v1",
-    selectedModel: "grok-4.6",
-    availableModels: ["grok-4.6", "grok-4.5", "grok-4.3", "grok-beta"],
-    speedBadge: "Thinking",
+    selectedModel: "grok-2-latest",
+    availableModels: ["grok-2-latest", "grok-2-vision-1212", "grok-beta"],
+    speedBadge: "Fast",
   },
   moonshot: {
     id: "moonshot",
@@ -156,7 +157,7 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     apiKey: "",
     baseUrl: "https://api.perplexity.ai",
     selectedModel: "sonar-pro",
-    availableModels: ["sonar-pro", "sonar-reasoning", "sonar"],
+    availableModels: ["sonar-pro", "sonar-reasoning-pro", "sonar", "sonar-reasoning"],
     speedBadge: "Fast",
   },
   huggingface: {
@@ -168,7 +169,7 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     apiKey: "",
     baseUrl: "https://api-inference.huggingface.co/v1",
     selectedModel: "Qwen/Qwen2.5-Coder-32B-Instruct",
-    availableModels: ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-V4-Flash"],
+    availableModels: ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"],
     speedBadge: "Medium",
   },
   together: {
@@ -180,7 +181,7 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     apiKey: "",
     baseUrl: "https://api.together.xyz/v1",
     selectedModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    availableModels: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen2.5-Coder-32B-Instruct"],
+    availableModels: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-Coder-32B-Instruct"],
     speedBadge: "Fast",
   },
   openrouter: {
@@ -191,8 +192,8 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://openrouter.ai/api/v1",
-    selectedModel: "anthropic/claude-fable-5-1",
-    availableModels: ["anthropic/claude-fable-5-1", "openai/gpt-5.5", "google/gemini-3.8-flash", "deepseek/deepseek-v4-pro"],
+    selectedModel: "anthropic/claude-3.7-sonnet",
+    availableModels: ["anthropic/claude-3.7-sonnet", "anthropic/claude-3.5-sonnet", "openai/gpt-4o", "google/gemini-2.0-flash-001", "deepseek/deepseek-r1"],
     speedBadge: "Medium",
   },
 };
@@ -208,12 +209,12 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    // Migration from legacy storage key
+    // Migration from previous or legacy storage keys
     if (!raw) {
-      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (legacy) {
+      const prevStorage = localStorage.getItem(PREV_STORAGE_KEY_V3) || localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (prevStorage) {
         try {
-          const oldParsed = JSON.parse(legacy);
+          const oldParsed = JSON.parse(prevStorage);
           const migrated = cloneInitialProviders();
           for (const key of Object.keys(oldParsed) as AIProviderId[]) {
             if (migrated[key]) {

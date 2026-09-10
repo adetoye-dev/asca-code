@@ -11,14 +11,14 @@
 :root {
   /* ── Apple Obsidian Dark Slate Palette ── */
   --obsidian-950: #09090b; /* Deepest canvas floor */
-  --obsidian-900: #0f0f13; /* Workbench ground */
-  --obsidian-850: #141418; /* Sidebar background */
-  --obsidian-800: #1a1a22; /* Card / panel base */
-  --obsidian-750: #20202a; /* Dropdown & popover surface */
-  --obsidian-700: #262632; /* Modal overlay surface */
-  --obsidian-650: #2e2e3c; /* Floating inspector */
-  --obsidian-600: #383848; /* Border default */
-  --obsidian-500: #4a4a5e; /* Border subtle */
+  --obsidian-900: #0f0f12; /* Workbench ground */
+  --obsidian-850: #141417; /* Sidebar background */
+  --obsidian-800: #18181c; /* Card / panel base */
+  --obsidian-750: #1c1c21; /* Dropdown & popover surface */
+  --obsidian-700: #18181b; /* Modal overlay surface */
+  --obsidian-650: #222227; /* Floating inspector */
+  --obsidian-600: #2c2c34; /* Border default */
+  --obsidian-500: #3f3f4a; /* Border subtle */
   --obsidian-400: #717188; /* Text muted */
   --obsidian-300: #9898ad; /* Text secondary */
   --obsidian-200: #c4c4d4; /* Text primary subdued */

@@ -28,17 +28,26 @@ export function StatusBar({ gitBranch, encoding = "UTF-8", cursorPosition = "Ln 
         </div>
       </div>
       <div className="flex items-center space-x-4">
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1" title={metrics?.cpu_count ? `${metrics.cpu_count} CPU Cores` : undefined}>
           <Icon icon={Cpu} className="w-3.5 h-3.5" />
           <span>CPU: {formatMetric(metrics?.cpu_usage_percent)}</span>
         </div>
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1" title={metrics?.memory_used_mb && metrics?.memory_total_mb ? `${metrics.memory_used_mb} MB / ${metrics.memory_total_mb} MB (${Math.round(metrics.memory_usage_percent)}%)` : undefined}>
           <Icon icon={Activity} className="w-3.5 h-3.5" />
           <span>RAM: {formatMetric(metrics?.memory_usage_percent)}</span>
         </div>
-        <div className="flex items-center space-x-1">
+        <div
+          className="flex items-center space-x-1"
+          title={
+            metrics?.disk_used_gb !== undefined && metrics?.disk_total_gb !== undefined
+              ? `${metrics.disk_used_gb.toFixed(1)} GB used of ${metrics.disk_total_gb.toFixed(1)} GB${
+                  metrics.disk_free_gb !== undefined ? ` (${metrics.disk_free_gb.toFixed(1)} GB free)` : ""
+                }`
+              : undefined
+          }
+        >
           <Icon icon={HardDrive} className="w-3.5 h-3.5" />
-          <span>Disk: --</span>
+          <span>Disk: {formatMetric(metrics?.disk_usage_percent)}</span>
         </div>
       </div>
     </div>

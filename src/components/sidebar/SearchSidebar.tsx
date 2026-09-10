@@ -14,7 +14,7 @@
  */
 
 import React, { useRef, useCallback, useState, useEffect } from "react";
-import { Search, MoreHorizontal, ChevronRight, Check, ChevronDown, RefreshCw, AlertCircle, X, CaseSensitive, WholeWord, Regex, Replace, ReplaceAll } from "lucide-react";
+import { Search, MoreHorizontal, ChevronRight, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, RefreshCw, AlertCircle, X, WholeWord, Replace, ReplaceAll } from "lucide-react";
 import { Icon } from "../ui/Icon";
 
 import { FileIcon } from "../ui/FileIcon";
@@ -369,69 +369,28 @@ export function SearchSidebar({
   return (
     <div className="flex flex-col h-full w-full bg-[var(--vscode-sidebar-bg,#18181b)] select-none text-[13px] text-zinc-200 overflow-hidden font-sans">
       {/* ── Top Sidebar Header (SEARCH) ──────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--vscode-border,#27272a)] shrink-0">
+      <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border,#27272a)] shrink-0">
         <span className="font-semibold tracking-wider text-[11px] uppercase text-zinc-300">
           Search
         </span>
-        <div className="flex items-center gap-1">
-          {/* Refresh Search */}
-          <button
-            type="button"
-            title="Refresh (Enter)"
-            onClick={() => executeSearch(query)}
-            disabled={isSearching}
-            className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-50 transition-colors"
-          >
-            <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isSearching ? "animate-spin text-sky-400" : ""}`} />
-          </button>
-
-          {/* Clear Search */}
-          <button
-            type="button"
-            title="Clear Search"
-            onClick={handleClear}
-            className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-          >
-            <Icon icon={X} className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Collapse/Expand All */}
-          <button
-            type="button"
-            title={areAllCollapsed ? "Expand All" : "Collapse All"}
-            onClick={handleToggleCollapseAll}
-            disabled={results.length === 0}
-            className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
-          >
-            {areAllCollapsed ? (
-              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
-            ) : (
-              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
-            )}
-          </button>
-        </div>
       </div>
 
       {/* ── Search & Replace Inputs Section ──────────────────────────────── */}
       <div className="p-3 border-b border-[var(--vscode-border,#27272a)] flex flex-col gap-2 shrink-0 bg-zinc-900/30">
         {/* Search Input Row */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 w-full min-w-0">
           {/* Expand/Collapse Replace Toggle Chevron */}
           <button
             type="button"
             title={isReplaceExpanded ? "Collapse Replace" : "Expand Replace"}
             onClick={() => setIsReplaceExpanded((prev) => !prev)}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
+            className="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
           >
-            {isReplaceExpanded ? (
-              <Icon icon={ChevronDown} className="w-3.5 h-3.5" />
-            ) : (
-              <Icon icon={ChevronRight} className="w-3.5 h-3.5" />
-            )}
+            <Icon icon={isReplaceExpanded ? ChevronDown : ChevronRight} className="w-3.5 h-3.5" />
           </button>
 
           {/* Search Box Container */}
-          <div className="flex-1 flex items-center bg-[var(--vscode-input-bg,#1f1f23)] border border-[var(--vscode-border,#2d2d30)] rounded-md px-2.5 py-1 focus-within:border-sky-500 transition-colors">
+          <div className="flex-1 min-w-0 flex items-center bg-zinc-900/80 border border-zinc-700/60 rounded-md px-2 py-1 focus-within:border-purple-500/60 focus-within:ring-1 focus-within:ring-purple-500/20 transition-all">
             <input
               ref={searchInputRef}
               type="text"
@@ -441,35 +400,37 @@ export function SearchSidebar({
                 if (e.key === "Enter") {
                   e.preventDefault();
                   executeSearch(query);
+                } else if (e.key === "Escape") {
+                  handleClear();
                 }
               }}
               placeholder="Search"
-              className="flex-1 bg-transparent text-[13px] text-zinc-100 placeholder-zinc-500 outline-hidden min-w-0 font-sans"
+              className="w-0 flex-1 min-w-0 bg-transparent text-[12.5px] text-zinc-100 placeholder-zinc-500 outline-none focus:outline-none focus:ring-0 border-none font-sans leading-normal"
             />
 
             {/* Toggle Flags: Match Case (Aa), Match Whole Word (\b), Regex (.*) */}
-            <div className="flex items-center gap-0.5 ml-1 shrink-0">
+            <div className="flex items-center gap-0.5 ml-1.5 shrink-0">
               <button
                 type="button"
                 title="Match Case (⌥C)"
                 onClick={() => setMatchCase((prev) => !prev)}
-                className={`px-1 py-0.5 rounded text-[11px] font-mono leading-none transition-colors ${
+                className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                   matchCase
-                    ? "bg-sky-500/20 text-sky-400 border border-sky-500/40"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                    ? "bg-purple-950/40 text-purple-200 border border-purple-500/40"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                 }`}
               >
-                <Icon icon={CaseSensitive} className="w-3.5 h-3.5" />
+                <span className="font-mono text-[11px] font-bold leading-none select-none">Aa</span>
               </button>
 
               <button
                 type="button"
                 title="Match Whole Word (⌥W)"
                 onClick={() => setMatchWholeWord((prev) => !prev)}
-                className={`px-1 py-0.5 rounded text-[11px] font-mono leading-none transition-colors ${
+                className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                   matchWholeWord
-                    ? "bg-sky-500/20 text-sky-400 border border-sky-500/40"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                    ? "bg-purple-950/40 text-purple-200 border border-purple-500/40"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                 }`}
               >
                 <Icon icon={WholeWord} className="w-3.5 h-3.5" />
@@ -479,13 +440,13 @@ export function SearchSidebar({
                 type="button"
                 title="Use Regular Expression (⌥R)"
                 onClick={() => setUseRegex((prev) => !prev)}
-                className={`px-1 py-0.5 rounded text-[11px] font-mono leading-none transition-colors ${
+                className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                   useRegex
-                    ? "bg-sky-500/20 text-sky-400 border border-sky-500/40"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                    ? "bg-purple-950/40 text-purple-200 border border-purple-500/40"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                 }`}
               >
-                <Icon icon={Regex} className="w-3.5 h-3.5" />
+                <span className="font-mono text-[11px] font-bold leading-none select-none">.*</span>
               </button>
             </div>
           </div>
@@ -493,8 +454,8 @@ export function SearchSidebar({
 
         {/* Replace Input Row (Collapsible) */}
         {isReplaceExpanded && (
-          <div className="flex items-center gap-1.5 pl-6">
-            <div className="flex-1 flex items-center bg-[var(--vscode-input-bg,#1f1f23)] border border-[var(--vscode-border,#2d2d30)] rounded-md px-2.5 py-1 focus-within:border-sky-500 transition-colors">
+          <div className="flex items-center gap-1.5 w-full min-w-0 pl-[26px]">
+            <div className="flex-1 min-w-0 flex items-center bg-zinc-900/80 border border-zinc-700/60 rounded-md px-2 py-1 focus-within:border-purple-500/60 focus-within:ring-1 focus-within:ring-purple-500/20 transition-all">
               <input
                 ref={replaceInputRef}
                 type="text"
@@ -507,22 +468,22 @@ export function SearchSidebar({
                   }
                 }}
                 placeholder="Replace"
-                className="flex-1 bg-transparent text-[13px] text-zinc-100 placeholder-zinc-500 outline-hidden min-w-0 font-sans"
+                className="w-0 flex-1 min-w-0 bg-transparent text-[12.5px] text-zinc-100 placeholder-zinc-500 outline-none focus:outline-none focus:ring-0 border-none font-sans leading-normal"
               />
 
               {/* Preserve Case & Replace All Buttons */}
-              <div className="flex items-center gap-1 ml-1 shrink-0">
+              <div className="flex items-center gap-0.5 ml-1.5 shrink-0">
                 <button
                   type="button"
                   title="Preserve Case"
                   onClick={() => setPreserveCase((prev) => !prev)}
-                  className={`px-1 py-0.5 rounded text-[10px] font-bold font-mono transition-colors ${
+                  className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                     preserveCase
-                      ? "bg-sky-500/20 text-sky-400 border border-sky-500/40"
-                      : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                      ? "bg-purple-950/40 text-purple-200 border border-purple-500/40"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                   }`}
                 >
-                  AB
+                  <span className="font-mono text-[10px] font-bold leading-none select-none">AB</span>
                 </button>
 
                 <button
@@ -530,7 +491,7 @@ export function SearchSidebar({
                   title="Replace All (⌥⌘↵)"
                   onClick={handleReplaceAllAcrossWorkspace}
                   disabled={isReplacing || results.length === 0 || !query}
-                  className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
+                  className="w-5 h-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 disabled:opacity-40 transition-colors"
                 >
                   <Icon icon={ReplaceAll} className={`w-3.5 h-3.5 ${isReplacing ? "animate-pulse text-amber-400" : ""}`} />
                 </button>
@@ -544,10 +505,11 @@ export function SearchSidebar({
           <button
             type="button"
             onClick={() => setShowDetails((prev) => !prev)}
-            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+            className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors py-0.5 px-1 rounded hover:bg-zinc-800/60"
+            title="Toggle Search Details (files to include / exclude)"
           >
             <Icon icon={MoreHorizontal} className="w-3.5 h-3.5" />
-            <span>{showDetails ? "Hide filters" : "Toggle filters (include / exclude)"}</span>
+            <span className="text-[11px] font-medium">{showDetails ? "Hide filters" : "Toggle filters"}</span>
           </button>
         </div>
 
@@ -563,7 +525,7 @@ export function SearchSidebar({
                 value={includePattern}
                 onChange={(e) => setIncludePattern(e.target.value)}
                 placeholder="e.g. *.ts, src/**"
-                className="w-full bg-[var(--vscode-input-bg,#1f1f23)] border border-[var(--vscode-border,#2d2d30)] rounded-md px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-hidden focus:border-sky-500 transition-colors"
+                className="w-full bg-zinc-900/80 border border-zinc-700/60 rounded-md px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:outline-none focus:ring-1 focus:ring-purple-500/20 focus:border-purple-500/60 transition-all font-sans"
               />
             </div>
 
@@ -576,7 +538,7 @@ export function SearchSidebar({
                 value={excludePattern}
                 onChange={(e) => setExcludePattern(e.target.value)}
                 placeholder="e.g. dist, node_modules, *.test.ts"
-                className="w-full bg-[var(--vscode-input-bg,#1f1f23)] border border-[var(--vscode-border,#2d2d30)] rounded-md px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-hidden focus:border-sky-500 transition-colors"
+                className="w-full bg-zinc-900/80 border border-zinc-700/60 rounded-md px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:outline-none focus:ring-1 focus:ring-purple-500/20 focus:border-purple-500/60 transition-all font-sans"
               />
             </div>
           </div>
@@ -599,24 +561,36 @@ export function SearchSidebar({
       )}
 
       {/* ── Result Summary Counter ───────────────────────────────────────── */}
-      <div className="px-3 py-1.5 text-xs text-zinc-300 border-b border-zinc-800/60 bg-zinc-900/40 flex items-center justify-between shrink-0">
-        {isSearching ? (
-          <span className="flex items-center gap-1.5 text-zinc-300">
-            <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-sky-400" />
-            Searching workspace...
-          </span>
-        ) : query ? (
-          <span>
-            <strong className="text-zinc-100 font-semibold">{activeMatchesCount}</strong>{" "}
-            {activeMatchesCount === 1 ? "result" : "results"} in{" "}
-            <strong className="text-zinc-100 font-semibold">{visibleResults.length}</strong>{" "}
-            {visibleResults.length === 1 ? "file" : "files"}
-            {capped && <span className="text-amber-400 ml-1">(capped)</span>}
-          </span>
-        ) : (
-          <span className="text-zinc-400">Search in {projectName}</span>
-        )}
-      </div>
+      {(query.trim() || isSearching) && (
+        <div className="px-3 py-1.5 text-xs text-zinc-300 border-b border-zinc-800/60 bg-zinc-900/40 flex items-center justify-between shrink-0">
+          {isSearching ? (
+            <span className="flex items-center gap-1.5 text-zinc-300">
+              <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
+              Searching workspace...
+            </span>
+          ) : (
+            <div className="flex items-center justify-between w-full">
+              <span>
+                <strong className="text-zinc-100 font-semibold">{activeMatchesCount}</strong>{" "}
+                {activeMatchesCount === 1 ? "result" : "results"} in{" "}
+                <strong className="text-zinc-100 font-semibold">{visibleResults.length}</strong>{" "}
+                {visibleResults.length === 1 ? "file" : "files"}
+                {capped && <span className="text-amber-400 ml-1">(capped)</span>}
+              </span>
+              {visibleResults.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleToggleCollapseAll}
+                  className="p-0.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
+                  title={areAllCollapsed ? "Expand All" : "Collapse All"}
+                >
+                  <Icon icon={areAllCollapsed ? ChevronsUpDown : ChevronsDownUp} className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Results Tree View ────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1">

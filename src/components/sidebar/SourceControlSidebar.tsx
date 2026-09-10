@@ -221,7 +221,7 @@ export function SourceControlSidebar({
       <div className="p-3 border-b border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-zinc-300 text-[11px]">
-            <Icon icon={GitPullRequest} className="w-4 h-4 text-sky-400" />
+            <Icon icon={GitPullRequest} className="w-4 h-4 text-primary-icon" />
             <span>Source Control</span>
           </div>
 
@@ -239,7 +239,7 @@ export function SourceControlSidebar({
         <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-sans">
           <div className="flex items-center gap-1.5 font-medium text-zinc-200 truncate">
             <span className="text-zinc-400">branch:</span>
-            <span className="font-mono text-sky-400 truncate">{branch}</span>
+            <span className="font-mono text-accent truncate">{branch}</span>
           </div>
 
           {(ahead > 0 || behind > 0) && (
@@ -274,7 +274,7 @@ export function SourceControlSidebar({
               handleCommit();
             }
           }}
-          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 resize-none font-sans"
+          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/20 resize-none font-sans"
         />
 
         {statusMsg && (
@@ -297,7 +297,7 @@ export function SourceControlSidebar({
           className={`w-full py-2 px-3 rounded-xl font-semibold text-[13px] text-white shadow-sm flex items-center justify-center gap-1.5 transition-all font-sans ${
             isCommitting || !commitMessage.trim()
               ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-              : "bg-sky-600 hover:bg-sky-500 shadow-sky-600/20 cursor-pointer"
+              : "bg-primary-action hover:bg-primary-action/90 shadow-sm cursor-pointer"
           }`}
         >
           {isCommitting ? (

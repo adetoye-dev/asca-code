@@ -25,6 +25,7 @@ interface MonacoEditorContainerProps {
   targetLine?: number;
   targetColumn?: number;
   revealTrigger?: number;
+  onSelectionChange?: (selection: string) => void;
 }
 
 export function MonacoEditorContainer({
@@ -33,14 +34,16 @@ export function MonacoEditorContainer({
   onChange,
   onSave,
   aiSettings,
-  themeId = "vs-dark",
+  themeId = "github-dark",
   targetLine,
   targetColumn,
   revealTrigger,
+  onSelectionChange,
 }: MonacoEditorContainerProps) {
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof MonacoType | null>(null);
   const aiDisposableRef = useRef<MonacoType.IDisposable | null>(null);
+  const selectionDisposableRef = useRef<MonacoType.IDisposable | null>(null);
   const settingsRef = useRef(aiSettings);
 
   useEffect(() => {
@@ -70,6 +73,12 @@ export function MonacoEditorContainer({
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    selectionDisposableRef.current = editor.onDidChangeCursorSelection(() => {
+      const selection = editor.getSelection();
+      const model = editor.getModel();
+      onSelectionChange?.(selection && model ? model.getValueInRange(selection) : "");
+    });
 
     // Apply active theme
     applyMonacoTheme(monaco, themeId);
@@ -113,6 +122,8 @@ export function MonacoEditorContainer({
         aiDisposableRef.current.dispose();
         aiDisposableRef.current = null;
       }
+      selectionDisposableRef.current?.dispose();
+      selectionDisposableRef.current = null;
     };
   }, []);
 
@@ -125,6 +136,9 @@ export function MonacoEditorContainer({
         language={getLanguage(path)}
         value={content}
         theme={themeId}
+        beforeMount={(monaco) => {
+          applyMonacoTheme(monaco, themeId);
+        }}
         onChange={(val) => onChange(val || "")}
         onMount={handleEditorDidMount}
         options={{
@@ -132,6 +146,8 @@ export function MonacoEditorContainer({
           fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
           lineNumbers: "on",
           renderWhitespace: "selection",
+          renderLineHighlight: "all",
+          renderLineHighlightOnlyWhenFocus: false,
           tabSize: 4,
           insertSpaces: true,
           wordWrap: "off",

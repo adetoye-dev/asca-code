@@ -34,7 +34,7 @@ export function FileIcon({
     if (basename === "src") {
       return (
         <span
-          className={`inline-flex items-center justify-center text-blue-400 ${className}`}
+          className={`inline-flex items-center justify-center text-sky-400 ${className}`}
           style={folderStyle}
         >
           {isOpen ? <Icon icon={FolderOpen} className="w-full h-full" /> : <Icon icon={Folder} className="w-full h-full" />}
@@ -64,7 +64,7 @@ export function FileIcon({
     if (basename === "dist" || basename === "build" || basename === "out") {
       return (
         <span
-          className={`inline-flex items-center justify-center text-purple-400 ${className}`}
+          className={`inline-flex items-center justify-center text-zinc-400 ${className}`}
           style={folderStyle}
         >
           {isOpen ? <Icon icon={FolderOpen} className="w-full h-full" /> : <Icon icon={Folder} className="w-full h-full" />}
@@ -132,7 +132,7 @@ export function FileIcon({
   ) {
     return (
       <span className={`inline-flex items-center justify-center ${className}`} style={folderStyle}>
-        <Icon icon={ImageIcon} className="w-full h-full text-violet-400" />
+        <Icon icon={ImageIcon} className="w-full h-full text-sky-400" />
       </span>
     );
   }
@@ -157,7 +157,7 @@ export function FileIcon({
   if (basename.endsWith(".yaml") || basename.endsWith(".yml") || basename.endsWith(".toml")) {
     return (
       <span className={`inline-flex items-center justify-center ${className}`} style={folderStyle}>
-        <Icon icon={Settings} className="w-full h-full text-purple-400" />
+        <Icon icon={Settings} className="w-full h-full text-zinc-400" />
       </span>
     );
   }

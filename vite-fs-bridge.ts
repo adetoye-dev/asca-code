@@ -14,7 +14,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { exec, execFile, spawn } from "child_process";
+import { exec, execFile, execFileSync, spawn } from "child_process";
 
 export interface FileNode {
   name: string;
@@ -26,20 +26,42 @@ export interface FileNode {
 
 const IGNORED_NAMES = new Set([
   ".git",
+  ".DS_Store",
   "node_modules",
   "__pycache__",
-  ".venv",
-  "venv",
-  "target",
-  "dist",
-  "build",
-  ".tauri",
-  ".vite",
-  ".DS_Store",
-  ".pytest_cache",
-  ".ruff_cache",
+  ".acsa",
   ".mypy_cache",
+  ".ruff_cache",
+  ".pytest_cache",
+  ".cache",
+  ".turbo",
+  ".parcel-cache",
+  ".eslintcache",
+  "context-index.json",
+  ".context-index.json",
+  "context_index.json",
+  ".context-index",
+  ".context_index",
+  "Thumbs.db",
 ]);
+
+function isIgnoredFileOrDir(name: string): boolean {
+  if (IGNORED_NAMES.has(name)) return true;
+  const lower = name.toLowerCase();
+  return (
+    lower === "__pycache__" ||
+    lower === ".acsa" ||
+    lower === "context-index.json" ||
+    lower === ".context-index.json" ||
+    lower === "context_index.json" ||
+    lower === ".context-index" ||
+    lower === ".context_index" ||
+    lower.endsWith(".pyc") ||
+    lower.endsWith(".pyo") ||
+    lower === ".ds_store" ||
+    lower === "thumbs.db"
+  );
+}
 
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".avif",
@@ -72,7 +94,7 @@ function collectAllProjectFiles(dirPath: string): string[] {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (IGNORED_NAMES.has(entry.name)) continue;
+      if (isIgnoredFileOrDir(entry.name)) continue;
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
         results = results.concat(collectAllProjectFiles(fullPath));
@@ -111,13 +133,22 @@ function preserveCaseReplace(original: string, replacement: string): string {
   return replacement;
 }
 
-function buildFileTree(dirPath: string, depth = 0, maxDepth = 6): FileNode[] {
+function buildFileTree(dirPath: string, depth = 0, maxDepth = 25, visitedRealPaths = new Set<string>()): FileNode[] {
   if (depth > maxDepth || !fs.existsSync(dirPath)) return [];
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(dirPath);
+  } catch {
+    return [];
+  }
+  if (visitedRealPaths.has(realPath)) return [];
+  visitedRealPaths.add(realPath);
 
   let entries: fs.Dirent[] = [];
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
   } catch (err) {
+    visitedRealPaths.delete(realPath);
     return [];
   }
 
@@ -131,17 +162,22 @@ function buildFileTree(dirPath: string, depth = 0, maxDepth = 6): FileNode[] {
   });
 
   for (const entry of entries) {
-    if (IGNORED_NAMES.has(entry.name)) continue;
+    if (isIgnoredFileOrDir(entry.name)) continue;
 
     const fullPath = path.join(dirPath, entry.name);
-    const isDir = entry.isDirectory();
+    let isDir = entry.isDirectory();
+    if (!isDir && entry.isSymbolicLink()) {
+      try {
+        isDir = fs.statSync(fullPath).isDirectory();
+      } catch {}
+    }
 
     if (isDir) {
       nodes.push({
         name: entry.name,
         path: fullPath,
         is_dir: true,
-        children: buildFileTree(fullPath, depth + 1, maxDepth),
+        children: buildFileTree(fullPath, depth + 1, maxDepth, visitedRealPaths),
       });
     } else {
       let sizeBytes = 0;
@@ -158,6 +194,7 @@ function buildFileTree(dirPath: string, depth = 0, maxDepth = 6): FileNode[] {
     }
   }
 
+  visitedRealPaths.delete(realPath);
   return nodes;
 }
 
@@ -280,9 +317,52 @@ export function realFilesystemPlugin(): Plugin {
   return {
     name: "vite-plugin-real-filesystem",
     configureServer(server: ViteDevServer) {
+      // Watch public/logos for live updates and notify client
+      const logosDir = path.join(process.cwd(), "public", "logos");
+      if (fs.existsSync(logosDir)) {
+        try {
+          fs.watch(logosDir, { recursive: true }, (_eventType, filename) => {
+            if (filename && filename.endsWith(".svg")) {
+              server.ws.send({
+                type: "custom",
+                event: "logo-file-changed",
+                data: { file: filename },
+              });
+            }
+          });
+        } catch {}
+      }
+
       server.middlewares.use(async (req, res, next) => {
         const url = req.url || "";
-        const pathname = new URL(url, "http://127.0.0.1").pathname;
+        const parsedUrl = new URL(url, "http://127.0.0.1");
+        const pathname = parsedUrl.pathname;
+
+        // ── Direct /logos/ handling with zero-caching and auto viewBox ───────
+        if (pathname.startsWith("/logos/")) {
+          const localPath = path.join(process.cwd(), "public", pathname);
+          if (fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+            if (pathname.endsWith(".svg")) {
+              res.setHeader("Content-Type", "image/svg+xml");
+              let svgContent = fs.readFileSync(localPath, "utf8");
+              if (!svgContent.includes("viewBox")) {
+                const wMatch = svgContent.match(/\bwidth=["']([^"']+)["']/i);
+                const hMatch = svgContent.match(/\bheight=["']([^"']+)["']/i);
+                const w = parseFloat(wMatch ? wMatch[1] : "") || 256;
+                const h = parseFloat(hMatch ? hMatch[1] : "") || 256;
+                svgContent = svgContent.replace(/<svg([^>]*)>/i, `<svg$1 viewBox="0 0 ${w} ${h}">`);
+              }
+              res.end(svgContent);
+              return;
+            } else {
+              fs.createReadStream(localPath).pipe(res);
+              return;
+            }
+          }
+        }
 
         if (!pathname.startsWith("/api/")) {
           return next();
@@ -813,6 +893,95 @@ export function realFilesystemPlugin(): Plugin {
 
             const tree = buildFileTree(resolvedPath);
             res.end(JSON.stringify({ nodes: tree, resolvedPath }));
+            return;
+          }
+
+          // ── GET & HEAD /api/fs/raw ─────────────────────────────────────────
+          if (pathname === "/api/fs/raw" && (req.method === "GET" || req.method === "HEAD")) {
+            const rawPath = parsedUrl.searchParams.get("path") || "";
+            const projectRoot = parsedUrl.searchParams.get("projectRoot") || "";
+            const resolved = resolveProjectPath(projectRoot, rawPath);
+
+            if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+              res.statusCode = 404;
+              res.end("Not found");
+              return;
+            }
+
+            const ext = path.extname(resolved).toLowerCase();
+            const mimeTypes: Record<string, string> = {
+              ".svg": "image/svg+xml",
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".gif": "image/gif",
+              ".webp": "image/webp",
+              ".ico": "image/x-icon",
+              ".bmp": "image/bmp",
+              ".avif": "image/avif",
+              ".mp4": "video/mp4",
+              ".webm": "video/webm",
+              ".mp3": "audio/mpeg",
+              ".wav": "audio/wav",
+            };
+
+            const contentType = mimeTypes[ext] || "application/octet-stream";
+            try {
+              const stat = fs.statSync(resolved);
+              res.setHeader("Content-Type", contentType);
+              res.setHeader("Content-Length", stat.size);
+              res.setHeader("Cache-Control", "no-cache");
+              if (req.method === "HEAD") {
+                res.end();
+                return;
+              }
+              const fileBuffer = fs.readFileSync(resolved);
+              res.end(fileBuffer);
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.end(err?.message || "Failed to read file");
+            }
+            return;
+          }
+
+          // ── POST /api/fs/read-base64 ────────────────────────────────────────
+          if (pathname === "/api/fs/read-base64" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const rawPath = (body.filePath || body.path || "").trim();
+              const projectRoot = (body.projectRoot || "").trim();
+              const resolved = path.isAbsolute(rawPath)
+                ? rawPath
+                : resolveProjectPath(projectRoot, rawPath);
+
+              if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: "File not found" }));
+                return;
+              }
+
+              const ext = path.extname(resolved).toLowerCase();
+              const mimeTypes: Record<string, string> = {
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+                ".ico": "image/x-icon",
+                ".bmp": "image/bmp",
+                ".avif": "image/avif",
+              };
+              const mimeType = mimeTypes[ext] || "application/octet-stream";
+              const stat = fs.statSync(resolved);
+              const buffer = fs.readFileSync(resolved);
+              const base64 = buffer.toString("base64");
+              const dataUrl = `data:${mimeType};base64,${base64}`;
+              res.end(JSON.stringify({ ok: true, dataUrl, mimeType, size: stat.size }));
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
             return;
           }
 
@@ -1612,6 +1781,35 @@ export function realFilesystemPlugin(): Plugin {
             const loadAvg = os.loadavg()[0] || 0;
             const cpuPercent = Math.min(100, Math.round((loadAvg / cpus.length) * 100));
 
+            let diskPercent: number | undefined;
+            let diskUsedGb: number | undefined;
+            let diskTotalGb: number | undefined;
+            let diskFreeGb: number | undefined;
+            let pythonVersion = "unknown";
+            try {
+              pythonVersion = execFileSync("python3", ["--version"], { encoding: "utf8", timeout: 2000 }).trim().replace(/^Python\s+/i, "");
+            } catch {}
+            let viteVersion = "unknown";
+            try {
+              const packageJson = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
+              viteVersion = String(packageJson.devDependencies?.vite || packageJson.dependencies?.vite || "unknown").replace(/^[^0-9]*/, "");
+            } catch {}
+
+            try {
+              let stat: any;
+              try {
+                stat = fs.statfsSync(process.platform === "win32" ? process.cwd() : "/");
+              } catch {
+                stat = fs.statfsSync(process.cwd());
+              }
+              if (stat && stat.blocks > 0) {
+                diskPercent = Math.min(100, Math.max(0, Math.round(((stat.blocks - stat.bavail) / stat.blocks) * 100)));
+                diskUsedGb = Number(((stat.bsize * (stat.blocks - stat.bavail)) / (1024 ** 3)).toFixed(1));
+                diskTotalGb = Number(((stat.bsize * stat.blocks) / (1024 ** 3)).toFixed(1));
+                diskFreeGb = Number(((stat.bsize * stat.bavail) / (1024 ** 3)).toFixed(1));
+              }
+            } catch {}
+
             res.end(
               JSON.stringify({
                 cpu_count: os.cpus().length,
@@ -1619,8 +1817,17 @@ export function realFilesystemPlugin(): Plugin {
                 memory_used_mb: Math.round(usedMem / (1024 * 1024)),
                 memory_total_mb: Math.round(totalMem / (1024 * 1024)),
                 memory_usage_percent: Math.round((usedMem / totalMem) * 100),
+                disk_usage_percent: diskPercent,
+                disk_used_gb: diskUsedGb,
+                disk_total_gb: diskTotalGb,
+                disk_free_gb: diskFreeGb,
                 is_thermal_risk: cpuPercent > 90,
                 thermal_warning: cpuPercent > 90 ? "High host CPU load" : "",
+                platform: process.platform,
+                architecture: process.arch,
+                node_version: process.versions.node,
+                vite_version: viteVersion,
+                python_version: pythonVersion,
               })
             );
             return;
@@ -2137,6 +2344,7 @@ export function realFilesystemPlugin(): Plugin {
               // Check if server is reachable
               let running = false;
               let models: string[] = [];
+              let modelsDetails: any[] = [];
               if (installed) {
                 try {
                   const check = await fetch("http://127.0.0.1:11434/api/tags", {
@@ -2145,7 +2353,66 @@ export function realFilesystemPlugin(): Plugin {
                   if (check.ok) {
                     running = true;
                     const data = await check.json();
-                    models = (data.models || []).map((m: any) => m.name as string);
+                    const rawModels = data.models || [];
+                    models = rawModels.map((m: any) => m.name as string);
+                    modelsDetails = await Promise.all(
+                      rawModels.map(async (m: any) => {
+                        const sizeBytes = typeof m.size === "number" ? m.size : 0;
+                        let sizeFormatted = "";
+                        if (sizeBytes > 0) {
+                          if (sizeBytes >= 1024 * 1024 * 1024) {
+                            sizeFormatted = `${(sizeBytes / (1024 ** 3)).toFixed(1)} GB`;
+                          } else {
+                            sizeFormatted = `${Math.round(sizeBytes / (1024 ** 2))} MB`;
+                          }
+                        }
+
+                        let capabilities: string[] = [];
+                        let contextLength: number | undefined;
+                        let parameterCount: number | undefined;
+
+                        // Query Ollama's local manifest to extract factual runtime capabilities and context length
+                        try {
+                          const showRes = await fetch("http://127.0.0.1:11434/api/show", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ name: m.name }),
+                            signal: AbortSignal.timeout(1500),
+                          });
+                          if (showRes.ok) {
+                            const showData = await showRes.json();
+                            if (Array.isArray(showData.capabilities)) {
+                              capabilities = showData.capabilities;
+                            }
+                            if (showData.model_info && typeof showData.model_info === "object") {
+                              for (const [k, v] of Object.entries(showData.model_info)) {
+                                if (k.endsWith(".context_length") && typeof v === "number") {
+                                  contextLength = v;
+                                  break;
+                                }
+                              }
+                              if (typeof showData.model_info["general.parameter_count"] === "number") {
+                                parameterCount = showData.model_info["general.parameter_count"];
+                              }
+                            }
+                          }
+                        } catch {}
+
+                        return {
+                          name: m.name,
+                          tag: m.name,
+                          sizeBytes,
+                          sizeFormatted,
+                          parameterSize: m.details?.parameter_size,
+                          family: m.details?.family,
+                          quantizationLevel: m.details?.quantization_level,
+                          modifiedAt: m.modified_at,
+                          capabilities,
+                          contextLength,
+                          parameterCount,
+                        };
+                      })
+                    );
                   }
                 } catch {}
               }
@@ -2159,7 +2426,7 @@ export function realFilesystemPlugin(): Plugin {
                 recommendedModel = "qwen2.5-coder:3b";
               }
 
-              res.end(JSON.stringify({ installed, running, models, recommendedModel, totalRamGb: Math.round(totalRamGb), binaryPath: bin }));
+              res.end(JSON.stringify({ installed, running, models, modelsDetails, recommendedModel, totalRamGb: Math.round(totalRamGb), binaryPath: bin }));
             } catch (err: any) {
               res.end(JSON.stringify({ installed: false, running: false, models: [], error: err.message }));
             }
@@ -2408,6 +2675,35 @@ export function realFilesystemPlugin(): Plugin {
               } else {
                 const txt = await delRes.text().catch(() => "");
                 res.end(JSON.stringify({ ok: false, error: txt || `HTTP ${delRes.status}` }));
+              }
+            } catch (err: any) {
+              res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
+            return;
+          }
+
+          // ── POST /api/ollama/show ─────────────────────────────────────────────
+          if (pathname === "/api/ollama/show" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const model = (body.model || body.name || "").trim();
+              if (!model) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ ok: false, error: "model name required" }));
+                return;
+              }
+              const showRes = await fetch("http://127.0.0.1:11434/api/show", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: model }),
+                signal: AbortSignal.timeout(3000),
+              });
+              if (showRes.ok) {
+                const data = await showRes.json();
+                res.end(JSON.stringify({ ok: true, data }));
+              } else {
+                const txt = await showRes.text().catch(() => "");
+                res.end(JSON.stringify({ ok: false, error: txt || `HTTP ${showRes.status}` }));
               }
             } catch (err: any) {
               res.end(JSON.stringify({ ok: false, error: err.message }));

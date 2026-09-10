@@ -2,7 +2,7 @@
  * SettingsModal.tsx — Authentic IntelliJ IDEA Settings & Preferences Window
  *
  * Implements the IntelliJ IDE settings panel architecture:
- * - macOS traffic light window chrome and project title
+ * - Frosted glass window header with project title and settings icon
  * - Two-column layout with searchable hierarchical category tree
  * - Tools > AI Assistant > Agents (Claude, Codex, Copilot, Junie, Agoragentic, Amp, Auggie CLI)
  * - Tools > AI Assistant > Providers & API keys (with real connection ping testing)
@@ -209,7 +209,7 @@ export function SettingsModal({
   onClose,
   settings,
   onSave,
-  themeId = "vs-dark",
+  themeId = "github-dark",
   onApplyTheme,
   initialTab = "agents",
   projectName = "Practice",
@@ -486,54 +486,46 @@ export function SettingsModal({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-[2px] p-4 select-none animate-in fade-in duration-100 font-sans cursor-default"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
     >
       {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-modal bg-modal/95 backdrop-blur-xl border border-hairline shadow-elevation-3 overflow-hidden flex flex-col text-zinc-300 relative"
+        className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-modal bg-workbench backdrop-blur-2xl border border-hairline shadow-[0_32px_80px_rgba(0,0,0,0.8),inset_0_1px_0_0_rgba(255,255,255,0.1)] overflow-hidden flex flex-col text-zinc-300 relative"
       >
-        {/* ── macOS Traffic Light Header Bar ───────────────────────────────── */}
-        <div className="h-10 bg-workbench/90 border-b border-hairline px-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            {/* macOS Window Controls */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-3 h-3 rounded-full bg-[#ED6A5E] hover:opacity-80 transition cursor-pointer border border-[#D15146]"
-              title="Close"
-            />
-            <button
-              type="button"
-              className="w-3 h-3 rounded-full bg-[#F4BF4F] hover:opacity-80 transition border border-[#D7A23A]"
-              title="Minimize"
-            />
-            <button
-              type="button"
-              className="w-3 h-3 rounded-full bg-[#61C554] hover:opacity-80 transition border border-[#4EA843]"
-              title="Zoom"
-            />
-          </div>
-
-          <div className="text-[13px] font-medium text-zinc-200 font-sans tracking-tight">
-            Settings – {projectName}
+        {/* ── Settings Header Bar ─────────────────────────────────────────── */}
+        <div className="h-11 bg-white/[0.03] backdrop-blur-xl border-b border-white/[0.08] px-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-zinc-300 shadow-sm">
+              <Settings className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex items-center gap-1.5 text-[13px]">
+              <span className="font-semibold text-zinc-100">Settings</span>
+              {projectName && (
+                <>
+                  <span className="text-zinc-600">/</span>
+                  <span className="text-xs font-mono text-zinc-400">{projectName}</span>
+                </>
+              )}
+            </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-zinc-400 hover:text-zinc-100 rounded-md hover:bg-surface-hover transition"
+            className="p-1.5 text-zinc-400 hover:text-zinc-100 rounded-lg hover:bg-white/[0.08] transition cursor-pointer border border-transparent hover:border-white/[0.08]"
+            title="Close Settings"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* ── Main Two-Column Stage ────────────────────────────────────────── */}
         <div className="flex flex-1 min-h-0 overflow-hidden font-sans">
           {/* Left Column: Navigation Category Tree */}
-          <aside className="w-[260px] bg-workbench/80 border-r border-hairline flex flex-col shrink-0">
+          <aside className="w-[260px] bg-black/25 backdrop-blur-xl border-r border-white/[0.08] flex flex-col shrink-0">
             {/* Search Settings Input */}
-            <div className="p-2.5 border-b border-hairline">
+            <div className="p-2.5 border-b border-white/[0.06]">
               <div className="relative flex items-center">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 text-zinc-400" />
                 <input
@@ -541,7 +533,7 @@ export function SettingsModal({
                   value={navSearch}
                   onChange={(e) => setNavSearch(e.target.value)}
                   placeholder="Search settings..."
-                  className="w-full bg-surface border border-hairline rounded-md pl-8 pr-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500/60 font-sans"
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 font-sans transition"
                 />
                 {navSearch && (
                   <button
@@ -572,9 +564,9 @@ export function SettingsModal({
           </aside>
 
           {/* Right Column: Configuration Stage */}
-          <main className="flex-1 min-w-0 bg-canvas/70 flex flex-col h-full overflow-hidden">
+          <main className="flex-1 min-w-0 bg-transparent flex flex-col h-full overflow-hidden">
             {/* Stage Top Breadcrumbs Header */}
-            <div className="h-10 px-5 border-b border-hairline flex items-center justify-between shrink-0 bg-workbench/40">
+            <div className="h-10 px-5 border-b border-white/[0.06] flex items-center justify-between shrink-0 bg-white/[0.02]">
               <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-sans">
                 {breadcrumb.map((crumb, idx) => (
                   <React.Fragment key={crumb}>
@@ -612,7 +604,7 @@ export function SettingsModal({
                 >
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
-                <div className="h-3 w-[1px] bg-zinc-700/60 mx-1" />
+                <div className="h-3 w-[1px] bg-white/[0.08] mx-1" />
                 <button
                   type="button"
                   className="p-1 hover:text-zinc-100 rounded transition"
@@ -636,7 +628,7 @@ export function SettingsModal({
                       value={agentSearch}
                       onChange={(e) => setAgentSearch(e.target.value)}
                       placeholder="Search agents..."
-                      className="w-full bg-surface border border-hairline rounded-md pl-8 pr-3 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-sans"
+                      className="w-full bg-surface border border-hairline rounded-md pl-8 pr-3 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 font-sans"
                     />
                   </div>
 
@@ -655,7 +647,7 @@ export function SettingsModal({
                           className="p-3 flex items-start gap-3 hover:bg-surface-hover transition-colors"
                         >
                           {/* Agent Avatar / Icon */}
-                          <div className="w-8 h-8 rounded-lg bg-workbench border border-hairline flex items-center justify-center shrink-0 mt-0.5 text-sky-400">
+                          <div className="w-8 h-8 rounded-lg bg-workbench border border-hairline flex items-center justify-center shrink-0 mt-0.5 text-purple-400">
                             {agent.id.includes("claude") ? (
                               <Bot className="w-4 h-4 text-amber-400" />
                             ) : agent.id.includes("codex") ? (
@@ -663,9 +655,9 @@ export function SettingsModal({
                             ) : agent.id.includes("copilot") ? (
                               <Zap className="w-4 h-4 text-purple-400" />
                             ) : agent.id.includes("junie") ? (
-                              <Bot className="w-4 h-4 text-sky-400" />
+                              <Bot className="w-4 h-4 text-purple-400" />
                             ) : agent.id.includes("deterministic") ? (
-                              <Cpu className="w-4 h-4 text-cyan-400" />
+                              <Cpu className="w-4 h-4 text-purple-300" />
                             ) : (
                               <Layers className="w-4 h-4 text-zinc-400" />
                             )}
@@ -698,7 +690,7 @@ export function SettingsModal({
                           {/* Agent Action Button */}
                           <div className="shrink-0">
                             {agent.isCore ? (
-                              <span className="px-3 py-1 rounded text-[11px] bg-sky-500/15 text-sky-300 font-medium border border-sky-500/30">
+                              <span className="px-3 py-1 rounded text-[11px] bg-purple-950/40 text-purple-300 font-medium border border-purple-500/40">
                                 Active
                               </span>
                             ) : agent.installed ? (
@@ -730,7 +722,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={passCustomMcp}
                         onChange={(e) => setPassCustomMcp(e.target.checked)}
-                        className="rounded border-zinc-700 bg-surface text-sky-500 focus:ring-0"
+                        className="rounded border-zinc-700 bg-surface text-purple-500 focus:ring-0"
                       />
                       <span>Pass custom MCP servers</span>
                     </label>
@@ -740,7 +732,7 @@ export function SettingsModal({
                       <select
                         value={mcpMode}
                         onChange={(e) => setMcpMode(e.target.value)}
-                        className="bg-surface border border-hairline rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-sky-500"
+                        className="bg-surface border border-hairline rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-purple-500/60"
                       >
                         <option value="On demand">On demand</option>
                         <option value="Always">Always</option>
@@ -770,7 +762,7 @@ export function SettingsModal({
                       onClick={() => setProvider("ollama")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "ollama"
-                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          ? "bg-surface-selected border-accent text-zinc-100 ring-1 ring-accent shadow-sm"
                           : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
@@ -793,7 +785,7 @@ export function SettingsModal({
                       onClick={() => setProvider("local")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "local"
-                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          ? "bg-surface-selected border-accent text-zinc-100 ring-1 ring-accent shadow-sm"
                           : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
@@ -813,7 +805,7 @@ export function SettingsModal({
                       onClick={() => setProvider("openai")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "openai"
-                          ? "bg-sky-500/15 border-sky-500/50 text-zinc-100 ring-1 ring-sky-500/40 shadow-sm"
+                          ? "bg-surface-selected border-accent text-zinc-100 ring-1 ring-accent shadow-sm"
                           : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                       }`}
                     >
@@ -846,7 +838,7 @@ export function SettingsModal({
                             ? "e.g. qwen2.5-coder-7b-instruct.gguf"
                             : "e.g. gpt-4o, claude-3-7-sonnet"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
@@ -865,7 +857,7 @@ export function SettingsModal({
                             ? "http://127.0.0.1:8080"
                             : "https://api.openai.com/v1"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
@@ -880,7 +872,7 @@ export function SettingsModal({
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                             placeholder="sk-..."
-                            className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none"
+                            className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                           />
                           <button
                             type="button"
@@ -907,7 +899,7 @@ export function SettingsModal({
                       >
                         <RefreshCw
                           className={`w-3.5 h-3.5 ${
-                            testStatus === "testing" ? "animate-spin text-sky-400" : ""
+                            testStatus === "testing" ? "animate-spin text-purple-400" : ""
                           }`}
                         />
                         <span>Test Connection</span>
@@ -985,7 +977,7 @@ export function SettingsModal({
                             npx @modelcontextprotocol/server-fetch
                           </td>
                           <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-sky-950/60 text-sky-400 border border-sky-800/40">
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-purple-950/50 text-purple-300 border border-purple-800/40">
                               Active
                             </span>
                           </td>
@@ -1029,7 +1021,7 @@ export function SettingsModal({
                           onClick={() => onApplyTheme && onApplyTheme(theme.id)}
                           className={`p-3 rounded-card border cursor-pointer transition flex flex-col justify-between ${
                             isCurrent
-                              ? "bg-sky-500/15 border-sky-500/50 ring-1 ring-sky-500/40 shadow-sm"
+                              ? "bg-purple-950/40 border-purple-500/50 ring-1 ring-purple-500/40 shadow-sm"
                               : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
                           }`}
                         >
@@ -1038,7 +1030,7 @@ export function SettingsModal({
                               {theme.name}
                             </span>
                             {isCurrent && (
-                              <span className="w-4 h-4 rounded-full bg-sky-500 flex items-center justify-center text-white">
+                              <span className="w-4 h-4 rounded-full bg-purple-600 flex items-center justify-center text-white">
                                 <Check className="w-2.5 h-2.5 stroke-[3]" />
                               </span>
                             )}
@@ -1113,7 +1105,7 @@ export function SettingsModal({
                         max={20}
                         value={fontSize}
                         onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-full accent-sky-500"
+                        className="w-full accent-purple-500"
                       />
                     </div>
 
@@ -1128,7 +1120,7 @@ export function SettingsModal({
                         step={0.1}
                         value={lineHeight}
                         onChange={(e) => setLineHeight(Number(e.target.value))}
-                        className="w-full accent-sky-500"
+                        className="w-full accent-purple-500"
                       />
                     </div>
 
@@ -1138,7 +1130,7 @@ export function SettingsModal({
                           type="checkbox"
                           checked={enableLigatures}
                           onChange={(e) => setEnableLigatures(e.target.checked)}
-                          className="rounded border-hairline text-sky-500 focus:ring-0"
+                          className="rounded border-hairline text-purple-500 focus:ring-0"
                         />
                         <span>Enable font ligatures (==, !=, =&gt;)</span>
                       </label>
@@ -1162,7 +1154,7 @@ export function SettingsModal({
                       <div className="text-zinc-500">// JetBrains Mono font sample with ligatures:</div>
                       <div>
                         <span className="text-purple-400">export function</span>{" "}
-                        <span className="text-sky-400">evaluateMetric</span>(
+                        <span className="text-purple-300 font-semibold">evaluateMetric</span>(
                         <span className="text-amber-300">items</span>: Item[]):{" "}
                         <span className="text-teal-400">boolean</span> &#123;
                       </div>
@@ -1214,7 +1206,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={insertSpaces}
                         onChange={(e) => setInsertSpaces(e.target.checked)}
-                        className="rounded border-hairline text-sky-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-500 focus:ring-0"
                       />
                     </div>
 
@@ -1224,7 +1216,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={formatOnSave}
                         onChange={(e) => setFormatOnSave(e.target.checked)}
-                        className="rounded border-hairline text-sky-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-500 focus:ring-0"
                       />
                     </div>
 
@@ -1234,7 +1226,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={wordWrap}
                         onChange={(e) => setWordWrap(e.target.checked)}
-                        className="rounded border-hairline text-sky-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-500 focus:ring-0"
                       />
                     </div>
                   </div>
@@ -1263,7 +1255,7 @@ export function SettingsModal({
                         value={shellPath}
                         onChange={(e) => setShellPath(e.target.value)}
                         placeholder="/bin/zsh"
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
                       />
                     </div>
 
@@ -1287,7 +1279,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={copyOnSelect}
                         onChange={(e) => setCopyOnSelect(e.target.checked)}
-                        className="rounded border-hairline text-sky-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-500 focus:ring-0"
                       />
                     </div>
                   </div>
@@ -1315,7 +1307,7 @@ export function SettingsModal({
                         type="text"
                         value={gitExecutablePath}
                         onChange={(e) => setGitExecutablePath(e.target.value)}
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
                       />
                     </div>
 
@@ -1327,7 +1319,7 @@ export function SettingsModal({
                         type="text"
                         value={gitDefaultBranch}
                         onChange={(e) => setGitDefaultBranch(e.target.value)}
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-sky-500 focus:outline-none"
+                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -1412,11 +1404,11 @@ export function SettingsModal({
             </div>
 
             {/* ── Dialog Action Footer Bar ──────────────────────────────────── */}
-            <div className="h-12 bg-workbench/90 border-t border-hairline px-5 flex items-center justify-between shrink-0">
+            <div className="h-12 bg-white/[0.03] backdrop-blur-xl border-t border-white/[0.08] px-5 flex items-center justify-between shrink-0">
               {/* Left Help Button */}
               <button
                 type="button"
-                className="w-7 h-7 rounded-full bg-surface hover:bg-surface-hover border border-hairline flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition shadow-elevation-1"
+                className="w-7 h-7 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] flex items-center justify-center text-zinc-400 hover:text-zinc-100 transition shadow-sm"
                 title="Help"
               >
                 <HelpCircle className="w-4 h-4" />
@@ -1427,7 +1419,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-[13px] font-medium border border-hairline transition cursor-pointer font-sans shadow-elevation-1"
+                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Cancel
                 </button>
@@ -1435,7 +1427,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="px-4 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-[13px] font-medium border border-hairline transition cursor-pointer font-sans shadow-elevation-1"
+                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Apply
                 </button>
@@ -1443,7 +1435,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleOk}
-                  className="px-5 py-1.5 rounded-[8px] bg-sky-600 hover:bg-sky-500 text-white text-[13px] font-semibold shadow-elevation-1 transition cursor-pointer font-sans"
+                  className="px-5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-[13px] font-semibold shadow-sm transition cursor-pointer font-sans"
                 >
                   OK
                 </button>
@@ -1493,8 +1485,8 @@ function TreeItem({
         style={{ paddingLeft: `${6 + level * 14}px` }}
         className={`px-2 py-1.5 rounded-[8px] flex items-center justify-between cursor-pointer transition-colors group ${
           isSelected
-            ? "bg-sky-500/15 border border-sky-500/30 text-white font-medium shadow-sm"
-            : "hover:bg-surface-hover text-zinc-300 hover:text-zinc-100"
+            ? "bg-purple-950/40 border border-purple-500/40 text-purple-200 font-medium shadow-sm"
+            : "hover:bg-white/[0.06] text-zinc-300 hover:text-zinc-100"
         }`}
       >
         <div className="flex items-center gap-1.5 min-w-0 font-sans">

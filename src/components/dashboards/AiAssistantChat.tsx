@@ -11,7 +11,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Icon } from "../ui/Icon";
-import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, Code, X, Bot, Send, Wand2, CheckCircle2, Plus, Folder, GitBranch, Sparkles } from "lucide-react";
+import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, Code, Code2, MessageSquare, ListTodo, X, Bot, Wand2, CheckCircle2, Plus, Folder, GitBranch, ArrowUp } from "lucide-react";
 import type { PipelineStatus, PipelineOutputLine } from "../TelemetryScorecard";
 import {
   getConfiguredModelsList,
@@ -42,13 +42,18 @@ interface AiAssistantChatProps {
   setPrompt: (p: string) => void;
   status: PipelineStatus;
   activityLog: PipelineOutputLine[];
-  onRunPipeline: (overrideModel?: { provider: string; model: string }) => void;
+  onRunPipeline: (request: string, overrideModel?: { provider: string; model: string }) => void;
   onCancelPipeline: () => void;
   projectRoot?: string;
   onClose?: () => void;
   onPopOutWide?: () => void;
   isWide?: boolean;
+  selectedContext?: { path: string; code: string } | null;
+  failureDetail?: string;
+  orchestrationResult?: any;
 }
+
+export type WorkflowMode = "agent" | "chat" | "plan";
 
 export function AiAssistantChat({
   prompt,
@@ -61,6 +66,9 @@ export function AiAssistantChat({
   onClose,
   onPopOutWide,
   isWide = false,
+  selectedContext = null,
+  failureDetail = "",
+  orchestrationResult = null,
 }: AiAssistantChatProps) {
 
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelItem[]>(getConfiguredModelsList());
@@ -69,21 +77,82 @@ export function AiAssistantChat({
     return list.find((m) => m.isDefault) || list[0] || null;
   });
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
   // Persistent chat history across tab switches, panel open/close, and reloads
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
     loadChatHistory(projectRoot)
   );
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
+  const [agentElapsedSeconds, setAgentElapsedSeconds] = useState(0);
+  const agentStartedAtRef = useRef<number | null>(null);
   const isStreamingRef = useRef(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const heroMenuRef = useRef<HTMLDivElement>(null);
+  const modeMenuRef = useRef<HTMLDivElement>(null);
+  const heroModeMenuRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const projectName = projectRoot ? projectRoot.split("/").filter(Boolean).pop() || "acsa-code" : "acsa-code";
+  const latestActivity = activityLog[activityLog.length - 1]?.content || "";
+  const currentAgentPhase = latestActivity.includes("syntax")
+    ? "Checking generated changes"
+    : latestActivity.includes("performance") || latestActivity.includes("sandbox")
+    ? "Running verification checks"
+    : latestActivity.includes("Written:") || latestActivity.includes("patch")
+    ? "Applying verified changes"
+    : status === "running"
+    ? "Thinking through the task"
+    : status === "success"
+    ? "Task completed"
+    : status === "failed" || status === "error"
+    ? "Task failed"
+    : "Ready";
+
+  useEffect(() => {
+    if (status !== "running") {
+      agentStartedAtRef.current = null;
+      setAgentElapsedSeconds(0);
+      return;
+    }
+    agentStartedAtRef.current ??= Date.now();
+    const timer = window.setInterval(() => {
+      setAgentElapsedSeconds(Math.floor((Date.now() - (agentStartedAtRef.current || Date.now())) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [status]);
+
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    if (prevStatusRef.current === "running" && (status === "success" || status === "failed" || status === "error")) {
+      const isSuccess = status === "success";
+      const agentMsg: ChatMessage = {
+        id: `assistant-agent-${Date.now()}`,
+        role: "assistant",
+        content: isSuccess
+          ? orchestrationResult
+            ? `### Verified Workspace Update\n\nTask successfully verified and applied in ${orchestrationResult.total_rounds ?? 1} round(s) (${Math.round(orchestrationResult.elapsed_ms ?? 0)}ms).`
+            : "Verified changes were successfully applied to the workspace."
+          : failureDetail
+          ? `⚠️ **Task Failed:** ${failureDetail}`
+          : "The task needs attention. Review Problems or Output for details.",
+        timestamp: Date.now(),
+        provider: selectedModelItem?.providerId || "ollama",
+        model: selectedModelItem?.model || "ACSA Agent",
+        error: !isSuccess,
+      };
+      setChatMessages((prev) => {
+        const next = [...prev, agentMsg];
+        saveChatHistory(next, projectRoot);
+        return next;
+      });
+    }
+    prevStatusRef.current = status;
+  }, [status, orchestrationResult, failureDetail, selectedModelItem, projectRoot]);
 
   // Sync available models and listen for global updates
   useEffect(() => {
@@ -152,12 +221,36 @@ export function AiAssistantChat({
       if (!clickedMenu && !clickedHeroMenu) {
         setIsModelMenuOpen(false);
       }
+      const clickedModeMenu = modeMenuRef.current && modeMenuRef.current.contains(target);
+      const clickedHeroModeMenu = heroModeMenuRef.current && heroModeMenuRef.current.contains(target);
+      if (!clickedModeMenu && !clickedHeroModeMenu) {
+        setIsModeMenuOpen(false);
+      }
     };
-    if (isModelMenuOpen) {
+    if (isModelMenuOpen || isModeMenuOpen) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isModelMenuOpen]);
+  }, [isModelMenuOpen, isModeMenuOpen]);
+
+  useEffect(() => {
+    const handleWorkflowRequest = (event: Event) => {
+      const mode = (event as CustomEvent<WorkflowMode>).detail;
+      setWorkflowMode(mode);
+      if (!selectedContext?.code) return;
+      const context = `\n\nSelected code from ${selectedContext.path}:\n\`\`\`\n${selectedContext.code}\n\`\`\``;
+      setPrompt(
+        mode === "agent"
+          ? `Edit the selected code to make it more readable. Preserve behavior and write the change to ${selectedContext.path}.${context}`
+          : mode === "plan"
+          ? `Help me design and plan architectural improvements or changes for this selected code.${context}`
+          : `Help me understand this selected code.${context}`
+      );
+      textareaRef.current?.focus();
+    };
+    window.addEventListener("acsa:ai-workflow", handleWorkflowRequest);
+    return () => window.removeEventListener("acsa:ai-workflow", handleWorkflowRequest);
+  }, [selectedContext, setPrompt]);
 
   // Scroll chat bottom on new messages or logs
   useEffect(() => {
@@ -169,14 +262,10 @@ export function AiAssistantChat({
     const trimmed = textToSend.trim();
     if (!trimmed) return;
 
-    // Determine intent from prompt
-    const isAgentIntent =
-      trimmed.startsWith("/") ||
-      /^(refactor|build|generate|create)\b/i.test(trimmed);
-
-    if (isAgentIntent) {
+    if (workflowMode === "agent") {
       if (status === "running") return;
       onRunPipeline(
+        trimmed,
         selectedModelItem
           ? {
               provider: selectedModelItem.providerId,
@@ -250,10 +339,22 @@ export function AiAssistantChat({
     const providers = loadAllProviders();
     const activeProvider = providers[selectedModelItem.providerId];
 
+    const outgoingMessages: Array<{ role: "user" | "assistant" | "system"; content: string }> =
+      workflowMode === "plan"
+        ? [
+            {
+              role: "system" as const,
+              content:
+                "You are an expert software architect and engineering planner in ACSA Code. Your objective is to help the user plan, architect, brainstorm, and evaluate technical trade-offs before writing or editing code. Structure your response with: Requirements Breakdown, Architecture & Trade-offs, Step-by-Step Implementation Plan, Edge Cases to Consider, and Verification Strategies.",
+            },
+            ...nextHistory.map((m) => ({ role: m.role, content: m.content })),
+          ]
+        : nextHistory.map((m) => ({ role: m.role, content: m.content }));
+
     await streamChatCompletion({
       provider: selectedModelItem.providerId,
       model: selectedModelItem.model,
-      messages: nextHistory.map((m) => ({ role: m.role, content: m.content })),
+      messages: outgoingMessages,
       projectRoot,
       baseUrl: activeProvider?.baseUrl,
       apiKey: activeProvider?.apiKey,
@@ -387,22 +488,98 @@ export function AiAssistantChat({
     </div>
   );
 
+  const renderModeMenu = (isCenterHero: boolean) => (
+    <div
+      className={`absolute ${
+        isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
+      } w-60 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
+    >
+      {/* Option 1: Agent (Default) */}
+      <button
+        type="button"
+        onClick={() => {
+          setWorkflowMode("agent");
+          setIsModeMenuOpen(false);
+        }}
+        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-all ${
+          workflowMode === "agent"
+            ? "border border-purple-500/60 bg-purple-950/40 text-purple-200 font-medium shadow-sm"
+            : "border border-transparent text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
+        }`}
+        title="Autonomous multi-step code generation & verification gauntlet (Shift+Cmd+I)"
+      >
+        <div className="flex items-center gap-2">
+          <Icon icon={Code2} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          <span className="font-medium">Agent</span>
+        </div>
+        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⇧⌘I</span>
+      </button>
+
+      {/* Option 2: Ask / Chat */}
+      <button
+        type="button"
+        onClick={() => {
+          setWorkflowMode("chat");
+          setIsModeMenuOpen(false);
+        }}
+        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-all ${
+          workflowMode === "chat"
+            ? "border border-purple-500/60 bg-purple-950/40 text-purple-200 font-medium shadow-sm"
+            : "border border-transparent text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
+        }`}
+        title="Conversational chat, code explanations & questions (Cmd+L)"
+      >
+        <div className="flex items-center gap-2">
+          <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          <span className="font-medium">Ask</span>
+        </div>
+        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⌘L</span>
+      </button>
+
+      {/* Option 3: Plan / Brainstorm */}
+      <button
+        type="button"
+        onClick={() => {
+          setWorkflowMode("plan");
+          setIsModeMenuOpen(false);
+        }}
+        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-all ${
+          workflowMode === "plan"
+            ? "border border-amber-500/60 bg-amber-950/40 text-amber-200 font-medium shadow-sm"
+            : "border border-transparent text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
+        }`}
+        title="Architectural planning, task breakdown & brainstorming (Shift+Cmd+P)"
+      >
+        <div className="flex items-center gap-2">
+          <Icon icon={ListTodo} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="font-medium">Plan</span>
+        </div>
+        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⇧⌘P</span>
+      </button>
+
+      <div className="border-t border-zinc-800/80 my-1" />
+
+      {/* Option 4: Configure Custom Agent */}
+      <button
+        type="button"
+        onClick={() => {
+          setIsModeMenuOpen(false);
+          openAiManagementDashboard();
+        }}
+        className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 font-sans transition-colors"
+      >
+        Configure Custom Agent...
+      </button>
+    </div>
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-[#141416] text-zinc-200 font-sans select-none overflow-hidden border-l border-[var(--vscode-border)]">
-      {/* ── Header: Title, Mode Indicator, Pop-out, Close ────────────────── */}
+      {/* ── Header: Title, Pop-out, Close ───────────────────────────────── */}
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans">
         <div className="flex items-center gap-2">
-          <Icon icon={Bot} className="w-4 h-4 text-sky-400" />
+          <Icon icon={Bot} className="w-4 h-4 text-purple-400" />
           <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">AI Assistant</span>
-          {isWide ? (
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-400 font-medium">
-              Center Stage
-            </span>
-          ) : (
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-800/80 border border-zinc-700/50 text-zinc-400">
-              Side Dock
-            </span>
-          )}
         </div>
 
         <div className="flex items-center gap-1">
@@ -454,7 +631,7 @@ export function AiAssistantChat({
                   <div className="flex items-center justify-between px-1 text-xs text-zinc-400">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
-                        <Icon icon={Folder} className="w-3 h-3 text-sky-400" />
+                        <Icon icon={Folder} className="w-3 h-3 text-purple-400" />
                         <span className="font-mono text-[11px]">{projectName}</span>
                       </div>
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
@@ -481,7 +658,13 @@ export function AiAssistantChat({
                           void handleSend();
                         }
                       }}
-                      placeholder="Ask anything, / for commands, @ for context"
+                      placeholder={
+                        workflowMode === "agent"
+                          ? "Describe a task for the agent to build, edit, or test… (Enter to run)"
+                          : workflowMode === "plan"
+                          ? "Brainstorm an architectural plan or discuss design decisions… (Enter)"
+                          : "Ask anything, / for commands, @ for context (Enter to send)"
+                      }
                       rows={3}
                       className="w-full bg-transparent border-0 text-sm text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-1"
                     />
@@ -492,27 +675,47 @@ export function AiAssistantChat({
                         <button
                           type="button"
                           onClick={() => handleQuickAction("Explain codebase structure and key modules")}
-                          className="p-1.5 rounded-lg bg-zinc-800/60 hover:bg-zinc-700/60 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 transition-colors"
+                          className="p-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 transition-colors"
                           title="Add Context / Actions"
                         >
                           <Icon icon={Plus} className="w-3.5 h-3.5" />
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => openAiManagementDashboard()}
-                          className="p-1.5 rounded-lg bg-zinc-800/60 hover:bg-zinc-700/60 border border-zinc-700/50 text-zinc-400 hover:text-zinc-200 transition-colors"
-                          title="Model Management & Tuning"
-                        >
-                          <Icon icon={Sparkles} className="w-3.5 h-3.5 text-purple-400" />
-                        </button>
+                        {/* Mode Selector Pill */}
+                        <div className="relative" ref={heroModeMenuRef}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsModeMenuOpen((prev) => !prev);
+                              setIsModelMenuOpen(false);
+                            }}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs font-medium transition-all shadow-sm ${
+                              workflowMode === "agent"
+                                ? "text-purple-300"
+                                : workflowMode === "plan"
+                                ? "text-amber-300"
+                                : "text-purple-300"
+                            }`}
+                            title={`Current mode: ${workflowMode.toUpperCase()} (Click to switch)`}
+                          >
+                            <span className="font-sans text-[11px] font-medium capitalize">
+                              {workflowMode === "chat" ? "Ask" : workflowMode === "plan" ? "Plan" : "Agent"}
+                            </span>
+                            <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 ml-0.5" />
+                          </button>
+
+                          {isModeMenuOpen && renderModeMenu(true)}
+                        </div>
 
                         {/* Model Selector Pill */}
                         <div className="relative" ref={heroMenuRef}>
                           <button
                             type="button"
-                            onClick={() => setIsModelMenuOpen((prev) => !prev)}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700/60 text-xs text-zinc-200 font-medium transition-all shadow-sm"
+                            onClick={() => {
+                              setIsModelMenuOpen((prev) => !prev);
+                              setIsModeMenuOpen(false);
+                            }}
+                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 font-medium transition-all shadow-sm"
                           >
                             <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
                             <span className="font-mono text-[11px]">{selectedModelItem?.model || "Select Model"}</span>
@@ -521,21 +724,20 @@ export function AiAssistantChat({
 
                           {isModelMenuOpen && renderModelMenu(true)}
                         </div>
-
-                        {/* Speed badge */}
-                        <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-800/40 border border-zinc-700/40 text-[11px] font-mono text-zinc-400">
-                          <span>High · Fast</span>
-                        </div>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => handleSend()}
                         disabled={!prompt.trim()}
-                        className="flex items-center justify-center w-8 h-8 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:hover:bg-purple-600 text-white shadow-md transition-all"
-                        title="Send (Enter)"
+                        className={`flex items-center justify-center w-8 h-8 rounded-xl transition-all shadow-sm ${
+                          prompt.trim()
+                            ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20"
+                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                        }`}
+                        title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
                       >
-                        <Icon icon={Send} className="w-4 h-4" />
+                        <Icon icon={ArrowUp} className="w-4 h-4 stroke-[2.5]" />
                       </button>
                     </div>
                   </div>
@@ -556,7 +758,7 @@ export function AiAssistantChat({
                       onClick={() => handleQuickAction("Explain the architecture and main components of this codebase.")}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800 text-xs text-zinc-300 hover:text-white transition-all group"
                     >
-                      <Icon icon={Code} className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+                      <Icon icon={Code} className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
                       <span>Explain project architecture</span>
                     </button>
 
@@ -576,9 +778,9 @@ export function AiAssistantChat({
               <div className="space-y-5 max-w-xl mx-auto py-2">
                 <div>
                   <h2 className="text-sm font-bold text-zinc-100 tracking-tight flex items-center gap-2">
-                    <span>ACSA Code AI Chat</span>
+                    <span>ACSA Code AI Assistant</span>
                     {selectedModelItem?.model && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 text-purple-300">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60 text-zinc-300">
                         {selectedModelItem.model}
                       </span>
                     )}
@@ -614,7 +816,7 @@ export function AiAssistantChat({
                       className="w-full flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800/80 text-left transition-all group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Icon icon={Code} className="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <Icon icon={Code} className="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
                         <span className="text-xs font-medium text-zinc-200 group-hover:text-zinc-100 truncate">
                           Explain project architecture & key files
                         </span>
@@ -651,21 +853,33 @@ export function AiAssistantChat({
                     msg.role === "user" ? "items-end" : "items-start"
                   }`}
                 >
-                  {/* Role Header */}
+                  {/* Role Header with Model, Provider & Timestamp */}
                   <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400">
                     {msg.role === "user" ? (
                       <>
                         <span className="font-semibold text-zinc-300">You</span>
                         <Icon icon={User} className="w-3 h-3 text-zinc-400" />
+                        {msg.timestamp && (
+                          <span className="text-[9px] font-mono text-zinc-500 ml-1">
+                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
                       </>
                     ) : (
                       <>
                         {msg.provider ? (
-                          <ProviderLogo providerId={msg.provider} className="w-3 h-3" />
+                          <ProviderLogo providerId={msg.provider} className="w-3.5 h-3.5 shrink-0" />
                         ) : (
-                          <Icon icon={Bot} className="w-3 h-3 text-zinc-400" />
+                          <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                         )}
-                        <span className="font-semibold text-purple-300">{msg.model || "AI Assistant"}</span>
+                        <span className="font-semibold text-purple-300 font-mono text-[11px]">
+                          {msg.model || "AI Assistant"}
+                        </span>
+                        {msg.timestamp && (
+                          <span className="text-[9px] font-mono text-zinc-500 ml-1">
+                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
@@ -674,7 +888,7 @@ export function AiAssistantChat({
                   <div
                     className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
                       msg.role === "user"
-                        ? "bg-purple-950/40 border border-purple-500/30 text-purple-100 rounded-tr-sm"
+                        ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 rounded-tr-sm shadow-sm"
                         : msg.error
                         ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
                         : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
@@ -688,54 +902,31 @@ export function AiAssistantChat({
           )}
         </>
 
-        {/* ── 2. Agent Gauntlet Mode Content ────────────────────────────── */}
-        {activityLog.length > 0 && (
-          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 font-sans mt-8 border-t border-zinc-800 pt-6" : "space-y-4 font-sans mt-8 border-t border-zinc-800 pt-6"}>
-            <div className="p-3 rounded-xl bg-sky-950/20 border border-sky-500/30 text-xs text-sky-200/90">
-              <span className="font-bold text-white flex items-center gap-1.5">
-                <Icon icon={Wand2} className="w-3.5 h-3.5 text-sky-400" />
-                Autonomous Verification Gauntlet
-              </span>
-              <p className="mt-1 text-[11px] text-zinc-300">
-                Executes multi-round self-healing code generation, runs physical syntax/performance gates, and applies atomic patches to files.
-              </p>
-            </div>
-
-            <div className="space-y-3 font-sans">
-              <div className="flex items-center justify-between pb-2 border-b border-zinc-800 text-xs">
-                <div className="flex items-center gap-1.5 font-semibold text-zinc-200">
-                  <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5" />
-                  <span>Engine Output: {selectedModelItem?.model || "AI Gauntlet"}</span>
+        {/* ── 2. Agent Progress Summary ─────────────────────────────────── */}
+        {(status === "running" || activityLog.length > 0) && (
+          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full mt-8" : "mt-8"}>
+            <div className="rounded-xl bg-purple-950/30 border border-purple-500/30 p-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Icon
+                    icon={status === "success" ? CheckCircle2 : status === "failed" || status === "error" ? X : Wand2}
+                    className={`w-3.5 h-3.5 shrink-0 ${status === "success" ? "text-emerald-400" : status === "failed" || status === "error" ? "text-red-400" : "text-purple-400"}`}
+                  />
+                  <span className="font-semibold text-zinc-100 truncate">{currentAgentPhase}</span>
                 </div>
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
-                    status === "running"
-                      ? "bg-sky-500/20 text-sky-400 animate-pulse"
-                      : status === "success"
-                      ? "bg-emerald-500/20 text-emerald-400"
-                      : "bg-red-500/20 text-red-400"
-                  }`}
-                >
-                  {status.toUpperCase()}
+                <span className="text-[10px] font-mono uppercase text-zinc-400 shrink-0">
+                  {status === "running" ? `${agentElapsedSeconds}s · In background` : status}
                 </span>
               </div>
-
-              <div className="space-y-1 font-mono text-[11px]">
-                {activityLog.map((line, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-2 rounded-lg border transition-colors break-words ${
-                      line.stream === "stderr"
-                        ? "bg-red-950/20 border-red-500/30 text-red-300"
-                        : line.content.startsWith("---") || line.content.startsWith("@@")
-                        ? "bg-sky-950/20 border-sky-500/30 text-sky-300"
-                        : "bg-zinc-900/60 border-zinc-800/80 text-zinc-200"
-                    }`}
-                  >
-                    {line.content}
-                  </div>
-                ))}
-              </div>
+              <p className="mt-1.5 text-[11px] text-zinc-400">
+                {status === "running"
+                  ? "The agent is working in the background. Internal reasoning and verification output are available in the Output panel."
+                  : status === "success"
+                  ? "Verified changes were applied to the workspace."
+                  : status === "failed" || status === "error"
+                  ? failureDetail || "The task needs attention. Review Problems or Output for details."
+                  : "Background task finished."}
+              </p>
             </div>
           </div>
         )}
@@ -746,8 +937,9 @@ export function AiAssistantChat({
       {/* ── Input Box & Controls (Only shown when not in empty Center Stage mode) ── */}
       {(!isWide || chatMessages.length > 0) && (
         <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
-          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-2.5" : "space-y-2"}>
-            <div className="relative">
+          <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
+            {/* Unified Omnibar Input Card */}
+            <div className="relative rounded-2xl bg-zinc-900/90 border border-zinc-800/90 focus-within:border-purple-500/50 focus-within:ring-1 focus-within:ring-purple-500/20 p-2.5 transition-all shadow-lg">
               <textarea
                 ref={textareaRef}
                 value={prompt}
@@ -758,52 +950,107 @@ export function AiAssistantChat({
                     void handleSend();
                   }
                 }}
-                placeholder={`Ask ${selectedModelItem?.model || "AI"} anything, or describe a task (Shift+Enter for new line)…`}
+                placeholder={
+                  workflowMode === "agent"
+                    ? "Describe a task for the agent to build, edit, or test… (Enter to run)"
+                    : workflowMode === "plan"
+                    ? "Brainstorm an architectural plan or discuss design decisions… (Enter)"
+                    : `Ask ${selectedModelItem?.model || "AI"} anything… (Shift+Enter for new line)`
+                }
                 rows={2}
-                className="w-full bg-zinc-900/90 border border-zinc-800 focus:border-purple-500 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans transition-all"
+                className="w-full bg-transparent border-0 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-0.5"
               />
-            </div>
 
-            <div className="flex items-center justify-between gap-2">
-              {/* Model Selector Dropdown Button */}
-              <div className="relative" ref={menuRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsModelMenuOpen((prev) => !prev)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-200 transition-colors"
-                >
-                  <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
-                  <span className="font-mono text-[11px] truncate max-w-[120px]">
-                    {selectedModelItem?.model || "Select Model"}
-                  </span>
-                  <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
-                </button>
-
-                {isModelMenuOpen && renderModelMenu(false)}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-1.5">
-                {(isStreaming || status === "running") ? (
+              {/* Bottom control strip inside card */}
+              <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-zinc-800/70 mt-1">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {/* Context / Actions + Button */}
                   <button
                     type="button"
-                    onClick={handleStopStream}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-xs font-semibold text-red-300 transition-colors"
+                    onClick={() => {
+                      handleQuickAction("Analyze current workspace context and recent modifications");
+                    }}
+                    className="p-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
+                    title="Add Context / Actions"
                   >
-                    <Icon icon={Square} className="w-3.5 h-3.5" />
-                    <span>Stop</span>
+                    <Icon icon={Plus} className="w-3.5 h-3.5" />
                   </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => handleSend()}
-                    disabled={!prompt.trim()}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40`}
-                  >
-                    <Icon icon={Send} className="w-3 h-3" />
-                    <span>Send</span>
-                  </button>
-                )}
+
+                  {/* Mode Selector Pill Button */}
+                  <div className="relative shrink-0" ref={modeMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsModeMenuOpen((prev) => !prev);
+                        setIsModelMenuOpen(false);
+                      }}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs font-medium transition-all ${
+                        workflowMode === "agent"
+                          ? "text-purple-300 hover:text-purple-200"
+                          : workflowMode === "plan"
+                          ? "text-amber-300 hover:text-amber-200"
+                          : "text-purple-300 hover:text-purple-200"
+                      }`}
+                      title={`Current Mode: ${workflowMode.toUpperCase()} (Click to switch)`}
+                    >
+                      <span className="font-sans text-[11px] font-medium capitalize">
+                        {workflowMode === "chat" ? "Ask" : workflowMode === "plan" ? "Plan" : "Agent"}
+                      </span>
+                      <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 ml-0.5" />
+                    </button>
+
+                    {isModeMenuOpen && renderModeMenu(false)}
+                  </div>
+
+                  {/* Model Selector Dropdown Button */}
+                  <div className="relative min-w-0 max-w-[150px]" ref={menuRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsModelMenuOpen((prev) => !prev);
+                        setIsModeMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 transition-colors"
+                      title={selectedModelItem?.model || "Select Model"}
+                    >
+                      <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
+                      <span className="font-mono text-[10px] truncate">
+                        {selectedModelItem?.model || "Model"}
+                      </span>
+                      <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 shrink-0 ml-auto" />
+                    </button>
+
+                    {isModelMenuOpen && renderModelMenu(false)}
+                  </div>
+                </div>
+
+                {/* Right: Send / Stop icon button */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {(isStreaming || status === "running") ? (
+                    <button
+                      type="button"
+                      onClick={handleStopStream}
+                      className="flex items-center justify-center w-7 h-7 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 transition-colors shadow-sm"
+                      title="Stop Generation"
+                    >
+                      <Icon icon={Square} className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleSend()}
+                      disabled={!prompt.trim()}
+                      className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all shadow-sm shrink-0 ${
+                        prompt.trim()
+                          ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20"
+                          : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                      }`}
+                      title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
+                    >
+                      <Icon icon={ArrowUp} className="w-3.5 h-3.5 stroke-[2.5]" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

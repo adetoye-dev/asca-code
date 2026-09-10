@@ -146,7 +146,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <button
                   type="button"
                   onClick={this.handleReload}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-primary-action hover:bg-primary-action text-white text-xs font-semibold shadow-sm transition cursor-pointer"
                 >
                   <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
                   <span>Reload Workbench</span>

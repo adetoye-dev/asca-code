@@ -422,7 +422,27 @@ def _eslint_argv(targets: list[str]) -> list[str]:
     return ["eslint", "--format=json", "--no-color", *targets]
 
 def _tsc_argv(targets: list[str]) -> list[str]:
-    return ["tsc", "--noEmit", "--pretty", "false", *targets]
+    # Explicit target files do not inherit tsconfig compiler options. Keep staged
+    # TS/TSX files type-checkable without requiring the temporary directory to
+    # contain the project's config file.
+    return [
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--jsx",
+        "react-jsx",
+        "--target",
+        "ES2022",
+        "--module",
+        "ESNext",
+        "--moduleResolution",
+        "bundler",
+        "--esModuleInterop",
+        "--allowSyntheticDefaultImports",
+        "--skipLibCheck",
+        *targets,
+    ]
 
 
 LINTER_REGISTRY: dict[str, dict] = {

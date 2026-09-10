@@ -1,2 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="xAI"><title>xAI</title><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993l-9.508-13.838zm-2.837 3.3-.929-1.33L3.076 1.56h3.182l5.96 8.528.929 1.33 7.747 11.082h-3.182l-6.315-9.038z" fill="#FFFFFF"></path></svg>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <defs/>
+    <path fill="#ffffff" stroke="none" d="M 2.3 8.776 L 12.047 23 L 16.38 23 L 6.632 8.776 Z M 6.629 16.676 L 2.295 23 L 6.63 23 L 8.795 19.839 Z M 17.37 1 L 9.88 11.93 L 12.046 15.093999 L 21.707 1 Z M 18.155 7.764 L 18.155 23 L 21.705002 23 L 21.705002 2.582 Z"/>
+</svg>

@@ -103,7 +103,7 @@ export function ProjectModal({
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+            <div className="w-8 h-8 rounded-lg bg-surface-selected border border-accent flex items-center justify-center text-accent">
               <Icon icon={FolderPlus} className="w-4 h-4" />
             </div>
             <div>
@@ -135,7 +135,7 @@ export function ProjectModal({
               placeholder="e.g. user-auth-service"
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500"
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
             />
           </div>
 
@@ -150,14 +150,14 @@ export function ProjectModal({
                 placeholder="e.g. ~/Desktop or /Users/.../Projects"
                 value={parentDir}
                 onChange={(e) => setParentDir(e.target.value)}
-                className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500"
+                className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
               />
               <button
                 type="button"
                 onClick={handleBrowse}
-                className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+                className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
               >
-                <Icon icon={Search} className="w-3.5 h-3.5 text-sky-400" />
+                <Icon icon={Search} className="w-3.5 h-3.5 text-primary-icon" />
                 <span>Browse...</span>
               </button>
             </div>
@@ -178,14 +178,14 @@ export function ProjectModal({
                     onClick={() => setSelectedTemplate(tmpl.id)}
                     className={`flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${
                       isSelected
-                        ? "bg-sky-500/10 border-sky-500/50 text-white shadow-sm"
+                        ? "bg-surface-selected border-accent text-white shadow-sm"
                         : "bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
                     }`}
                   >
                     <div
                       className={`p-2 rounded-lg shrink-0 mt-0.5 ${
                         isSelected
-                          ? "bg-sky-500 text-white"
+                          ? "bg-primary-action text-white"
                           : "bg-zinc-800 text-zinc-400"
                       }`}
                     >
@@ -231,7 +231,7 @@ export function ProjectModal({
               disabled={!projectName.trim()}
               className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-lg transition-all ${
                 projectName.trim()
-                  ? "bg-sky-600 hover:bg-sky-500 cursor-pointer shadow-sky-600/20"
+                  ? "bg-primary-action hover:bg-primary-action cursor-pointer shadow-sm"
                   : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
               }`}
             >

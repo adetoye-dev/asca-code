@@ -230,12 +230,12 @@ export function VersionControlDropdown({
         onClick={() => setIsOpen(!isOpen)}
         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-pill border transition-all text-xs font-medium ${
           isOpen
-            ? "bg-surface border-zinc-500 text-white shadow-elevation-1"
+            ? "bg-surface-active border-hairline text-white shadow-elevation-1"
             : "bg-workbench hover:bg-surface border-hairline text-zinc-200 hover:text-white"
         }`}
         title={`Git Branch: ${activeBranch}`}
       >
-        <Icon icon={GitBranch} size="xs" className="text-sky-400 shrink-0" />
+        <Icon icon={GitBranch} size="xs" className="text-zinc-400 shrink-0" />
         <span className="truncate max-w-[120px] font-mono text-xs">{activeBranch}</span>
 
         {/* 5-glyph status indicator */}
@@ -262,7 +262,7 @@ export function VersionControlDropdown({
           {/* Header Info */}
           <div className="flex items-center justify-between p-2 pb-1.5 border-b border-hairline">
             <div className="flex items-center gap-1.5">
-              <Icon icon={GitBranch} size="sm" className="text-sky-400" />
+              <Icon icon={GitBranch} size="sm" className="text-zinc-300" />
               <span className="font-semibold text-zinc-100 text-[13px] truncate font-mono">{activeBranch}</span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -288,7 +288,7 @@ export function VersionControlDropdown({
               onClick={handlePull}
               className="py-1.5 px-2.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-hairline disabled:opacity-50"
             >
-              <Icon icon={ChevronDown} size="xs" className="text-sky-400" />
+              <Icon icon={ChevronDown} size="xs" className="text-zinc-300" />
               <span>Pull</span>
             </button>
             <button
@@ -305,7 +305,7 @@ export function VersionControlDropdown({
           {/* Status Message */}
           {actionMsg && (
             <div className="mx-1 p-2 rounded-[8px] bg-workbench border border-hairline text-xs text-zinc-200 font-mono flex items-start gap-1.5">
-              <Icon icon={Info} size="xs" className="text-sky-400 shrink-0 mt-0.5" />
+              <Icon icon={Info} size="xs" className="text-zinc-400 shrink-0 mt-0.5" />
               <span className="break-all">{actionMsg}</span>
             </div>
           )}
@@ -338,7 +338,7 @@ export function VersionControlDropdown({
                 <button
                   type="button"
                   onClick={handleCreateBranch}
-                  className="px-2.5 py-1 rounded-[4px] bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition-colors"
+                  className="px-2.5 py-1 rounded-[4px] bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-600 font-semibold text-xs transition-colors"
                 >
                   Create
                 </button>
@@ -364,18 +364,18 @@ export function VersionControlDropdown({
                     }}
                     className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-[8px] cursor-pointer transition-colors text-[13px] text-left ${
                       isCurrent
-                        ? "bg-sky-500/15 text-sky-300 font-medium"
+                        ? "bg-zinc-800/90 text-zinc-100 font-medium"
                         : "hover:bg-surface-hover text-zinc-300 hover:text-zinc-100"
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate">
                       <Icon icon={GitBranch}
                         size="xs"
-                        className={isCurrent ? "text-sky-400" : "text-zinc-400"}
+                        className={isCurrent ? "text-zinc-200" : "text-zinc-400"}
                       />
                       <span className="truncate font-mono text-xs">{b.name}</span>
                     </div>
-                    {isCurrent && <Icon icon={Check} size="xs" className="text-sky-400 shrink-0" />}
+                    {isCurrent && <Icon icon={Check} size="xs" className="text-zinc-200 shrink-0" />}
                   </button>
                 );
               })}

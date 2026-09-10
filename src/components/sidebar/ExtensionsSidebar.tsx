@@ -100,14 +100,14 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
       <div className="p-3 border-b border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-zinc-300">
-            <Icon icon={Package} className="w-4 h-4 text-sky-400" />
+            <Icon icon={Package} className="w-4 h-4 text-primary-icon" />
             <span>Extensions</span>
           </div>
 
           <button
             type="button"
             onClick={() => setShowSettingsModal(true)}
-            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-medium border border-zinc-750 transition-colors"
+            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-medium border border-zinc-700/60 transition-colors"
             title="Import VS Code settings.json"
           >
             Import Settings
@@ -122,7 +122,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search Open VSX Extensions..."
-            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
           />
         </div>
 
@@ -133,7 +133,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
             onClick={() => setFilter("all")}
             className={`px-2 py-0.5 rounded transition-colors ${
               filter === "all"
-                ? "bg-sky-500/20 text-sky-400 font-semibold"
+                ? "bg-surface-selected text-accent font-semibold"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
@@ -144,7 +144,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
             onClick={() => setFilter("installed")}
             className={`px-2 py-0.5 rounded transition-colors ${
               filter === "installed"
-                ? "bg-sky-500/20 text-sky-400 font-semibold"
+                ? "bg-surface-selected text-accent font-semibold"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
@@ -234,7 +234,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
                     className={`flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-semibold transition-colors ${
                       ext.installed
                         ? "bg-zinc-800 hover:bg-red-950/60 text-zinc-300 hover:text-red-400 border border-zinc-700 hover:border-red-800"
-                        : "bg-sky-600 hover:bg-sky-500 text-white shadow-sm"
+                        : "bg-primary-action hover:bg-primary-action/90 text-white shadow-sm"
                     }`}
                   >
                     {ext.installed ? (
@@ -262,7 +262,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
           <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-2xl space-y-4 text-xs">
             <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
               <div className="flex items-center gap-2 font-bold text-zinc-100">
-                <Icon icon={FileText} className="w-4 h-4 text-sky-400" />
+                <Icon icon={FileText} className="w-4 h-4 text-purple-400" />
                 <span>Import VS Code settings.json</span>
               </div>
               <button
@@ -283,7 +283,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
               value={settingsInput}
               onChange={(e) => setSettingsInput(e.target.value)}
               placeholder={`{\n  "editor.fontSize": 14,\n  "editor.tabSize": 2,\n  "workbench.colorTheme": "Dracula"\n}`}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 font-mono text-xs text-zinc-200 focus:outline-none focus:border-sky-500 resize-none"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 font-mono text-xs text-zinc-200 focus:outline-none focus:border-purple-500/60 resize-none"
             />
 
             {settingsStatus && (
@@ -309,7 +309,7 @@ export function ExtensionsSidebar({ onApplyTheme, activeThemeId }: ExtensionsSid
               <button
                 type="button"
                 onClick={handleImportSettings}
-                className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold"
+                className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold"
               >
                 Apply Settings
               </button>

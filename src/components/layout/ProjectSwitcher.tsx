@@ -291,9 +291,9 @@ export function ProjectSwitcher({
                     onMouseEnter={() => setFocusedIndex(itemIndex)}
                     className={`w-full flex items-start gap-2.5 p-2 rounded-[8px] cursor-pointer transition-all ${
                       isActive && isFocused
-                        ? "bg-sky-500/25 border border-sky-400 text-white ring-1 ring-sky-400/60 shadow-sm"
+                        ? "bg-zinc-800/90 border border-zinc-600 text-white ring-1 ring-white/10 shadow-sm"
                         : isActive
-                        ? "bg-sky-500/15 border border-sky-500/30 text-white shadow-sm"
+                        ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 shadow-sm"
                         : isFocused
                         ? "bg-surface-hover text-white ring-1 ring-white/10"
                         : "hover:bg-surface-hover text-zinc-300"
@@ -302,7 +302,7 @@ export function ProjectSwitcher({
                     {/* Badge */}
                     <div
                       className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs shrink-0 mt-0.5 ${
-                        isActive ? "bg-emerald-600" : "bg-zinc-700 text-zinc-300"
+                        isActive ? "bg-zinc-600" : "bg-zinc-700 text-zinc-300"
                       }`}
                     >
                       {getInitial(p.name)}
@@ -313,7 +313,7 @@ export function ProjectSwitcher({
                         <span className="font-medium text-[13px] text-zinc-100 truncate">
                           {p.name}
                         </span>
-                        {isActive && <Icon icon={Check} size="xs" className="text-sky-400 shrink-0" />}
+                        {isActive && <Icon icon={Check} size="xs" className="text-zinc-200 shrink-0" />}
                       </div>
                       {formatPath(p.path) ? (
                         <div className="text-xs text-zinc-400 truncate mt-0.5 font-mono">

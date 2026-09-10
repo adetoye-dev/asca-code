@@ -91,11 +91,11 @@ logger.setLevel(logging.INFO)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MAX_CORRECTION_ROUNDS = 5
+MAX_CORRECTION_ROUNDS = 3
 CONTEXT_CARD_MAX_TOKENS = 2000
 LLM_DEFAULT_HOST = "127.0.0.1"
 LLM_DEFAULT_PORT = 8080
-LLM_REQUEST_TIMEOUT = 120
+LLM_REQUEST_TIMEOUT = 45
 
 
 # ── Data Structures ──────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ def _call_llm(
     port: int = LLM_DEFAULT_PORT,
     timeout: int = LLM_REQUEST_TIMEOUT,
     temperature: float = 0.2,
-    max_tokens: int = 4096,
+    max_tokens: int = 2048,
 ) -> Optional[str]:
     """Send a completion request to the chosen LLM provider (llama.cpp, Ollama, OpenAI API).
 
@@ -316,6 +316,9 @@ def _call_llm(
                 "content": (
                     "You are a precise code generation engine. "
                     "Emit ONLY unified diff patches. "
+                    "Make the smallest possible edit. Never rewrite an entire file "
+                    "when a focused hunk is sufficient, and never invent files or paths "
+                    "not present in the provided context. "
                     "Do not emit explanations, markdown fences, or commentary. "
                     "Each patch must be a valid unified diff starting with --- and +++."
                 ),
@@ -672,6 +675,20 @@ def _write_patches_to_staging(
     seen: set[str] = set()
     root_resolved = Path(project_root).resolve() if project_root else None
 
+    if root_resolved and root_resolved.exists():
+        shutil.copytree(
+            root_resolved,
+            staging_dir,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                ".git", ".tauri", "dist", "build", "node_modules", "__pycache__", ".venv", ".acsa", ".*_cache", "*_cache"
+            ),
+        )
+        dependencies = root_resolved / "node_modules"
+        staged_dependencies = Path(staging_dir) / "node_modules"
+        if dependencies.exists() and not staged_dependencies.exists():
+            staged_dependencies.symlink_to(dependencies, target_is_directory=True)
+
     for patch in patches:
         patch_resolved = Path(patch.file_path).resolve()
         if root_resolved:
@@ -750,9 +767,87 @@ def build_initial_prompt(
     return "\n\n".join(sections)
 
 
+def collect_project_context(project_root: str, user_request: str) -> dict[str, str]:
+    """Collect and incrementally cache a small, relevant project context set."""
+    root = Path(project_root).resolve()
+    if not root.exists():
+        return {}
+
+    index_path = root / ".acsa" / "context-index.json"
+    cached: dict[str, dict[str, object]] = {}
+    try:
+        cached = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        cached = {}
+
+    request_terms = {
+        term.lower()
+        for term in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", user_request)
+        if term.lower() not in {"please", "remove", "make", "this", "that", "from", "with"}
+    }
+    candidates: list[tuple[int, str, str]] = []
+    allowed_suffixes = {".ts", ".tsx", ".js", ".jsx", ".py", ".css", ".html", ".json", ".yaml", ".yml", ".md"}
+    ignored_parts = {".git", "node_modules", "dist", "build", ".venv", "__pycache__", ".tauri", ".acsa", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+            continue
+        if any(part in ignored_parts for part in path.parts):
+            continue
+        relative = path.relative_to(root).as_posix()
+        try:
+            stat = path.stat()
+            cache_entry = cached.get(relative, {})
+            if cache_entry.get("mtime_ns") == stat.st_mtime_ns and cache_entry.get("size") == stat.st_size:
+                content = str(cache_entry.get("content", ""))
+            else:
+                content = path.read_text(encoding="utf-8")
+                if len(content) > 200_000:
+                    continue
+                cached[relative] = {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "content": content}
+        except (OSError, UnicodeDecodeError):
+            continue
+        if len(content) > 200_000:
+            continue
+
+        lower_content = content.lower()
+        score = sum(lower_content.count(term) for term in request_terms)
+        score += sum(3 for term in request_terms if term in relative.lower())
+        if relative.startswith("src/"):
+            score += 2
+        candidates.append((score, relative, content))
+
+    contexts: dict[str, str] = {}
+    remaining = 24000
+    for score, relative, content in sorted(candidates, key=lambda item: (-item[0], item[1])):
+        if remaining <= 0 or (score == 0 and contexts):
+            break
+        if score > 0:
+            snippets = []
+            for term in request_terms:
+                index = content.lower().find(term)
+                if index >= 0:
+                    snippets.append(content[max(0, index - 1000):index + 4000])
+            selected = "\n\n".join(dict.fromkeys(snippets)) or content[:5000]
+        else:
+            selected = content[:3000]
+        selected = selected[:remaining]
+        contexts[relative] = selected
+        remaining -= len(selected)
+        if len(contexts) >= 8:
+            break
+    try:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        index_path.write_text(json.dumps(cached, separators=(",", ":")), encoding="utf-8")
+    except OSError:
+        pass
+    return contexts
+
+
 def build_correction_prompt(
     original_request: str,
     current_diff: str,
+    file_contexts: Optional[dict[str, str]] = None,
     syntax_card: Optional[str] = None,
     performance_card: Optional[str] = None,
     oracle_card: Optional[str] = None,
@@ -787,17 +882,33 @@ def build_correction_prompt(
             f"## Performance Gate Failures\n```json\n{performance_card[:1000]}\n```"
         )
 
-    sections.append(
+    instruction_section = (
         "## Instructions\n"
-        "Emit a corrected unified diff patch that fixes ALL the above failures.\n"
+        "Emit a corrected minimal unified diff patch that fixes ALL the above failures. "
+        "Target only existing files from the current context.\n"
         "Do not emit explanations. Only emit the corrected unified diff."
     )
+    sections.append(instruction_section)
+
+    if file_contexts:
+        context_prefix = "## Current File Context\n"
+        context_budget = max(0, char_budget - len("\n\n".join(sections)) - 2)
+        context_parts = []
+        for path, content in file_contexts.items():
+            if context_budget <= 0:
+                break
+            part = f"### {path}\n```\n{content[:min(2000, context_budget)]}\n```"
+            context_parts.append(part)
+            context_budget -= len(part) + 2
+        if context_parts:
+            sections.append(context_prefix + "\n".join(context_parts))
 
     prompt = "\n\n".join(sections)
 
     # Hard-truncate to token budget
     if len(prompt) > char_budget:
-        prompt = prompt[:char_budget]
+        body = "\n\n".join(section for section in sections if section != instruction_section)
+        prompt = body[: max(0, char_budget - len(instruction_section) - 2)] + "\n\n" + instruction_section
 
     return prompt
 
@@ -1083,6 +1194,7 @@ def orchestrate(
             prompt = build_correction_prompt(
                 original_request=user_request,
                 current_diff="(no parseable diff was produced)",
+                file_contexts=file_contexts,
                 syntax_card='{"error":"No valid unified diff patches found in your output"}',
                 round_number=round_num + 1,
             )
@@ -1205,6 +1317,7 @@ def orchestrate(
                         prompt = build_correction_prompt(
                             original_request=user_request,
                             current_diff=current_diff_text,
+                            file_contexts=file_contexts,
                             syntax_card='{"error":"Final patch application was incomplete or rejected"}',
                             round_number=round_num + 1,
                         )
@@ -1236,6 +1349,7 @@ def orchestrate(
             prompt = build_correction_prompt(
                 original_request=user_request,
                 current_diff=current_diff_text,
+                file_contexts=file_contexts,
                 syntax_card=syntax_card if not syntax_passed else None,
                 performance_card=perf_card if not perf_passed else None,
                 oracle_card=oracle_card if not oracle_passed else None,
@@ -1255,12 +1369,19 @@ def orchestrate(
     logger.error(
         "Max correction rounds (%d) exceeded — pipeline failed", max_rounds
     )
+    last_round = rounds[-1] if rounds else None
+    detail = f"Failed to achieve 100% green after {max_rounds} rounds"
+    if last_round:
+        detail += (
+            f" (last verification: {last_round.syntax_errors} syntax errors, "
+            f"{len(last_round.performance_breaches)} performance breaches)"
+        )
     return OrchestrationResult(
         outcome=LoopOutcome.MAX_RETRIES_EXCEEDED,
         total_rounds=max_rounds,
         rounds=rounds,
         elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
-        error_detail=f"Failed to achieve 100% green after {max_rounds} rounds",
+        error_detail=detail,
     )
 
 
@@ -1406,6 +1527,7 @@ def main() -> int:
     result = orchestrate(
         user_request=req_str,
         config=config,
+        file_contexts=collect_project_context(config.project_root, req_str),
         max_rounds=args.max_rounds,
         skip_performance=args.skip_performance,
         dry_run=args.dry_run,

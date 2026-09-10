@@ -20,6 +20,7 @@ export default {
         "surface-subtle": "var(--surface-subtle)",
         "surface-hover": "var(--surface-hover)",
         "surface-active": "var(--surface-active)",
+        "surface-selected": "var(--surface-selected)",
         "border-hairline": "var(--border-hairline)",
         "border-accent": "var(--border-accent)",
         "border-focus": "var(--border-focus)",
@@ -36,6 +37,10 @@ export default {
         secondary: "var(--text-secondary)",
         muted: "var(--text-muted)",
         accent: "var(--text-accent)",
+        "primary-icon": "var(--text-primary-icon)",
+      },
+      backgroundColor: {
+        "primary-action": "var(--action-primary)",
       },
       borderRadius: {
         pill: "var(--radius-xl)",

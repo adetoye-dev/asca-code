@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { Trash2, Globe, Star, CheckCircle2, RefreshCw, Eye, Download, Loader2, Zap, Play, Cpu, AlertCircle, ShieldCheck } from "lucide-react";
+import { Trash2, Globe, Star, CheckCircle2, RefreshCw, Eye, Download, Loader2, Zap, Play, Cpu, AlertCircle, ShieldCheck, ChevronDown } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { ProviderLogo } from "../ui/BrandLogos";
 import { OllamaSetupWizard } from "../ui/OllamaSetupWizard";
@@ -29,6 +29,7 @@ import {
   pullOllamaModel,
   deleteOllamaModel,
   CURATED_OLLAMA_MODELS,
+  resolveModelMetadata,
   type OllamaStatus,
   type OllamaProgressEvent,
 } from "../../services/ollamaSetup";
@@ -51,6 +52,7 @@ export function AiManagementDashboard({
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [isStartingOllama, setIsStartingOllama] = useState(false);
   const [showOllamaWizard, setShowOllamaWizard] = useState(false);
+  const [openSpecsModelTag, setOpenSpecsModelTag] = useState<string | null>(null);
 
   // Model pulling & downloader state
   const [pullingModelTag, setPullingModelTag] = useState<string | null>(null);
@@ -341,7 +343,7 @@ export function AiManagementDashboard({
             {/* Group 2: Cloud LLMs */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
-                <Icon icon={Globe} className="w-3 h-3 text-sky-400" />
+                <Icon icon={Globe} className="w-3 h-3 text-purple-400" />
                 <span>Cloud LLM APIs</span>
               </div>
               <div className="space-y-1">
@@ -497,7 +499,7 @@ export function AiManagementDashboard({
                           type="button"
                           disabled={isStartingOllama}
                           onClick={handleStartOllama}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-xs font-semibold text-sky-300 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/40 border border-purple-500/40 text-xs font-semibold text-purple-200 transition-colors disabled:opacity-50"
                         >
                           {isStartingOllama ? <Icon icon={Loader2} className="w-3.5 h-3.5 animate-spin" /> : <Icon icon={Play} className="w-3.5 h-3.5" />}
                           <span>{isStartingOllama ? "Starting Daemon…" : "Start Ollama Server"}</span>
@@ -529,73 +531,57 @@ export function AiManagementDashboard({
 
                     {ollamaStatus && ollamaStatus.models.length > 0 ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                        {ollamaStatus.models.map((m) => {
+                        {ollamaStatus.models.map((m, index) => {
                           const isActive =
                             selectedModel === m ||
                             selectedModel === `${m}:latest` ||
                             m === `${selectedModel}:latest` ||
                             selectedModel.startsWith(`${m}:`);
                           const isDeleting = isDeletingModel === m;
-                          const curated = CURATED_OLLAMA_MODELS.find(
-                            (c) =>
-                              c.tag === m ||
-                              `${c.tag}:latest` === m ||
-                              c.tag === `${m}:latest` ||
-                              m.startsWith(`${c.tag}:`) ||
-                              c.tag.startsWith(`${m}:`)
+                          const detail = ollamaStatus.modelsDetails?.find(
+                            (d) =>
+                              d.tag === m ||
+                              d.name === m ||
+                              `${d.tag}:latest` === m ||
+                              d.tag === `${m}:latest` ||
+                              d.tag.startsWith(`${m}:`) ||
+                              m.startsWith(`${d.tag}:`)
                           );
+                          const meta = resolveModelMetadata(m, detail);
 
                           return (
                             <div
                               key={m}
-                              className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-2.5 ${
+                              className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between gap-3 relative ${
                                 isActive
                                   ? "bg-purple-950/20 border-purple-500/50 shadow-sm"
                                   : "bg-zinc-900/80 border-zinc-800 hover:border-zinc-700"
                               }`}
                             >
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-bold text-zinc-100 truncate">
-                                    {curated?.name || m}
-                                  </span>
-                                  {isActive && (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider">
-                                      Active
+                              {/* Top Row: Name, Active Badge & Delete Button */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-xs font-bold text-zinc-100 truncate">
+                                      {meta.name}
                                     </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-[10px] text-zinc-400 font-mono truncate">{m}</span>
-                                  {curated?.size && (
-                                    <span className="text-[9px] font-mono text-zinc-500">· {curated.size}</span>
-                                  )}
-                                  {curated?.category && (
-                                    <span className="text-[9px] font-mono text-purple-400/80">· {curated.category}</span>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {!isActive ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSwitchModel(m)}
-                                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white transition-colors border border-zinc-700/60"
-                                  >
-                                    Use Model
-                                  </button>
-                                ) : (
-                                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
-                                    <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
+                                    {isActive && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider shrink-0">
+                                        Active
+                                      </span>
+                                    )}
                                   </div>
-                                )}
+                                  <p className="text-[11px] text-zinc-400 font-mono truncate mt-0.5" title={m}>
+                                    {m}
+                                  </p>
+                                </div>
+
                                 {ollamaStatus.models.length > 1 && (
                                   <button
                                     type="button"
                                     disabled={isDeleting}
                                     onClick={() => setConfirmDeleteTag(m)}
-                                    className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-800/80 transition-colors"
+                                    className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-colors shrink-0"
                                     title={`Delete ${m} from disk`}
                                   >
                                     {isDeleting ? (
@@ -606,6 +592,130 @@ export function AiManagementDashboard({
                                   </button>
                                 )}
                               </div>
+
+                              {/* Bottom Row: Metadata Pills on left, Action on right */}
+                              <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800/60">
+                                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                  {meta.size && (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-medium bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 whitespace-nowrap">
+                                      {meta.size}
+                                    </span>
+                                  )}
+                                  {meta.category && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenSpecsModelTag(openSpecsModelTag === m ? null : m);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 border border-purple-800/40 hover:border-purple-600/50 transition-colors whitespace-nowrap cursor-pointer"
+                                      title="Click to view verified Ollama capabilities & GGUF hardware specs"
+                                    >
+                                      <span>{meta.category}</span>
+                                      <Icon
+                                        icon={ChevronDown}
+                                        className={`w-3 h-3 text-purple-400/80 transition-transform ${openSpecsModelTag === m ? "rotate-180" : ""}`}
+                                      />
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="shrink-0">
+                                  {!isActive ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSwitchModel(m)}
+                                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white transition-colors border border-zinc-700/60"
+                                    >
+                                      Use Model
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-emerald-400">
+                                      <Icon icon={CheckCircle2} className="w-3.5 h-3.5 text-emerald-400" />
+                                      <span>In Use</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Specs & Capabilities Popover anchored within card boundaries */}
+                              {openSpecsModelTag === m && (
+                                <>
+                                  {/* Backdrop to dismiss when clicking outside */}
+                                  <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenSpecsModelTag(null);
+                                    }}
+                                  />
+
+                                  {/* Popover Card */}
+                                  <div
+                                    className={`absolute z-50 bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
+                                      index % 2 === 1
+                                        ? "sm:right-3.5 sm:left-auto left-3.5"
+                                        : "left-3.5"
+                                    }`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                        <span className="text-[11px] font-semibold text-zinc-200">Verified GGUF Specs</span>
+                                      </div>
+                                      <span className="text-[10px] text-zinc-500 font-mono">Ollama Source</span>
+                                    </div>
+
+                                    {/* Runtime Capabilities Section */}
+                                    <div className="space-y-1">
+                                      <div className="text-[9px] uppercase tracking-wider font-bold text-zinc-400">
+                                        Runtime Capabilities
+                                      </div>
+                                      <div className="flex flex-wrap gap-1 pt-0.5">
+                                        {meta.capabilities && meta.capabilities.length > 0 ? (
+                                          meta.capabilities.map((cap) => (
+                                            <span
+                                              key={cap}
+                                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800/90 text-zinc-300 border border-zinc-700/60 flex items-center gap-1"
+                                            >
+                                              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                                              {cap}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-[10px] text-zinc-500 italic">Standard generation</span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Hardware & Parameter Specs */}
+                                    <div className="space-y-1 pt-1 border-t border-zinc-800/80 text-[11px]">
+                                      <div className="flex justify-between text-zinc-400">
+                                        <span>Context Limit:</span>
+                                        <span className="font-mono text-zinc-200">{meta.contextLengthFormatted || "Standard"}</span>
+                                      </div>
+                                      <div className="flex justify-between text-zinc-400">
+                                        <span>Parameter Scale:</span>
+                                        <span className="font-mono text-zinc-200">{meta.parameterSize || "N/A"}</span>
+                                      </div>
+                                      <div className="flex justify-between text-zinc-400">
+                                        <span>Quantization:</span>
+                                        <span className="font-mono text-zinc-200">{meta.quantization || "GGUF"}</span>
+                                      </div>
+                                      <div className="flex justify-between text-zinc-400">
+                                        <span>Disk Footprint:</span>
+                                        <span className="font-mono text-zinc-200">{meta.size}</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Capability Explanation */}
+                                    <div className="p-2 rounded-lg bg-zinc-950/60 border border-zinc-800/60 text-[10px] text-zinc-400 leading-relaxed">
+                                      {meta.strength}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           );
                         })}
@@ -663,7 +773,7 @@ export function AiManagementDashboard({
                       <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4 space-y-3.5">
                         <div>
                           <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                            <Icon icon={Download} className="w-3.5 h-3.5 text-sky-400" />
+                            <Icon icon={Download} className="w-3.5 h-3.5 text-purple-400" />
                             Download Additional Models
                           </h3>
                           <p className="text-[11px] text-zinc-400 mt-0.5">
@@ -787,7 +897,7 @@ export function AiManagementDashboard({
                   {activeProvider.id === "llamacpp" && activeProvider.availableModels.length === 0 ? (
                     <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-2.5">
                       <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-                        <Icon icon={Cpu} className="w-4 h-4 text-sky-400" />
+                        <Icon icon={Cpu} className="w-4 h-4 text-purple-400" />
                         <span>Local llama.cpp Server (Port 8080)</span>
                       </div>
                       <p className="text-[11px] text-zinc-400 leading-relaxed">
@@ -810,7 +920,7 @@ export function AiManagementDashboard({
                           setSelectedModel(e.target.value);
                           handleSaveProvider(e.target.value, baseUrlInput);
                         }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-sky-500 transition-colors cursor-pointer"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-purple-500/60 transition-colors cursor-pointer"
                       >
                         {activeProvider.availableModels.map((m) => (
                           <option key={m} value={m} className="bg-zinc-900 text-zinc-100">
@@ -840,7 +950,7 @@ export function AiManagementDashboard({
                             value={apiKeyInput}
                             onChange={(e) => setApiKeyInput(e.target.value)}
                             placeholder="sk-••••••••••••••••••••••••"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
                           />
                           <button
                             type="button"
@@ -854,7 +964,7 @@ export function AiManagementDashboard({
                         <button
                           type="button"
                           onClick={() => handleSaveProvider()}
-                          className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-xs font-bold text-white transition-colors shadow-sm"
+                          className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-bold text-white transition-colors shadow-sm"
                         >
                           Save Key
                         </button>
@@ -884,7 +994,7 @@ export function AiManagementDashboard({
                       setBaseUrlInput(activeProvider.baseUrl);
                       handleSaveProvider(selectedModel, activeProvider.baseUrl);
                     }}
-                    className="text-[11px] text-sky-400 hover:underline"
+                    className="text-[11px] text-purple-400 hover:underline"
                   >
                     Reset default
                   </button>
@@ -894,7 +1004,7 @@ export function AiManagementDashboard({
                   value={baseUrlInput}
                   onChange={(e) => setBaseUrlInput(e.target.value)}
                   placeholder="https://api..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
                 />
               </div>
 
@@ -906,7 +1016,7 @@ export function AiManagementDashboard({
                   onClick={handleTestConnection}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all shadow-sm"
                 >
-                  <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-sky-400" : "text-zinc-400"}`} />
+                  <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-purple-400" : "text-zinc-400"}`} />
                   <span>{isTesting ? "Pinging Endpoint..." : "Test Connection"}</span>
                 </button>
 
@@ -960,7 +1070,12 @@ export function AiManagementDashboard({
         <ConfirmDialog
           isOpen={true}
           title="Delete Local Model"
-          message={`Are you sure you want to delete ${confirmDeleteTag} from your local machine? This action cannot be undone, though you can re-download the model later.`}
+          message={
+            <span>
+              Are you sure you want to delete <span className="font-semibold text-zinc-100">"{confirmDeleteTag}"</span> from your local machine? This action cannot be undone.
+            </span>
+          }
+          detail="You can re-download this model at any time from the models registry."
           confirmText="Delete Model"
           cancelText="Cancel"
           isDestructive={true}

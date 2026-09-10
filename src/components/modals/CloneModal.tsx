@@ -93,7 +93,7 @@ export function CloneModal({
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400">
+            <div className="w-7 h-7 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-center text-purple-300">
               <Icon icon={GitFork} className="w-4 h-4" />
             </div>
             <div>
@@ -121,7 +121,7 @@ export function CloneModal({
               value={repoUrl}
               onChange={(e) => handleUrlChange(e.target.value)}
               placeholder="https://github.com/username/repository.git or git@github.com:..."
-              className="w-full mt-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
+              className="w-full mt-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 font-mono"
             />
           </div>
 
@@ -134,14 +134,14 @@ export function CloneModal({
                 value={targetDir}
                 onChange={(e) => setTargetDir(e.target.value)}
                 placeholder="~/Desktop/my-project"
-                className="flex-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-sky-500 font-mono"
+                className="flex-1 bg-workbench border border-hairline rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 font-mono"
               />
               <button
                 type="button"
                 onClick={handleBrowseDestination}
                 className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-medium text-xs flex items-center gap-1.5 transition-colors shrink-0"
               >
-                <Icon icon={Folder} className="w-3.5 h-3.5 text-sky-400" />
+                <Icon icon={Folder} className="w-3.5 h-3.5 text-purple-400" />
                 <span>Browse...</span>
               </button>
             </div>
@@ -153,7 +153,7 @@ export function CloneModal({
           <div
             className={`p-2.5 rounded-xl border flex items-start gap-2 text-[11px] ${
               statusMsg.type === "info"
-                ? "bg-sky-950/40 border-sky-500/40 text-sky-300"
+                ? "bg-purple-950/40 border-purple-500/40 text-purple-300"
                 : statusMsg.type === "success"
                 ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-300"
                 : "bg-red-950/40 border-red-500/40 text-red-300"
@@ -183,7 +183,7 @@ export function CloneModal({
             className={`px-5 py-2 rounded-xl text-white font-bold flex items-center gap-2 transition-all ${
               isCloning || !repoUrl.trim()
                 ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                : "bg-sky-600 hover:bg-sky-500 shadow-lg shadow-sky-600/20 cursor-pointer"
+                : "bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-600/20 cursor-pointer"
             }`}
           >
             {isCloning ? (

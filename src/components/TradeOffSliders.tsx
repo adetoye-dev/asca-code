@@ -52,7 +52,7 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         name: "Balanced · Managed DB",
         detail:
           "PostgreSQL with connection pooling. Handles 1,000–10,000 concurrent users. Hosting ~$25/mo.",
-        color: "text-sky-400",
+        color: "text-purple-300",
       },
       high: {
         name: "Enterprise · Distributed",
@@ -78,7 +78,7 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         name: "Balanced · Confirmed Writes",
         detail:
           "Async message queue with write acknowledgment. Good latency with reliable delivery guarantees.",
-        color: "text-sky-400",
+        color: "text-purple-300",
       },
       high: {
         name: "Bulletproof · Strict ACID",
@@ -104,7 +104,7 @@ const SLIDER_DEFS: SliderDescriptor[] = [
         name: "Balanced · Layered Modules",
         detail:
           "Separated concerns with clean internal boundaries. Modules can be extracted later if needed.",
-        color: "text-sky-400",
+        color: "text-purple-300",
       },
       high: {
         name: "Decoupled · Micro-Services",
@@ -152,7 +152,7 @@ function SingleSlider({
   const fillPercent = (index / 2) * 100;
   const trackGradient = disabled
     ? "from-zinc-600 to-zinc-600"
-    : "from-emerald-500 via-sky-500 to-violet-500";
+    : "from-emerald-500 via-purple-500 to-violet-500";
 
   if (compact) {
     return (
@@ -174,7 +174,7 @@ function SingleSlider({
           value={index}
           onChange={handleChange}
           disabled={disabled}
-          className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500 disabled:opacity-40"
+          className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500 disabled:opacity-40"
         />
         <div className="text-[10px] text-zinc-400 truncate leading-tight">
           {currentLabel.detail}
