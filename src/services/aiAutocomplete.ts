@@ -238,3 +238,77 @@ function getOfflineSnippetCompletion(prefix: string): string {
 
   return "";
 }
+
+export async function executeInlineEdit({
+  instruction,
+  selectedCode,
+  surroundingPrefix,
+  surroundingSuffix,
+  settings,
+  signal,
+}: {
+  instruction: string;
+  selectedCode: string;
+  surroundingPrefix: string;
+  surroundingSuffix: string;
+  settings: AISettings;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const { provider, model, apiKey, baseUrl } = settings;
+
+  // 1. Try server bridge /api/ai/inline-edit (supports all providers, avoids browser CORS)
+  try {
+    const res = await fetch("/api/ai/inline-edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        model,
+        instruction,
+        selectedCode,
+        surroundingPrefix,
+        surroundingSuffix,
+        baseUrl,
+        apiKey,
+      }),
+      signal,
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (data.ok && typeof data.replacement === "string" && data.replacement.trim()) {
+        return data.replacement;
+      }
+    }
+  } catch {}
+
+  // 2. Direct client fallback for local Ollama
+  if (provider === "ollama") {
+    const systemPrompt =
+      "You are a precise code editing assistant. Given existing code and user instructions, return ONLY the updated replacement code without commentary, explanations, or markdown fences.";
+    const userPrompt = `Context before:\n${surroundingPrefix.slice(-600)}\n\nCode to edit:\n${selectedCode}\n\nContext after:\n${surroundingSuffix.slice(0, 600)}\n\nInstruction: ${instruction}\n\nEmit updated code:`;
+    const url = (baseUrl || "http://127.0.0.1:11434") + "/api/generate";
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: model || "qwen2.5-coder:7b",
+          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          stream: false,
+          options: { temperature: 0.2, num_predict: 1024 },
+        }),
+        signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        let text = (data.response || "").trim();
+        if (text.startsWith("```")) {
+          text = text.replace(/^```[a-zA-Z0-9_-]*\n?/, "").replace(/\n?```$/, "");
+        }
+        return text;
+      }
+    } catch {}
+  }
+
+  return "";
+}

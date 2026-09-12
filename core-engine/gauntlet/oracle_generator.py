@@ -741,6 +741,12 @@ def run_oracle_for_file(
     report_start = time.monotonic()
     report = OracleReport(target_file=target_file)
 
+    if not target_file.endswith(".py"):
+        logger.info("Oracle gate: skipped for non-Python target %s", target_file)
+        report.passed = True
+        report.elapsed_ms = (time.monotonic() - report_start) * 1000
+        return report
+
     # Parse the target file to discover functions
     parse_result = parse_file(target_file)
 

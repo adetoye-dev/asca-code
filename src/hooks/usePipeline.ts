@@ -10,7 +10,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { SliderConfig } from "../components/TradeOffSliders";
 import type { FileNode } from "../components/FileTree";
 import type { OpenFileTab } from "../types/workbench";
 import type { AISettings } from "../components/SettingsModal";
@@ -21,17 +20,31 @@ import type {
   SystemMetrics,
   PipelineStatus,
 } from "../components/TelemetryScorecard";
+import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
+import {
+  syncProjectIndex,
+  getIndexStatus,
+  type ProjectIndexProfile,
+} from "../services/agentHarness";
 
 export interface ProjectMeta {
-  name: string;
   path: string;
+  name: string;
+}
+
+export interface ProjectIndexState {
+  indexed: boolean;
+  totalSymbols: number;
+  profile: ProjectIndexProfile | null;
 }
 
 export interface UsePipelineReturn {
   // Project & Files
   activeProject: ProjectMeta;
   projectFiles: FileNode[];
+  selectedFile: FileNode | null;
+  setSelectedFile: (file: FileNode | null) => void;
   openTabs: OpenFileTab[];
   activeTabPath: string | null;
   currentDiff: string;
@@ -58,11 +71,16 @@ export interface UsePipelineReturn {
   createProject: (name: string, template: string, parentDir?: string) => Promise<void>;
   refreshProjectFiles: () => Promise<void>;
 
+  // Code Intelligence & Indexer State
+  indexStatus: ProjectIndexState;
+  isIndexing: boolean;
+  syncIndex: () => Promise<void>;
+
   // Pipeline State & Execution
   prompt: string;
   setPrompt: (p: string) => void;
-  sliders: SliderConfig;
-  setSliders: (s: SliderConfig) => void;
+  sliders?: { budget_vs_scale: string; speed_vs_precision: string; simplicity_vs_futureproof: string };
+  setSliders?: (s: any) => void;
   status: PipelineStatus;
   telemetry: TelemetryData | null;
   orchestrationResult: OrchestrationResult | null;
@@ -71,14 +89,24 @@ export interface UsePipelineReturn {
   activeCenterView: "editor" | "diff";
   setActiveCenterView: (v: "editor" | "diff") => void;
 
-  // Pipeline Actions
-  runPipeline: (customPrompt?: string, modelOverride?: { provider: string; model: string }) => Promise<void>;
+  // Real-time Streaming & Agent Step State
+  streamingAnswer: string;
+  streamingThought: string;
+  agentSteps: AgentStep[];
+
+  runPipeline: (
+    customPrompt?: string,
+    modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
+    activeFilePath?: string,
+    selectedCode?: string,
+    conversationHistory?: Array<{ role: string; content: string }>
+  ) => Promise<void>;
   cancelPipeline: () => void;
   clearLog: () => void;
   isTauriAvailable: boolean;
 }
 
-const DEFAULT_SLIDERS: SliderConfig = {
+const DEFAULT_SLIDERS = {
   budget_vs_scale: "medium",
   speed_vs_precision: "medium",
   simplicity_vs_futureproof: "medium",
@@ -155,6 +183,7 @@ export function usePipeline(): UsePipelineReturn {
   };
 
   const [projectFiles, setProjectFiles] = useState<FileNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
@@ -165,7 +194,7 @@ export function usePipeline(): UsePipelineReturn {
 
   // Pipeline & AI state
   const [prompt, setPrompt] = useState<string>("");
-  const [sliders, setSliders] = useState<SliderConfig>(DEFAULT_SLIDERS);
+  const [sliders, setSliders] = useState<any>(DEFAULT_SLIDERS);
   const [status, setStatus] = useState<PipelineStatus>("idle");
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [orchestrationResult, setOrchestrationResult] = useState<OrchestrationResult | null>(null);
@@ -173,6 +202,50 @@ export function usePipeline(): UsePipelineReturn {
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [currentDiff, setCurrentDiff] = useState<string>("");
   const [touchedPaths, setTouchedPaths] = useState<string[]>([]);
+  const [streamingAnswer, setStreamingAnswer] = useState<string>("");
+  const [streamingThought, setStreamingThought] = useState<string>("");
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+
+  // Code Intelligence & Symbol Graph Indexer state
+  const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
+    indexed: false,
+    totalSymbols: 0,
+    profile: null,
+  });
+  const [isIndexing, setIsIndexing] = useState<boolean>(false);
+
+  const syncIndex = useCallback(async () => {
+    if (!activeProject?.path) return;
+    setIsIndexing(true);
+    try {
+      const res = await syncProjectIndex(activeProject.path);
+      if (res) {
+        setIndexStatus({
+          indexed: true,
+          totalSymbols: res.totalSymbols,
+          profile: res.profile,
+        });
+      }
+    } finally {
+      setIsIndexing(false);
+    }
+  }, [activeProject.path]);
+
+  // Initial index probe when project path is ready
+  useEffect(() => {
+    if (activeProject?.path) {
+      getIndexStatus(activeProject.path).then((stat) => {
+        setIndexStatus({
+          indexed: stat.indexed,
+          totalSymbols: stat.totalSymbols,
+          profile: stat.profile,
+        });
+        if (!stat.indexed && activeProject.path !== ".") {
+          void syncIndex();
+        }
+      });
+    }
+  }, [activeProject.path, syncIndex]);
 
   // ── File Tree Loading ─────────────────────────────────────────────────────
   const refreshProjectFiles = useCallback(async () => {
@@ -250,6 +323,21 @@ export function usePipeline(): UsePipelineReturn {
       setOpenTabs([]);
       setActiveTabPath(null);
       setCurrentDiff("");
+
+      // Automatically trigger AST Symbol Graph indexing
+      setIsIndexing(true);
+      try {
+        const syncRes = await syncProjectIndex(cleanPath);
+        if (syncRes) {
+          setIndexStatus({
+            indexed: true,
+            totalSymbols: syncRes.totalSymbols,
+            profile: syncRes.profile,
+          });
+        }
+      } finally {
+        setIsIndexing(false);
+      }
     },
     []
   );
@@ -257,6 +345,7 @@ export function usePipeline(): UsePipelineReturn {
   // ── File Operations ───────────────────────────────────────────────────────
   const openFile = useCallback(
     async (file: FileNode) => {
+      setSelectedFile(file);
       if (file.is_dir) return;
 
       const existing = openTabs.find((t) => t.path === file.path);
@@ -547,18 +636,43 @@ export function usePipeline(): UsePipelineReturn {
   const pipelineAbortRef = useRef<AbortController | null>(null);
 
   const runPipeline = useCallback(
-    async (customPrompt?: string, modelOverride?: { provider: string; model: string }) => {
+    async (
+      customPrompt?: string,
+      modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
+      activeFilePath?: string,
+      selectedCode?: string,
+      conversationHistory?: Array<{ role: string; content: string }>
+    ) => {
       const activePrompt = customPrompt ?? prompt;
       const activeAiSettings = modelOverride
-        ? { ...aiSettings, provider: modelOverride.provider, model: modelOverride.model }
+        ? {
+            ...aiSettings,
+            provider: modelOverride.provider,
+            model: modelOverride.model,
+            apiKey: modelOverride.apiKey !== undefined ? modelOverride.apiKey : aiSettings.apiKey,
+            baseUrl: modelOverride.baseUrl !== undefined ? modelOverride.baseUrl : aiSettings.baseUrl,
+          }
         : aiSettings;
       if (!activePrompt.trim()) return;
+
+      let detectedLanguage = "typescript";
+      if (activeFilePath) {
+        const ext = activeFilePath.split(".").pop()?.toLowerCase();
+        if (ext === "py") detectedLanguage = "python";
+        else if (ext === "rs") detectedLanguage = "rust";
+        else if (ext === "go") detectedLanguage = "go";
+        else if (ext === "c" || ext === "cpp" || ext === "h") detectedLanguage = "cpp";
+        else if (ext === "java") detectedLanguage = "java";
+      }
 
       setStatus("running");
       setActivityLog([]);
       setCurrentDiff("");
       setOrchestrationResult(null);
       setTelemetry(null);
+      setStreamingAnswer("");
+      setStreamingThought("");
+      setAgentSteps([]);
 
       if (isTauriAvailable) {
         try {
@@ -567,7 +681,7 @@ export function usePipeline(): UsePipelineReturn {
             prompt: activePrompt,
             sliders,
             projectRoot: activeProject.path,
-            language: "python",
+            language: detectedLanguage,
             skipPerformance: false,
             dryRun: false,
           });
@@ -600,13 +714,15 @@ export function usePipeline(): UsePipelineReturn {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               prompt: activePrompt,
-              sliders,
               projectRoot: activeProject.path,
-              language: "python",
+              language: detectedLanguage,
               provider: activeAiSettings.provider,
               model: activeAiSettings.model,
               apiKey: activeAiSettings.apiKey,
               baseUrl: activeAiSettings.baseUrl,
+              activeFilePath: activeFilePath || undefined,
+              selectedCode: selectedCode || undefined,
+              conversationHistory: conversationHistory || undefined,
             }),
           });
 
@@ -640,7 +756,25 @@ export function usePipeline(): UsePipelineReturn {
 
               try {
                 const parsed = JSON.parse(dataStr);
-                if (eventName === "output") {
+                if (eventName === "chunk") {
+                  if (parsed?.text) {
+                    setStreamingAnswer((prev) => prev + parsed.text);
+                  }
+                } else if (eventName === "thought") {
+                  if (parsed?.text) {
+                    setStreamingThought((prev) => prev + parsed.text);
+                  }
+                } else if (eventName === "step") {
+                  setAgentSteps((prev) => {
+                    const idx = prev.findIndex((s) => s.name === parsed.name);
+                    if (idx >= 0) {
+                      const next = [...prev];
+                      next[idx] = { ...next[idx], ...parsed };
+                      return next;
+                    }
+                    return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...parsed }];
+                  });
+                } else if (eventName === "output") {
                   setActivityLog((prev) => [...prev, parsed]);
 
                   if (parsed.content.startsWith("---") || parsed.content.startsWith("@@")) {
@@ -677,7 +811,7 @@ export function usePipeline(): UsePipelineReturn {
       }
       pipelineAbortRef.current = null;
     },
-    [prompt, sliders, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
+    [prompt, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
   );
 
   const cancelPipeline = useCallback(async () => {
@@ -699,6 +833,8 @@ export function usePipeline(): UsePipelineReturn {
   return {
     activeProject,
     projectFiles,
+    selectedFile,
+    setSelectedFile,
     openTabs,
     activeTabPath,
     currentDiff,
@@ -722,6 +858,9 @@ export function usePipeline(): UsePipelineReturn {
     deleteFile,
     createProject,
     refreshProjectFiles,
+    indexStatus,
+    isIndexing,
+    syncIndex,
     prompt,
     setPrompt,
     sliders,
@@ -737,6 +876,9 @@ export function usePipeline(): UsePipelineReturn {
     cancelPipeline,
     clearLog,
     isTauriAvailable,
+    streamingAnswer,
+    streamingThought,
+    agentSteps,
   };
 }
 

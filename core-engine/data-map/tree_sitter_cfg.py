@@ -45,6 +45,8 @@ class SupportedLanguage(str, Enum):
     PYTHON = "python"
     TYPESCRIPT = "typescript"
     JAVASCRIPT = "javascript"
+    GO = "go"
+    RUST = "rust"
 
 
 class ParamKind(str, Enum):
@@ -136,6 +138,8 @@ def detect_language(file_path: str) -> Optional[SupportedLanguage]:
         ".tsx": SupportedLanguage.TYPESCRIPT,
         ".js": SupportedLanguage.JAVASCRIPT,
         ".jsx": SupportedLanguage.JAVASCRIPT,
+        ".go": SupportedLanguage.GO,
+        ".rs": SupportedLanguage.RUST,
     }
     ext = Path(file_path).suffix.lower()
     return ext_map.get(ext)
@@ -647,10 +651,10 @@ def _extract_typescript_functions_regex(
             r"\(([^)]*)\)(?:\s*:\s*([^{]+))?\s*\{",
             re.MULTILINE,
         ),
-        # const foo = (params): RetType => {
+        # const foo = (params): RetType => { OR const foo = useCallback((params) => {
         re.compile(
             r"^(\s*)(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*"
-            r"(?:async\s+)?\(([^)]*)\)(?:\s*:\s*([^=>{]+))?\s*=>",
+            r"(?:useCallback\s*\(\s*)?(?:async\s+)?(?:\(([^)]*)\)|(\w+))(?:\s*:\s*([^=>{]+))?\s*=>",
             re.MULTILINE,
         ),
         # Method: foo(params): RetType {
@@ -668,8 +672,12 @@ def _extract_typescript_functions_regex(
         for match in pattern.finditer(source):
             indent = len(match.group(1))
             func_name = match.group(2)
-            params_str = match.group(3)
-            return_type = match.group(4).strip() if match.group(4) else None
+            params_str = match.group(3) if match.group(3) is not None else (match.group(4) or "")
+            return_type = None
+            if match.lastindex and match.lastindex >= 5 and match.group(5):
+                return_type = match.group(5).strip()
+            elif match.lastindex and match.lastindex >= 4 and match.group(4) and match.group(3) is not None:
+                return_type = match.group(4).strip()
 
             is_async = "async" in source[
                 match.start() : match.start() + match.end() - match.start()
@@ -773,7 +781,42 @@ def _parse_ts_params_regex(params_str: str) -> list[ParameterInfo]:
         if pinfo:
             params.append(pinfo)
 
-    return params
+def _extract_go_functions_regex(source: str, file_path: str) -> list[FunctionSignature]:
+    """Regex fallback for Go functions: func (r *Recv)? Name(params) ret"""
+    functions: list[FunctionSignature] = []
+    pattern = re.compile(r"""func\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(([^)]*)\)(?:\s+([^{]+))?""")
+    for idx, line in enumerate(source.splitlines(), 1):
+        m = pattern.search(line)
+        if m:
+            fn_name = m.group(1)
+            ret_type = (m.group(3) or "").strip()
+            functions.append(FunctionSignature(
+                name=fn_name,
+                language="go",
+                start_line=idx,
+                end_line=idx + 10,
+                return_type=ret_type or None,
+            ))
+    return functions
+
+
+def _extract_rust_functions_regex(source: str, file_path: str) -> list[FunctionSignature]:
+    """Regex fallback for Rust functions: fn name(params) -> Ret"""
+    functions: list[FunctionSignature] = []
+    pattern = re.compile(r"""(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)(?:\s*->\s*([^{]+))?""")
+    for idx, line in enumerate(source.splitlines(), 1):
+        m = pattern.search(line)
+        if m:
+            fn_name = m.group(1)
+            ret_type = (m.group(3) or "").strip()
+            functions.append(FunctionSignature(
+                name=fn_name,
+                language="rust",
+                start_line=idx,
+                end_line=idx + 10,
+                return_type=ret_type or None,
+            ))
+    return functions
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -839,6 +882,10 @@ def parse_file(file_path: str) -> ParseResult:
     try:
         if lang == SupportedLanguage.PYTHON:
             result.functions = _extract_python_functions_regex(source, file_path)
+        elif lang == SupportedLanguage.GO:
+            result.functions = _extract_go_functions_regex(source, file_path)
+        elif lang == SupportedLanguage.RUST:
+            result.functions = _extract_rust_functions_regex(source, file_path)
         else:
             result.functions = _extract_typescript_functions_regex(source, file_path)
         logger.info(

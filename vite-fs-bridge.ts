@@ -15,6 +15,10 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { exec, execFile, execFileSync, spawn } from "child_process";
+import { createRequire } from "module";
+
+const _bridgeRequire = createRequire(import.meta.url);
+const { ProjectDependencyGraph } = _bridgeRequire("./core-engine/data-map/graph_manager.js");
 
 export interface FileNode {
   name: string;
@@ -230,6 +234,127 @@ function resolveProjectPath(projectRoot: string, targetPath: string): string {
     throw new Error("Path is outside the active project root");
   }
   return resolved;
+}
+
+// ── Active Project Index & Symbol Graph Cache ──────────────────────────────
+let activeProjectIndex: any = null;
+const activeProjectGraph = new ProjectDependencyGraph();
+let activeProjectWatcher: fs.FSWatcher | null = null;
+let activeWatchedPath: string = "";
+let activeWatchDebounceTimer: NodeJS.Timeout | null = null;
+
+function setupProjectWatcher(projectRoot: string): void {
+  if (activeWatchedPath === projectRoot && activeProjectWatcher) return;
+
+  if (activeProjectWatcher) {
+    try { activeProjectWatcher.close(); } catch {}
+    activeProjectWatcher = null;
+  }
+
+  activeWatchedPath = projectRoot;
+  try {
+    activeProjectWatcher = fs.watch(projectRoot, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return;
+      const cleanName = filename.toString();
+      if (
+        cleanName.includes(".git") ||
+        cleanName.includes("node_modules") ||
+        cleanName.includes(".acsa") ||
+        cleanName.includes("__pycache__") ||
+        cleanName.includes("dist") ||
+        cleanName.includes(".DS_Store")
+      ) {
+        return;
+      }
+
+      const ext = path.extname(cleanName).toLowerCase();
+      if (![".py", ".ts", ".tsx", ".js", ".jsx"].includes(ext)) return;
+
+      if (activeWatchDebounceTimer) clearTimeout(activeWatchDebounceTimer);
+      activeWatchDebounceTimer = setTimeout(() => {
+        incrementalUpdateFile(projectRoot, cleanName);
+      }, 500);
+    });
+    console.log(`[indexer] Watching project root for file changes: ${projectRoot}`);
+  } catch (err: any) {
+    console.warn("[indexer] Could not attach fs.watch to project root:", err.message);
+  }
+}
+
+function incrementalUpdateFile(projectRoot: string, relativePath: string): void {
+  const root = resolveProjectRoot(projectRoot);
+  const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
+  execFile(
+    "python3",
+    [indexerScript, "--project-root", root, "--file", relativePath, "--json"],
+    { timeout: 15000 },
+    (error) => {
+      if (!error) {
+        try {
+          const indexPath = path.join(root, ".acsa", "index.json");
+          if (fs.existsSync(indexPath)) {
+            activeProjectIndex = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+            console.log(`[indexer] Incremental sync complete for ${relativePath} (${activeProjectIndex.total_symbols} symbols)`);
+          }
+        } catch {}
+      }
+    }
+  );
+}
+
+async function syncProjectIndex(projectRoot: string): Promise<any> {
+  const root = resolveProjectRoot(projectRoot);
+  const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
+
+  return new Promise((resolve) => {
+    execFile(
+      "python3",
+      [indexerScript, "--project-root", root, "--json"],
+      { maxBuffer: 10 * 1024 * 1024, timeout: 30000 },
+      (error, stdout, stderr) => {
+        if (error) {
+          console.warn("[indexer] Full indexing failed:", error.message, stderr);
+          resolve(null);
+          return;
+        }
+        try {
+          const indexPath = path.join(root, ".acsa", "index.json");
+          if (fs.existsSync(indexPath)) {
+            const data = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+            activeProjectIndex = data;
+
+            // Populate activeProjectGraph
+            if (data.graph?.nodes) {
+              for (const n of data.graph.nodes) {
+                try {
+                  if (!activeProjectGraph._nodes.has(n.id)) {
+                    activeProjectGraph.addNode(n.id, n.type || "file", n);
+                  } else {
+                    activeProjectGraph.updateNode(n.id, n);
+                  }
+                } catch {}
+              }
+            }
+            if (data.graph?.edges) {
+              for (const e of data.graph.edges) {
+                try {
+                  activeProjectGraph.addEdge(e.source, e.target, e.type || "structural_import");
+                } catch {}
+              }
+            }
+
+            // Set up watcher for project
+            setupProjectWatcher(root);
+            resolve(data);
+            return;
+          }
+        } catch (e: any) {
+          console.warn("[indexer] Failed to parse index data:", e.message);
+        }
+        resolve(null);
+      }
+    );
+  });
 }
 
 function scanDir(dirPath: string): number {
@@ -550,7 +675,7 @@ export function realFilesystemPlugin(): Plugin {
                 }
 
                 // If y is not space or is untracked (??), file has working tree changes (unstaged)
-                if (y !== " " || (x === "?" && y === "?")) {
+                if (y !== " " || x === "?") {
                   unstaged.push({
                     ...fileItem,
                     isStaged: false,
@@ -892,7 +1017,113 @@ export function realFilesystemPlugin(): Plugin {
             }
 
             const tree = buildFileTree(resolvedPath);
+            // Trigger background indexing if not already indexed
+            if (!activeProjectIndex || activeWatchedPath !== resolvedPath) {
+              void syncProjectIndex(resolvedPath);
+            }
             res.end(JSON.stringify({ nodes: tree, resolvedPath }));
+            return;
+          }
+
+          // ── POST /api/indexer/sync ──────────────────────────────────────────
+          if (pathname === "/api/indexer/sync" && req.method === "POST") {
+            const { projectRoot } = await parseJsonBody(req);
+            const resolved = resolveProjectRoot(projectRoot || process.cwd());
+            const indexResult = await syncProjectIndex(resolved);
+            if (indexResult) {
+              res.end(
+                JSON.stringify({
+                  success: true,
+                  totalSymbols: indexResult.total_symbols,
+                  profile: indexResult.profile,
+                  elapsedMs: indexResult.elapsed_ms,
+                })
+              );
+            } else {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ success: false, error: "Failed to generate project index" }));
+            }
+            return;
+          }
+
+          // ── POST /api/indexer/symbols ───────────────────────────────────────
+          if (pathname === "/api/indexer/symbols" && req.method === "POST") {
+            const { projectRoot, query = "", file = "" } = await parseJsonBody(req);
+            const resolved = resolveProjectRoot(projectRoot || process.cwd());
+            let indexData = activeProjectIndex;
+            if (!indexData) {
+              const indexPath = path.join(resolved, ".acsa", "index.json");
+              if (fs.existsSync(indexPath)) {
+                try {
+                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+                } catch {}
+              }
+            }
+            if (!indexData) {
+              indexData = await syncProjectIndex(resolved);
+            }
+
+            let matches: any[] = [];
+            if (file && indexData?.files?.[file]) {
+              matches = indexData.files[file].symbols || [];
+            } else if (query && indexData?.symbols) {
+              const qLower = query.toLowerCase();
+              for (const [name, list] of Object.entries<any[]>(indexData.symbols)) {
+                if (name.toLowerCase().includes(qLower)) {
+                  matches.push(...list);
+                }
+              }
+            } else if (indexData?.symbols) {
+              matches = Object.values<any[]>(indexData.symbols).flat().slice(0, 100);
+            }
+
+            res.end(JSON.stringify({ symbols: matches, total: matches.length }));
+            return;
+          }
+
+          // ── POST /api/indexer/blast-radius ──────────────────────────────────
+          if (pathname === "/api/indexer/blast-radius" && req.method === "POST") {
+            const { projectRoot, filePath } = await parseJsonBody(req);
+            const resolvedRoot = resolveProjectRoot(projectRoot || process.cwd());
+            if (!activeProjectIndex) {
+              await syncProjectIndex(resolvedRoot);
+            }
+
+            try {
+              const targetNodeId = `file:${filePath}`;
+              if (activeProjectGraph._nodes.has(targetNodeId)) {
+                const blast = activeProjectGraph.traceBlastRadius(targetNodeId, "signature_change");
+                res.end(JSON.stringify(blast));
+                return;
+              }
+            } catch (e: any) {
+              console.warn("[indexer] Blast radius trace error:", e.message);
+            }
+            res.end(JSON.stringify({ invalidatedNodes: [], invalidatedFilePaths: [], traversalDepth: 0 }));
+            return;
+          }
+
+          // ── GET /api/indexer/status ─────────────────────────────────────────
+          if (pathname === "/api/indexer/status" && req.method === "GET") {
+            const projectRoot = parsedUrl.searchParams.get("projectRoot") || "";
+            const resolved = resolveProjectRoot(projectRoot || process.cwd());
+            let indexData = activeProjectIndex;
+            if (!indexData) {
+              const indexPath = path.join(resolved, ".acsa", "index.json");
+              if (fs.existsSync(indexPath)) {
+                try {
+                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+                } catch {}
+              }
+            }
+            res.end(
+              JSON.stringify({
+                indexed: !!indexData,
+                totalSymbols: indexData?.total_symbols || 0,
+                profile: indexData?.profile || null,
+                updatedAt: indexData?.updated_at || null,
+              })
+            );
             return;
           }
 
@@ -1012,6 +1243,11 @@ export function realFilesystemPlugin(): Plugin {
             }
 
             fs.writeFileSync(resolved, content, "utf-8");
+            try {
+              const root = resolveProjectRoot(projectRoot || process.cwd());
+              const rel = path.relative(root, resolved);
+              incrementalUpdateFile(root, rel);
+            } catch {}
             res.end(JSON.stringify({ success: true, path: resolved }));
             return;
           }
@@ -1033,6 +1269,11 @@ export function realFilesystemPlugin(): Plugin {
               }
             }
 
+            try {
+              const root = resolveProjectRoot(projectRoot || process.cwd());
+              const rel = path.relative(root, resolved);
+              incrementalUpdateFile(root, rel);
+            } catch {}
             res.end(JSON.stringify({ success: true, path: resolved }));
             return;
           }
@@ -1046,6 +1287,11 @@ export function realFilesystemPlugin(): Plugin {
               fs.rmSync(resolved, { recursive: true, force: true });
             }
 
+            try {
+              const root = resolveProjectRoot(projectRoot || process.cwd());
+              const rel = path.relative(root, resolved);
+              incrementalUpdateFile(root, rel);
+            } catch {}
             res.end(JSON.stringify({ success: true }));
             return;
           }
@@ -2043,6 +2289,112 @@ export function realFilesystemPlugin(): Plugin {
             }
           }
 
+          // ── POST /api/ai/inline-edit (Copilot In-File Quick Edit) ───────────
+          if (pathname === "/api/ai/inline-edit" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const {
+                provider = "ollama",
+                model = "",
+                instruction = "",
+                selectedCode = "",
+                surroundingPrefix = "",
+                surroundingSuffix = "",
+                baseUrl = "",
+                apiKey = "",
+              } = body;
+
+              const systemPrompt =
+                "You are an expert code editing assistant. Given existing code and instructions, return ONLY the updated replacement code. Do not include conversational commentary, explanations, or markdown code fences.";
+              const userPrompt = `Context before:\n${(surroundingPrefix || "").slice(-600)}\n\nCode to edit:\n${selectedCode}\n\nContext after:\n${(surroundingSuffix || "").slice(0, 600)}\n\nInstruction: ${instruction}\n\nEmit updated code:`;
+
+              let replacement = "";
+
+              if (provider === "ollama") {
+                const url = (baseUrl || "http://127.0.0.1:11434") + "/api/generate";
+                const ollamaRes = await fetch(url, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: model || "qwen2.5-coder:7b",
+                    prompt: `${systemPrompt}\n\n${userPrompt}`,
+                    stream: false,
+                    options: { temperature: 0.2, num_predict: 1024 },
+                  }),
+                });
+                if (ollamaRes.ok) {
+                  const data = (await ollamaRes.json()) as any;
+                  replacement = (data.response || "").trim();
+                }
+              } else if (provider === "anthropic" && apiKey) {
+                const url = (baseUrl || "https://api.anthropic.com/v1") + "/messages";
+                const clRes = await fetch(url, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey.trim(),
+                    "anthropic-version": "2023-06-01",
+                  },
+                  body: JSON.stringify({
+                    model: model || "claude-3-5-sonnet-20241022",
+                    messages: [{ role: "user", content: userPrompt }],
+                    system: systemPrompt,
+                    max_tokens: 2048,
+                  }),
+                });
+                if (clRes.ok) {
+                  const data = (await clRes.json()) as any;
+                  replacement = (data.content?.[0]?.text || "").trim();
+                }
+              } else {
+                const defaultEndpoints: Record<string, string> = {
+                  openai: "https://api.openai.com/v1",
+                  google: "https://generativelanguage.googleapis.com/v1beta/openai",
+                  groq: "https://api.groq.com/openai/v1",
+                  deepseek: "https://api.deepseek.com/v1",
+                  openrouter: "https://openrouter.ai/api/v1",
+                  mistral: "https://api.mistral.ai/v1",
+                  moonshot: "https://api.moonshot.cn/v1",
+                  xai: "https://api.x.ai/v1",
+                  together: "https://api.together.xyz/v1",
+                  perplexity: "https://api.perplexity.ai",
+                };
+                const url = baseUrl || defaultEndpoints[provider] || "https://api.openai.com/v1";
+                const aiRes = await fetch(`${url}/chat/completions`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(apiKey ? { Authorization: `Bearer ${apiKey.trim()}` } : {}),
+                  },
+                  body: JSON.stringify({
+                    model: model || (provider === "google" ? "gemini-1.5-flash" : "gpt-4o-mini"),
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: userPrompt },
+                    ],
+                    temperature: 0.2,
+                  }),
+                });
+                if (aiRes.ok) {
+                  const data = (await aiRes.json()) as any;
+                  replacement = (data.choices?.[0]?.message?.content || "").trim();
+                }
+              }
+
+              if (replacement.startsWith("```")) {
+                replacement = replacement.replace(/^```[a-zA-Z0-9_-]*\n?/, "").replace(/\n?```$/, "");
+              }
+
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true, replacement }));
+              return;
+            } catch (err: any) {
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, error: err.message, replacement: "" }));
+              return;
+            }
+          }
+
           // ── POST /api/ai/chat (SSE streaming conversational AI) ─────────────
           if (pathname === "/api/ai/chat" && req.method === "POST") {
             const body = await parseJsonBody(req);
@@ -2053,6 +2405,7 @@ export function realFilesystemPlugin(): Plugin {
               projectRoot = "",
               baseUrl = "",
               apiKey = "",
+              images = [],
             } = body;
 
             res.writeHead(200, {
@@ -2105,12 +2458,44 @@ export function realFilesystemPlugin(): Plugin {
               } catch {}
             }
 
-            const systemPrompt = `You are ACSA Code AI Assistant, an expert, thoughtful, and pragmatic coding companion integrated into ACSA Code. Help the user understand, write, review, debug, and navigate their code. Provide clear explanations and clean markdown code blocks with language tags when showing code.${workspaceContext ? `\n${workspaceContext}` : ""}`;
+            // Inject Project Intelligence from AST Symbol Index
+            let indexContext = "";
+            if (projectRoot && fs.existsSync(projectRoot)) {
+              try {
+                const resolvedRoot = resolveProjectRoot(projectRoot);
+                const indexPath = path.join(resolvedRoot, ".acsa", "index.json");
+                let indexData = activeProjectIndex;
+                if (!indexData && fs.existsSync(indexPath)) {
+                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+                }
+                if (indexData) {
+                  const prof = indexData.profile || {};
+                  const symNames = Object.keys(indexData.symbols || {}).slice(0, 35);
+                  indexContext = `\n\n--- Project Intelligence & Symbol Graph ---\n` +
+                    `Scale Tier: ${prof.scale_tier || "standard"} (${prof.total_loc || 0} LOC across ${prof.indexed_files || 0} files)\n` +
+                    `Frameworks / Stack: ${(prof.frameworks || []).join(", ") || prof.primary_language || "General"}\n` +
+                    `Indexed Symbols: ${symNames.join(", ")}${Object.keys(indexData.symbols || {}).length > 35 ? ` (+${Object.keys(indexData.symbols || {}).length - 35} more)` : ""}\n` +
+                    `--- End of Project Intelligence ---\n`;
+                }
+              } catch {}
+            }
+
+            const systemPrompt = `You are ACSA Code AI Assistant, an expert, thoughtful, and pragmatic coding companion integrated into ACSA Code. Help the user understand, write, review, debug, and navigate their code. Provide clear explanations and clean markdown code blocks with language tags when showing code.${indexContext}${workspaceContext ? `\n${workspaceContext}` : ""}`;
 
             const fullMessages = [
               { role: "system", content: systemPrompt },
               ...safeMessages.map((m: any) => ({ role: m.role, content: m.content })),
             ];
+
+            // Attach multimodal images if provided
+            if (Array.isArray(images) && images.length > 0) {
+              const lastUser = [...fullMessages].reverse().find((m) => m.role === "user");
+              if (lastUser) {
+                (lastUser as any).images = images.map((img: string) =>
+                  img.replace(/^data:image\/[a-z]+;base64,/, "")
+                );
+              }
+            }
 
             // 1. Ollama Provider
             if (provider === "ollama") {
@@ -2200,16 +2585,96 @@ export function realFilesystemPlugin(): Plugin {
               }
             }
 
-            // 2. OpenAI / Groq / DeepSeek / Mistral / Compatible providers
-            if (provider === "openai" || provider === "groq" || provider === "deepseek" || provider === "mistral" || provider === "moonshot" || provider === "xai") {
-              const defaultEndpoints: Record<string, string> = {
-                openai: "https://api.openai.com/v1",
-                groq: "https://api.groq.com/openai/v1",
-                deepseek: "https://api.deepseek.com/v1",
-                mistral: "https://api.mistral.ai/v1",
-                moonshot: "https://api.moonshot.cn/v1",
-                xai: "https://api.x.ai/v1",
-              };
+            // 2. Anthropic (Claude)
+            if (provider === "anthropic") {
+              const url = baseUrl || "https://api.anthropic.com/v1";
+              if (!apiKey || apiKey.trim().length < 4) {
+                sendError(`Anthropic API Key is required to chat with Claude. Please configure it in AI Management Dashboard.`);
+                return;
+              }
+
+              try {
+                const claudeMessages = fullMessages
+                  .filter((m: any) => m.role !== "system")
+                  .map((m: any) => ({ role: m.role, content: m.content }));
+                const systemPrompt = fullMessages.find((m: any) => m.role === "system")?.content || "";
+
+                const aiRes = await fetch(`${url}/messages`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey.trim(),
+                    "anthropic-version": "2023-06-01",
+                  },
+                  body: JSON.stringify({
+                    model: model || "claude-3-5-sonnet-20241022",
+                    messages: claudeMessages,
+                    ...(systemPrompt ? { system: systemPrompt } : {}),
+                    max_tokens: 4096,
+                    stream: true,
+                  }),
+                });
+
+                if (!aiRes.ok) {
+                  const txt = await aiRes.text().catch(() => "");
+                  sendError(`Anthropic API error (${aiRes.status}): ${txt}`);
+                  return;
+                }
+
+                if (!aiRes.body) {
+                  sendError("No response stream received from Anthropic.");
+                  return;
+                }
+
+                const reader = aiRes.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() ?? "";
+
+                  for (const l of lines) {
+                    const line = l.trim();
+                    if (!line || !line.startsWith("data: ")) continue;
+                    const payload = line.slice(6).trim();
+                    try {
+                      const data = JSON.parse(payload);
+                      if (data.type === "content_block_delta" && data.delta?.text) {
+                        sendDelta(data.delta.text);
+                      } else if (data.type === "message_stop") {
+                        sendDone();
+                        return;
+                      }
+                    } catch {}
+                  }
+                }
+                sendDone();
+                return;
+              } catch (err: any) {
+                sendError(`Error calling Anthropic endpoint: ${err.message}`);
+                return;
+              }
+            }
+
+            // 3. OpenAI / Groq / DeepSeek / Google / Mistral / OpenRouter / Compatible providers
+            const defaultEndpoints: Record<string, string> = {
+              openai: "https://api.openai.com/v1",
+              google: "https://generativelanguage.googleapis.com/v1beta/openai",
+              groq: "https://api.groq.com/openai/v1",
+              deepseek: "https://api.deepseek.com/v1",
+              openrouter: "https://openrouter.ai/api/v1",
+              mistral: "https://api.mistral.ai/v1",
+              moonshot: "https://api.moonshot.cn/v1",
+              xai: "https://api.x.ai/v1",
+              together: "https://api.together.xyz/v1",
+              perplexity: "https://api.perplexity.ai",
+            };
+
+            if (provider in defaultEndpoints || provider === "openai") {
               const url = baseUrl || defaultEndpoints[provider] || "https://api.openai.com/v1";
 
               if (!apiKey || apiKey.trim().length < 4) {
@@ -2225,7 +2690,7 @@ export function realFilesystemPlugin(): Plugin {
                     Authorization: `Bearer ${apiKey.trim()}`,
                   },
                   body: JSON.stringify({
-                    model: model || "gpt-4o",
+                    model: model || (provider === "google" ? "gemini-1.5-flash" : "gpt-4o"),
                     messages: fullMessages,
                     stream: true,
                   }),
@@ -2276,17 +2741,12 @@ export function realFilesystemPlugin(): Plugin {
               }
             }
 
-            // 3. Deterministic AST / Offline Assistant Fallback
-            sendDelta("### ACSA Code Offline Assistant\n\n");
-            if (needsGitContext && workspaceContext) {
-              sendDelta(`Here is a breakdown of the recent changes in **${path.basename(projectRoot || "workspace")}**:\n\n`);
-              sendDelta("```text\n" + workspaceContext.replace(/---\s*.*?\s*---/g, "").trim() + "\n```\n\n");
-              sendDelta("The above files have been recently modified or added. You can ask for further details or switch to a live model like Ollama from the top **Local AI** button.");
-            } else {
-              sendDelta(`You are using the **Deterministic AST engine** (offline mode). You asked: \n\n> *${lastUserMsg}*\n\n`);
-              sendDelta("To chat with dynamic generative AI models like `qwen2.5-coder` or `llama3.2`, start **Ollama** via the **Local AI** button in the titlebar, or configure cloud API credentials in the Model Management tab.");
-            }
-            sendDone();
+            // 4. Actionable Offline Error Handling
+            sendError(
+              `The selected model provider "${provider}" is currently offline or unreachable. ` +
+              `If you are using Ollama, ensure it is running via the "Local AI" button in the titlebar or run "ollama serve". ` +
+              `If using cloud models (Anthropic, OpenAI, Groq, DeepSeek), ensure your API key is configured in the AI Management Dashboard.`
+            );
             return;
           }
 
@@ -2756,10 +3216,12 @@ export function realFilesystemPlugin(): Plugin {
               sliders,
               projectRoot,
               language = "python",
-              provider = "deterministic",
+              provider = "ollama",
               model = "",
               apiKey = "",
               baseUrl = "",
+              activeFilePath = "",
+              conversationHistory = [],
             } = body;
 
             res.setHeader("Content-Type", "text/event-stream");
@@ -2779,12 +3241,7 @@ export function realFilesystemPlugin(): Plugin {
               prompt,
               "--project-root",
               rootDir,
-              "--scale",
-              sliders?.budget_vs_scale || "medium",
-              "--speed",
-              sliders?.speed_vs_precision || "medium",
-              "--modularity",
-              sliders?.simplicity_vs_futureproof || "medium",
+              "--auto-scale",
               "--language",
               language,
               "--provider",
@@ -2792,8 +3249,41 @@ export function realFilesystemPlugin(): Plugin {
               "--json",
             ];
 
+            if (activeFilePath) {
+              args.push("--active-file", activeFilePath);
+            }
+
+            let tempHistoryFile = "";
+            if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+              try {
+                tempHistoryFile = path.join(os.tmpdir(), `acsa_history_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`);
+                fs.writeFileSync(tempHistoryFile, JSON.stringify(conversationHistory), "utf-8");
+                args.push("--history-file", tempHistoryFile);
+              } catch (e) {
+                console.warn("[Bridge] Failed to write temporary history file:", e);
+              }
+            }
+
+            const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
+              ollama: "http://127.0.0.1:11434",
+              llamacpp: "http://127.0.0.1:8080",
+              openai: "https://api.openai.com/v1",
+              anthropic: "https://api.anthropic.com/v1",
+              google: "https://generativelanguage.googleapis.com/v1beta/openai",
+              groq: "https://api.groq.com/openai/v1",
+              deepseek: "https://api.deepseek.com/v1",
+              openrouter: "https://openrouter.ai/api/v1",
+              mistral: "https://api.mistral.ai/v1",
+              moonshot: "https://api.moonshot.cn/v1",
+              xai: "https://api.x.ai/v1",
+              together: "https://api.together.xyz/v1",
+              perplexity: "https://api.perplexity.ai",
+            };
+
+            const effectiveBaseUrl = baseUrl || DEFAULT_PROVIDER_BASE_URLS[provider] || "";
             if (model) args.push("--model", model);
-            if (baseUrl) args.push("--base-url", baseUrl);
+            if (effectiveBaseUrl) args.push("--base-url", effectiveBaseUrl);
+            if (apiKey) args.push("--api-key", apiKey);
 
             sendEvent("output", {
               line_number: 1,
@@ -2818,13 +3308,52 @@ export function realFilesystemPlugin(): Plugin {
 
             let lineNum = 2;
             let stdoutBuffer = "";
+            let stdoutLineBuffer = "";
 
             pyProc.stdout.on("data", (chunk) => {
               const text = chunk.toString();
               stdoutBuffer += text;
-              const lines = text.split("\n");
+              stdoutLineBuffer += text;
+              const lines = stdoutLineBuffer.split("\n");
+              stdoutLineBuffer = lines.pop() || "";
+
               for (const line of lines) {
                 if (!line.trim()) continue;
+
+                if (line.startsWith("@@CHUNK@@")) {
+                  try {
+                    const token = JSON.parse(line.slice("@@CHUNK@@".length));
+                    sendEvent("chunk", { text: token });
+                  } catch {}
+                  continue;
+                }
+
+                if (line.startsWith("@@STEP@@")) {
+                  try {
+                    const step = JSON.parse(line.slice("@@STEP@@".length));
+                    sendEvent("step", step);
+                    sendEvent("output", {
+                      line_number: lineNum++,
+                      content: `[Step: ${step.name}] ${step.detail || ""} (${step.status})`,
+                      stream: "stdout",
+                    });
+                  } catch {}
+                  continue;
+                }
+
+                if (line.startsWith("@@THOUGHT@@")) {
+                  try {
+                    const thought = JSON.parse(line.slice("@@THOUGHT@@".length));
+                    sendEvent("thought", { text: thought });
+                    sendEvent("output", {
+                      line_number: lineNum++,
+                      content: `[Thinking] ${thought}`,
+                      stream: "stdout",
+                    });
+                  } catch {}
+                  continue;
+                }
+
                 sendEvent("output", {
                   line_number: lineNum++,
                   content: line,
@@ -2847,6 +3376,10 @@ export function realFilesystemPlugin(): Plugin {
             });
 
             pyProc.on("close", (code) => {
+              if (tempHistoryFile && fs.existsSync(tempHistoryFile)) {
+                try { fs.unlinkSync(tempHistoryFile); } catch {}
+              }
+
               sendEvent("output", {
                 line_number: lineNum++,
                 content: `Pipeline process exited with code ${code}`,
@@ -2885,6 +3418,103 @@ export function realFilesystemPlugin(): Plugin {
               res.end();
             });
 
+            return;
+          }
+
+          // ── GET /api/skills/list ──────────────────────────────────────────
+          if (pathname === "/api/skills/list" && req.method === "GET") {
+            const projectRoot = parsedUrl.searchParams.get("projectRoot") || process.cwd();
+            const resolvedRoot = resolveProjectRoot(projectRoot);
+
+            const scanDirs = [
+              { source: "project", dir: path.join(resolvedRoot, ".acsa", "skills") },
+              { source: "user", dir: path.join(os.homedir(), ".acsa", "skills") },
+              { source: "builtin", dir: path.resolve("core-engine/skills") },
+            ];
+
+            const skills: any[] = [];
+            const seenNames = new Set<string>();
+
+            for (const { source, dir } of scanDirs) {
+              if (!fs.existsSync(dir)) continue;
+              const files = fs.readdirSync(dir);
+              for (const file of files) {
+                if (!file.endsWith(".md")) continue;
+                const fullPath = path.join(dir, file);
+                try {
+                  const content = fs.readFileSync(fullPath, "utf-8");
+                  let name = path.basename(file, ".md");
+                  let description = "";
+                  let triggers = [`/${name}`, name];
+                  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+                  let body = content;
+                  if (fmMatch) {
+                    const [, fm, b] = fmMatch;
+                    body = b.trim();
+                    for (const line of fm.split("\n")) {
+                      const idx = line.indexOf(":");
+                      if (idx !== -1) {
+                        const k = line.slice(0, idx).trim().toLowerCase();
+                        const v = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+                        if (k === "name") name = v;
+                        if (k === "description") description = v;
+                        if (k === "triggers") {
+                          try {
+                            triggers = JSON.parse(v);
+                          } catch {
+                            triggers = v.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
+                          }
+                        }
+                      }
+                    }
+                  }
+                  if (!description) {
+                    for (const line of body.split("\n")) {
+                      const trimmed = line.trim();
+                      if (trimmed && !trimmed.startsWith("#")) {
+                        description = trimmed;
+                        break;
+                      }
+                    }
+                  }
+                  if (!seenNames.has(name)) {
+                    seenNames.add(name);
+                    skills.push({ name, description, triggers, source, path: fullPath, body });
+                  }
+                } catch {}
+              }
+            }
+
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, skills }));
+            return;
+          }
+
+          // ── POST /api/skills/import ───────────────────────────────────────
+          if (pathname === "/api/skills/import" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const { name, content, scope = "project", projectRoot } = body;
+            if (!name || !content) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: "name and content are required" }));
+              return;
+            }
+            const cleanName = name.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
+            const root = resolveProjectRoot(projectRoot || process.cwd());
+            const targetDir = scope === "project"
+              ? path.join(root, ".acsa", "skills")
+              : path.join(os.homedir(), ".acsa", "skills");
+
+            fs.mkdirSync(targetDir, { recursive: true });
+            const targetFile = path.join(targetDir, `${cleanName}.md`);
+
+            let fileContent = content;
+            if (!content.startsWith("---")) {
+              fileContent = `---\nname: ${cleanName}\ndescription: ${cleanName} custom skill\ntriggers: ["/${cleanName}", "${cleanName}"]\n---\n\n${content}`;
+            }
+            fs.writeFileSync(targetFile, fileContent, "utf-8");
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, name: cleanName, path: targetFile, scope }));
             return;
           }
 

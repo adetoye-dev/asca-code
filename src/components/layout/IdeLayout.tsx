@@ -111,6 +111,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     deleteFile,
     createProject,
     refreshProjectFiles,
+    indexStatus,
+    isIndexing,
+    syncIndex,
     prompt,
     setPrompt,
     status,
@@ -121,6 +124,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     cancelPipeline,
     clearLog,
     isTauriAvailable,
+    streamingAnswer,
+    streamingThought,
+    agentSteps,
   } = pipeline;
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
@@ -799,21 +805,29 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         status={status}
         activityLog={activityLog}
         projectRoot={activeProject.path}
-        onRunPipeline={(request, override) => {
+        onRunPipeline={(request, override, activePath, code, history) => {
           if (override) {
             setAiSettings({
               ...aiSettings,
               provider: override.provider as any,
               model: override.model,
+              apiKey: override.apiKey !== undefined ? override.apiKey : aiSettings.apiKey,
+              baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
             });
           }
-          runPipeline(request, override);
+          runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history);
         }}
         onCancelPipeline={cancelPipeline}
         isWide={true}
         selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
         failureDetail={orchestrationResult?.error_detail}
         orchestrationResult={orchestrationResult}
+        indexStatus={indexStatus}
+        isIndexing={isIndexing}
+        onSyncIndex={syncIndex}
+        streamingAnswer={streamingAnswer}
+        streamingThought={streamingThought}
+        agentSteps={agentSteps}
         onClose={() => {
           const api = dockviewApiRef.current;
           const panel = api?.getPanel("dock_ai_chat");
@@ -1294,15 +1308,17 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
-              onRunPipeline={(request, override) => {
+              onRunPipeline={(request, override, activePath, code, history) => {
                 if (override) {
                   setAiSettings({
                     ...aiSettings,
                     provider: override.provider as any,
                     model: override.model,
+                    apiKey: override.apiKey !== undefined ? override.apiKey : aiSettings.apiKey,
+                    baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
                   });
                 }
-                runPipeline(request, override);
+                runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history);
               }}
               onCancelPipeline={cancelPipeline}
               onClose={() => setIsRightPanelOpen(false)}
@@ -1311,13 +1327,25 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
               failureDetail={orchestrationResult?.error_detail}
               orchestrationResult={orchestrationResult}
+              indexStatus={indexStatus}
+              isIndexing={isIndexing}
+              onSyncIndex={syncIndex}
+              streamingAnswer={streamingAnswer}
+              streamingThought={streamingThought}
+              agentSteps={agentSteps}
             />
           </aside>
         )}
 
       </div>
 
-      <StatusBar gitBranch={gitBranch} metrics={systemMetrics} />
+      <StatusBar
+        gitBranch={gitBranch}
+        metrics={systemMetrics}
+        indexStatus={indexStatus}
+        isIndexing={isIndexing}
+        onSyncIndex={syncIndex}
+      />
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
       <CloneModal
