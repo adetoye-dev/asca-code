@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from scale_detector import detect_project_scale, ScaleTier  # noqa: E402
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger("PromptInjector")
@@ -259,21 +261,39 @@ def map_sliders_to_constraints(sliders: NormalizedSliders) -> InjectedConstraint
     return constraints
 
 
-def inject_constraints(raw_payload: dict) -> InjectedConstraints:
-    """Accept raw frontend payload dict and return injected constraints.
+def derive_industry_standards_constraints(project_root_str: str = ".") -> InjectedConstraints:
+    """Derive engineering constraints based on detected scale and industry standards."""
+    try:
+        profile = detect_project_scale(project_root_str)
+        tier = profile.tier
+    except Exception:
+        tier = ScaleTier.STANDARD
 
-    This is the primary entry point called by the orchestrator.
-    """
-    payload = SliderPayload(
-        budget_vs_scale=raw_payload.get("budget_vs_scale", "medium"),
-        speed_vs_precision=raw_payload.get("speed_vs_precision", "medium"),
-        simplicity_vs_futureproof=raw_payload.get(
-            "simplicity_vs_futureproof", "medium"
-        ),
-    )
+    constraints = [
+        "Follow industry-standard architectural best practices for this codebase.",
+        "Implement strict type safety (type annotations, interfaces, or type hints) on all modified/new functions.",
+        "Preserve existing public API and function contracts to ensure backwards compatibility.",
+        "Include defensive error handling with clear, context-rich error messages.",
+        "Write clean, idiomatic code adhering to PEP 8 (Python) or ESLint/Prettier (TypeScript/JavaScript).",
+        "Keep changes minimal and focused directly on the user request. Do not refactor unrelated code.",
+    ]
 
-    normalized = payload.normalize()
-    return map_sliders_to_constraints(normalized)
+    if tier == ScaleTier.MICRO:
+        constraints.append("Keep the implementation direct, clean, and lightweight. Avoid premature abstractions.")
+    elif tier == ScaleTier.ENTERPRISE:
+        constraints.append("Ensure modular boundaries, decoupled layers, and observable telemetry (logging/metrics).")
+    else:
+        constraints.append("Structure components with clear separation of concerns, unit-testable functions, and standard error handling.")
+
+    logger.info("Autonomous constraints injected: %d industry standards (tier=%s)", len(constraints), tier.value)
+    return InjectedConstraints(scale_constraints=constraints)
+
+
+def inject_constraints(raw_payload: Optional[dict] = None, project_root: str = ".") -> InjectedConstraints:
+    """Accept optional payload dict and return autonomous industry standard constraints."""
+    if isinstance(raw_payload, dict) and "project_root" in raw_payload:
+        project_root = raw_payload["project_root"]
+    return derive_industry_standards_constraints(project_root)
 
 
 # ── Prompt Assembly ──────────────────────────────────────────────────────────

@@ -6,21 +6,34 @@
  * the local Deterministic AST engine.
  */
 
+export interface AgentStep {
+  id?: string;
+  name: string;
+  detail?: string;
+  status: "running" | "done" | "failed" | "success";
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  images?: string[];
   timestamp: number;
   provider?: string;
   model?: string;
   isStreaming?: boolean;
+  thinking?: string;
+  steps?: AgentStep[];
   error?: boolean;
+  errorType?: "offline" | "timeout" | "syntax" | "general";
+  diffPreview?: string;
 }
 
 export interface StreamChatParams {
   provider: string;
   model: string;
   messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  images?: string[];
   projectRoot?: string;
   baseUrl?: string;
   apiKey?: string;
@@ -34,6 +47,7 @@ export async function streamChatCompletion({
   provider,
   model,
   messages,
+  images,
   projectRoot = "",
   baseUrl = "",
   apiKey = "",
@@ -50,6 +64,7 @@ export async function streamChatCompletion({
         provider,
         model,
         messages,
+        images,
         projectRoot,
         baseUrl,
         apiKey,

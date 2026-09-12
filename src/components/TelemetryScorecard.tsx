@@ -40,11 +40,13 @@ export interface CorrectionRound {
 
 /** Full orchestration result from manager.py OrchestrationResult.to_dict() */
 export interface OrchestrationResult {
-  outcome: "success" | "max_retries_exceeded" | "llm_unreachable" | "paradox_detected";
+  outcome: "success" | "max_retries_exceeded" | "llm_unreachable" | "paradox_detected" | "timeout";
   total_rounds: number;
   elapsed_ms: number;
   error_detail: string;
   rounds: CorrectionRound[];
+  answer?: string;
+  intent?: "inquiry" | "mutation";
 }
 
 /** Pipeline output line from Tauri's pipeline:output event */
@@ -83,7 +85,8 @@ export interface TelemetryScorecardProps {
   pipelineStatus: PipelineStatus;
   activityLog: PipelineOutputLine[];
   systemMetrics: SystemMetrics | null;
-  sliderScale: "low" | "medium" | "high";
+  sliderScale?: "low" | "medium" | "high" | "micro" | "standard" | "enterprise";
+  scaleTier?: "micro" | "standard" | "enterprise";
 }
 
 // ── Cost Estimation ─────────────────────────────────────────────────────────
@@ -96,15 +99,22 @@ interface CostEstimate {
 
 function estimateCosts(
   telemetry: TelemetryData | null,
-  scale: "low" | "medium" | "high"
+  scale: "low" | "medium" | "high" | "micro" | "standard" | "enterprise" = "standard"
 ): CostEstimate {
+  const normalizedScale: "low" | "medium" | "high" =
+    scale === "micro" || scale === "low"
+      ? "low"
+      : scale === "enterprise" || scale === "high"
+      ? "high"
+      : "medium";
+
   if (!telemetry || telemetry.requests_per_second === 0) {
     const defaults: Record<string, CostEstimate> = {
       low:    { monthly_dollars: 5,   label: "~$5/mo",    max_concurrent_users: 100 },
       medium: { monthly_dollars: 25,  label: "~$25/mo",   max_concurrent_users: 5000 },
       high:   { monthly_dollars: 120, label: "~$120/mo",  max_concurrent_users: 50000 },
     };
-    return defaults[scale];
+    return defaults[normalizedScale];
   }
 
   // Estimate from measured throughput
@@ -372,9 +382,11 @@ export function TelemetryScorecard({
   pipelineStatus,
   activityLog,
   systemMetrics,
-  sliderScale,
+  sliderScale = "standard",
+  scaleTier,
 }: TelemetryScorecardProps) {
-  const costs = estimateCosts(telemetry, sliderScale);
+  const effectiveScale = scaleTier || sliderScale;
+  const costs = estimateCosts(telemetry, effectiveScale);
   const security = deriveSecurityStatus(orchestrationResult, telemetry);
 
   // Format numbers for display
@@ -431,7 +443,7 @@ export function TelemetryScorecard({
         <MetricCard
           label="Est. Hosting Cost"
           value={costs.label}
-          sublabel={`Based on ${sliderScale} scale profile`}
+          sublabel={`Based on ${effectiveScale} scale profile`}
           icon="💰"
           color="text-emerald-400"
         />
@@ -616,12 +628,16 @@ export function TelemetryScorecard({
                 }`}
               >
                 {orchestrationResult.outcome === "success"
-                  ? "Pipeline Complete"
+                  ? orchestrationResult.intent === "inquiry"
+                    ? "Inquiry Answered"
+                    : "Pipeline Complete"
                   : orchestrationResult.outcome === "max_retries_exceeded"
                     ? "Max Retries Exceeded"
                     : orchestrationResult.outcome === "llm_unreachable"
                       ? "LLM Sidecar Unreachable"
-                      : "Contradictory Requirements Detected"}
+                      : orchestrationResult.outcome === "timeout"
+                        ? "Request Timed Out"
+                        : "Contradictory Requirements Detected"}
               </span>
             </div>
             <div className="flex items-center gap-3 text-xs text-zinc-500">

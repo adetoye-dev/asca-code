@@ -481,8 +481,19 @@ LINTER_REGISTRY: dict[str, dict] = {
 
 
 def _resolve_binary(name: str) -> Optional[str]:
-    """Check if a binary is available on PATH."""
-    return shutil.which(name)
+    """Check if a binary is available on PATH or local node_modules/.bin."""
+    found = shutil.which(name)
+    if found:
+        return found
+    try:
+        cwd = Path.cwd().resolve()
+        for candidate in [cwd, *cwd.parents]:
+            local_bin = candidate / "node_modules" / ".bin" / name
+            if local_bin.is_file() and os.access(local_bin, os.X_OK):
+                return str(local_bin)
+    except Exception:
+        pass
+    return None
 
 
 def _run_linter(
@@ -523,6 +534,8 @@ def _run_linter(
         )
 
     argv = config["argv_builder"](relevant)
+    if argv and binary_path:
+        argv[0] = binary_path
 
     start = time.monotonic()
     try:
@@ -791,7 +804,11 @@ def run_syntax_gate(
     return report
 
 
-def format_context_card(report: GauntletReport, max_tokens: int = 2000) -> str:
+def format_context_card(
+    report: GauntletReport,
+    max_tokens: int = 2000,
+    base_dir: Optional[str] = None,
+) -> str:
     """Compress a GauntletReport into a token-budgeted context card for the model.
 
     The card is a compact JSON string containing only actionable diagnostics,
@@ -813,8 +830,21 @@ def format_context_card(report: GauntletReport, max_tokens: int = 2000) -> str:
     all_diags.sort(key=lambda d: (0 if d.severity == Severity.ERROR else 1, d.file, d.line))
 
     for diag in all_diags:
+        file_display = diag.file
+        if base_dir:
+            try:
+                rel = os.path.relpath(diag.file, base_dir)
+                if not rel.startswith(".."):
+                    file_display = rel
+            except (ValueError, Exception):
+                pass
+        if "ide_staging_" in file_display:
+            parts = file_display.split("ide_staging_")
+            if len(parts) > 1 and "/" in parts[1]:
+                file_display = parts[1].split("/", 1)[1]
+
         entry = {
-            "f": diag.file,
+            "f": file_display,
             "l": diag.line,
             "c": diag.column,
             "s": diag.severity.value[0],  # "e" / "w" / "i"

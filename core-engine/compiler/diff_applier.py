@@ -293,6 +293,44 @@ def _parse_hunks(lines: list[str]) -> list[DiffHunk]:
     return hunks
 
 
+def _find_hunk_offset(
+    lines: list[str],
+    hunk: DiffHunk,
+    window: int = 150,
+) -> Optional[int]:
+    """Find the best 1-indexed line number in lines where the hunk's context matches."""
+    expected = [content.rstrip("\r\n") for _, content in hunk.context_lines]
+    if not expected:
+        return hunk.header.old_start
+
+    n_exp = len(expected)
+    n_lines = len(lines)
+    if n_exp > n_lines:
+        return None
+
+    hint = hunk.header.old_start - 1
+
+    def match_at(pos: int, strip_ws: bool = False) -> bool:
+        if pos < 0 or pos + n_exp > n_lines:
+            return False
+        if strip_ws:
+            return all(lines[pos + i].strip() == expected[i].strip() for i in range(n_exp))
+        return all(lines[pos + i].rstrip("\r\n") == expected[i] for i in range(n_exp))
+
+    if match_at(hint) or match_at(hint, strip_ws=True):
+        return hunk.header.old_start
+
+    # 3. Search outward from hint by distance across the entire file
+    max_delta = max(hint, n_lines - hint)
+    for delta in range(1, max_delta + 1):
+        for cand in (hint - delta, hint + delta):
+            if 0 <= cand <= n_lines - n_exp:
+                if match_at(cand) or match_at(cand, strip_ws=True):
+                    return cand + 1
+
+    return None
+
+
 # ── Context Validation ───────────────────────────────────────────────────────
 
 
@@ -333,6 +371,11 @@ def validate_patch(
     file_lines = file_content.splitlines()
 
     for hunk in patch.hunks:
+        relocated = _find_hunk_offset(file_lines, hunk)
+        if relocated is not None and relocated != hunk.header.old_start:
+            logger.info("Relocated hunk from line %d to %d in %s", hunk.header.old_start, relocated, patch.new_path)
+            hunk.header.old_start = relocated
+
         for line_no, expected_content in hunk.context_lines:
             idx = line_no - 1  # Convert to 0-indexed
 
@@ -347,7 +390,7 @@ def validate_patch(
             expected_stripped = expected_content.rstrip("\n\r")
             actual_stripped = actual.rstrip("\n\r")
 
-            if expected_stripped != actual_stripped:
+            if expected_stripped != actual_stripped and expected_stripped.strip() != actual_stripped.strip():
                 mismatches.append(
                     f"Line {line_no}: context mismatch\n"
                     f"  expected: {repr(expected_stripped[:120])}\n"
@@ -532,8 +575,11 @@ def _apply_single_hunk(
     lines: list[str], hunk: DiffHunk
 ) -> list[str]:
     """Apply a single hunk to a list of lines (with keepends=True)."""
-    old_start = hunk.header.old_start - 1  # 0-indexed
+    clean_lines = [l.rstrip("\r\n") for l in lines]
+    relocated = _find_hunk_offset(clean_lines, hunk)
+    old_start = (relocated - 1) if relocated is not None else (hunk.header.old_start - 1)
 
+    expected_len = len(hunk.context_lines)
     replacement: list[str] = []
     consumed = 0
 
@@ -552,9 +598,8 @@ def _apply_single_hunk(
                 content += "\n"
             replacement.append(content)
 
-    end_idx = min(
-        old_start + max(consumed, hunk.header.old_count), len(lines)
-    )
+    span = expected_len if relocated is not None else max(consumed, hunk.header.old_count)
+    end_idx = min(old_start + span, len(lines))
     result = list(lines)
     result[old_start:end_idx] = replacement
     return result
