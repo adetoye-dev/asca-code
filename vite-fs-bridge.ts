@@ -2804,7 +2804,7 @@ export function realFilesystemPlugin(): Plugin {
                 'Respond with ONLY a JSON object of the shape {"issues":[{"line":<number>,"severity":"error|warning|info","title":"<short>","detail":"<why>","suggestion":"<concrete fix>"}]}. ' +
                 "Use the 1-based line number in the file. Report at most 12 issues, most important first. If the file is clean, return {\"issues\":[]}. No prose, no markdown fences.";
               const userPrompt = `File: ${reviewPath}${language ? ` (${language})` : ""}\n\n\`\`\`\n${clipped}\n\`\`\`\n\nReturn the JSON review object.`;
-              const requestSignal = AbortSignal.timeout(60000);
+              const requestSignal = AbortSignal.timeout(180000);
               const effectiveModel = model || (provider === "ollama" ? "qwen2.5-coder:7b" : "");
               let raw = "";
 
@@ -2922,7 +2922,7 @@ export function realFilesystemPlugin(): Plugin {
               const userPrompt = `Context before:\n${(surroundingPrefix || "").slice(-600)}\n\nCode to edit:\n${selectedCode}\n\nContext after:\n${(surroundingSuffix || "").slice(0, 600)}\n\nInstruction: ${instruction}\n\nEmit updated code:`;
 
               let replacement = "";
-              const requestSignal = AbortSignal.timeout(30000);
+              const requestSignal = AbortSignal.timeout(120000);
 
               if (provider === "ollama") {
                 const url = (baseUrl || "http://127.0.0.1:11434") + "/api/generate";

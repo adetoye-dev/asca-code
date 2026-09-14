@@ -57,6 +57,7 @@ export function AiManagementDashboard({
   const [showOllamaWizard, setShowOllamaWizard] = useState(false);
   const [openSpecsModelTag, setOpenSpecsModelTag] = useState<string | null>(null);
   const [usage, setUsage] = useState<any>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   // Poll the usage ledger (persisted by the Python engine in .acsa/usage.jsonl).
   useEffect(() => {
@@ -260,6 +261,8 @@ export function AiManagementDashboard({
 
         const updated: AIProviderConfig = {
           ...activeProvider,
+          apiKey: apiKeyInput.trim() || activeProvider.apiKey,
+          baseUrl: (baseUrlInput || activeProvider.baseUrl || "").trim(),
           isConnected: !!data.ok,
           latencyMs: data.latencyMs,
           availableModels: newModels,
@@ -273,13 +276,21 @@ export function AiManagementDashboard({
         setSelectedModel(resolvedModel);
       } else {
         setTestResult({ ok: false, message: `Server returned HTTP ${res.status}` });
-        const updated: AIProviderConfig = { ...activeProvider, isConnected: false };
+        const updated: AIProviderConfig = {
+          ...activeProvider,
+          apiKey: apiKeyInput.trim() || activeProvider.apiKey,
+          isConnected: false,
+        };
         const newMap = saveProviderConfig(updated);
         setProviders(newMap);
       }
     } catch (err: any) {
       setTestResult({ ok: false, message: `Ping failed: ${err.message}` });
-      const updated: AIProviderConfig = { ...activeProvider, isConnected: false };
+      const updated: AIProviderConfig = {
+        ...activeProvider,
+        apiKey: apiKeyInput.trim() || activeProvider.apiKey,
+        isConnected: false,
+      };
       const newMap = saveProviderConfig(updated);
       setProviders(newMap);
     } finally {
@@ -1115,17 +1126,37 @@ export function AiManagementDashboard({
                 />
               </div>
 
-              {/* Test Connection Button */}
+              {/* Provider Actions */}
               <div className="space-y-2 pt-1">
-                <button
-                  type="button"
-                  disabled={isTesting}
-                  onClick={handleTestConnection}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all shadow-sm"
-                >
-                  <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-purple-400" : "text-zinc-400"}`} />
-                  <span>{isTesting ? "Pinging Endpoint..." : "Test Connection"}</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={isTesting}
+                    onClick={handleTestConnection}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-200 hover:text-white transition-all shadow-sm"
+                  >
+                    <Icon icon={RefreshCw} className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-purple-400" : "text-zinc-400"}`} />
+                    <span>{isTesting ? "Pinging Endpoint..." : "Test Connection"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSaveProvider();
+                      setSavedFlash(true);
+                      window.setTimeout(() => setSavedFlash(false), 2500);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white transition-all shadow-sm"
+                  >
+                    <Icon icon={ShieldCheck} className="w-3.5 h-3.5" />
+                    <span>{savedFlash ? "Saved ✓" : "Save Configuration"}</span>
+                  </button>
+                </div>
+                {activeProvider.category === "cloud" && (
+                  <p className="text-[10px] text-zinc-500">
+                    API keys are stored locally in this browser and are used by the agent, editor review and inline edit.
+                  </p>
+                )}
 
                 {testResult && (
                   <div

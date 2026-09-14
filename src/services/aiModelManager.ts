@@ -421,6 +421,11 @@ export function saveProviderConfig(config: AIProviderConfig): Record<AIProviderI
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {}
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
+    }
+  } catch {}
   return all;
 }
 

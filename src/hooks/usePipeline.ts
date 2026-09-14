@@ -22,6 +22,7 @@ import type {
 } from "../components/TelemetryScorecard";
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
+import { loadAllProviders } from "../services/aiModelManager";
 import {
   syncProjectIndex,
   getIndexStatus,
@@ -122,30 +123,55 @@ const DEFAULT_AI_SETTINGS: AISettings = {
   baseUrl: "http://127.0.0.1:11434",
 };
 
+/**
+ * The "AI Models & Providers" page is the single source of truth for API keys,
+ * while `aide_ai_settings` only persists provider/model/baseUrl (secrets are
+ * deliberately not duplicated there). Hydrate the key, base URL and model from
+ * the provider registry so editor AI and the pipeline always see the
+ * credentials the user actually configured.
+ */
+function hydrateAiSettings(settings: AISettings): AISettings {
+  try {
+    const providers = loadAllProviders() as Record<string, any>;
+    const cfg = providers?.[settings.provider];
+    if (!cfg) return settings;
+    return {
+      ...settings,
+      model: settings.model || cfg.selectedModel || "",
+      apiKey: settings.apiKey || cfg.apiKey || "",
+      baseUrl: settings.baseUrl || cfg.baseUrl || "",
+    };
+  } catch {
+    return settings;
+  }
+}
+
 export function usePipeline(): UsePipelineReturn {
   const isTauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   // AI settings
   const [aiSettings, setAiSettingsState] = useState<AISettings>(() => {
+    let raw: AISettings = DEFAULT_AI_SETTINGS;
     try {
       const saved =
         localStorage.getItem("aide_ai_settings") ||
         localStorage.getItem("ide_ai_settings");
-      if (!saved) return DEFAULT_AI_SETTINGS;
-      const parsed = JSON.parse(saved);
-      if (parsed && typeof parsed === "object") {
-        const p = parsed.provider === "deterministic" ? "ollama" : (parsed.provider || DEFAULT_AI_SETTINGS.provider);
-        return {
-          provider: p,
-          model: parsed.model || (p === "ollama" ? "qwen2.5-coder:7b" : DEFAULT_AI_SETTINGS.model),
-          apiKey: parsed.apiKey || DEFAULT_AI_SETTINGS.apiKey,
-          baseUrl: parsed.baseUrl || (p === "ollama" ? "http://127.0.0.1:11434" : DEFAULT_AI_SETTINGS.baseUrl),
-        };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          const p = parsed.provider === "deterministic" ? "ollama" : (parsed.provider || DEFAULT_AI_SETTINGS.provider);
+          raw = {
+            provider: p,
+            // Never fall back to the Ollama default tag for a cloud provider -
+            // hydration fills the model from the provider registry instead.
+            model: parsed.model || (p === "ollama" ? "qwen2.5-coder:7b" : ""),
+            apiKey: parsed.apiKey || "",
+            baseUrl: parsed.baseUrl || (p === "ollama" ? "http://127.0.0.1:11434" : ""),
+          };
+        }
       }
-      return DEFAULT_AI_SETTINGS;
-    } catch {
-      return DEFAULT_AI_SETTINGS;
-    }
+    } catch {}
+    return hydrateAiSettings(raw);
   });
 
   const setAiSettings = (newSettings: AISettings) => {
@@ -155,12 +181,27 @@ export function usePipeline(): UsePipelineReturn {
       apiKey: newSettings?.apiKey || "",
       baseUrl: newSettings?.baseUrl || "",
     };
-    setAiSettingsState(safeSettings);
+    setAiSettingsState(hydrateAiSettings(safeSettings));
     try {
       const { provider, model, baseUrl } = safeSettings;
       localStorage.setItem("aide_ai_settings", JSON.stringify({ provider, model, baseUrl }));
     } catch {}
   };
+
+  // Re-hydrate keys/base URLs whenever the AI Models & Providers page saves,
+  // or another tab changes storage, so editor AI never runs with a stale key.
+  useEffect(() => {
+    const refresh = () => setAiSettingsState((prev) => hydrateAiSettings(prev));
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.includes("ai_providers") || e.key.includes("ai_settings")) refresh();
+    };
+    window.addEventListener("acsa:models-updated", refresh);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("acsa:models-updated", refresh);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   // Active project state
   const [activeProject, setActiveProjectState] = useState<ProjectMeta>(() => {
