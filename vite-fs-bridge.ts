@@ -2514,14 +2514,15 @@ export function realFilesystemPlugin(): Plugin {
               bucket.cost_usd += Number(r.cost_usd || 0);
               bucket.latency_ms += Number(r.latency_ms || 0);
             }
-            const dailyMap = new Map<string, any>();
+            // Always emit a full 14-day window: a single day of activity must not
+            // stretch into one giant bar, and empty days show as quiet slots.
+            const byDate = new Map<string, any>();
             for (const r of rows) {
               const when = new Date(Number(r.ts || 0) * 1000);
-              const key = Number.isNaN(when.getTime())
-                ? "unknown"
-                : when.toISOString().slice(0, 10);
-              if (!dailyMap.has(key)) {
-                dailyMap.set(key, {
+              if (Number.isNaN(when.getTime())) continue;
+              const key = when.toISOString().slice(0, 10);
+              if (!byDate.has(key)) {
+                byDate.set(key, {
                   date: key,
                   calls: 0,
                   prompt_tokens: 0,
@@ -2529,16 +2530,26 @@ export function realFilesystemPlugin(): Plugin {
                   cost_usd: 0,
                 });
               }
-              const bucket = dailyMap.get(key);
+              const bucket = byDate.get(key);
               bucket.calls += 1;
               bucket.prompt_tokens += Number(r.prompt_tokens || 0);
               bucket.completion_tokens += Number(r.completion_tokens || 0);
               bucket.cost_usd += Number(r.cost_usd || 0);
             }
-            const daily = Array.from(dailyMap.values())
-              .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-              .slice(-14)
-              .map((d) => ({ ...d, cost_usd: Number(Number(d.cost_usd).toFixed(6)) }));
+            const daily: any[] = [];
+            const today = new Date();
+            for (let offset = 13; offset >= 0; offset -= 1) {
+              const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+              const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(
+                day.getDate()
+              ).padStart(2, "0")}`;
+              const found = byDate.get(key);
+              daily.push(
+                found
+                  ? { ...found, cost_usd: Number(Number(found.cost_usd).toFixed(6)) }
+                  : { date: key, calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0 }
+              );
+            }
 
             const roundedTotals = {
               ...totals,

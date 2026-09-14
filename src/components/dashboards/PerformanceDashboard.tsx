@@ -76,7 +76,7 @@ function HatchedBarGauge({
 }
 
 // ── 2. Live CPU Horizon Time-Series Chart ────────────────────────────────────
-// ── 2. AI Usage & Cost Trend ────────────────────────────────────────────────
+// ── 2. AI Spend & Savings (hero) ────────────────────────────────────────────
 interface UsageDay {
   date: string;
   calls: number;
@@ -85,66 +85,6 @@ interface UsageDay {
   cost_usd: number;
 }
 
-function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
-  const rows = daily || [];
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Usage & Cost</h3>
-        <p className="text-[11px] text-zinc-500 mt-3">
-          No AI activity recorded yet. Run a task and its tokens and cost will appear here.
-        </p>
-      </div>
-    );
-  }
-  const maxTokens = Math.max(1, ...rows.map((d) => d.prompt_tokens + d.completion_tokens));
-  const totalCalls = rows.reduce((a, d) => a + d.calls, 0);
-  const totalTokens = rows.reduce((a, d) => a + d.prompt_tokens + d.completion_tokens, 0);
-  const totalCost = rows.reduce((a, d) => a + d.cost_usd, 0);
-  return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Usage & Cost</h3>
-        <span className="text-[10px] font-mono text-zinc-500">last {rows.length} day(s)</span>
-      </div>
-      <div className="mt-4 flex items-end gap-1.5 h-28">
-        {rows.map((d) => {
-          const tokens = d.prompt_tokens + d.completion_tokens;
-          const height = Math.max(3, (tokens / maxTokens) * 100);
-          return (
-            <div
-              key={d.date}
-              className="flex-1 flex flex-col items-center justify-end h-full group"
-              title={`${d.date}: ${tokens.toLocaleString()} tokens, ${d.calls} call(s), $${Number(d.cost_usd).toFixed(4)}`}
-            >
-              <div className="w-full rounded-t bg-gradient-to-t from-cyan-700/40 to-cyan-400/80 group-hover:from-cyan-600/60 group-hover:to-cyan-300 transition-colors" style={{ height: `${height}%` }} />
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] font-mono text-zinc-500">
-        <span>{String(rows[0].date).slice(5)}</span>
-        <span>{String(rows[rows.length - 1].date).slice(5)}</span>
-      </div>
-      <div className="mt-3 pt-3 border-t border-white/[0.06] grid grid-cols-3 gap-2 text-center">
-        <div>
-          <div className="text-[10px] uppercase text-zinc-500">Calls</div>
-          <div className="text-sm font-bold text-zinc-100 font-mono">{totalCalls}</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase text-zinc-500">Tokens</div>
-          <div className="text-sm font-bold text-zinc-100 font-mono">{totalTokens.toLocaleString()}</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase text-zinc-500">Spend</div>
-          <div className="text-sm font-bold text-emerald-400 font-mono">${totalCost.toFixed(4)}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── 3. Which Model Did The Work ─────────────────────────────────────────────
 interface ModelUsage {
   provider: string;
   model: string;
@@ -154,33 +94,168 @@ interface ModelUsage {
   cost_usd: number;
 }
 
-function ModelMixPanel({ byModel }: { byModel: ModelUsage[] }) {
-  const rows = (byModel || []).slice(0, 5);
+const REFERENCE_INPUT_PER_M = 2.5;
+const REFERENCE_OUTPUT_PER_M = 10;
+
+function SpendSavingsCard({
+  byModel,
+  totalCostUsd,
+  totalCalls,
+  totalTokens,
+  avgLatencyS,
+}: {
+  byModel: ModelUsage[];
+  totalCostUsd: number;
+  totalCalls: number;
+  totalTokens: number;
+  avgLatencyS: number;
+}) {
+  const local = (byModel || []).filter((m) => m.provider === "ollama");
+  const localCalls = local.reduce((a, m) => a + m.calls, 0);
+  const tokensIn = local.reduce((a, m) => a + m.prompt_tokens, 0);
+  const tokensOut = local.reduce((a, m) => a + m.completion_tokens, 0);
+  const avoided =
+    (tokensIn / 1_000_000) * REFERENCE_INPUT_PER_M + (tokensOut / 1_000_000) * REFERENCE_OUTPUT_PER_M;
+  const localShare = totalCalls > 0 ? Math.round((localCalls / totalCalls) * 100) : 0;
+  const spend = Number(totalCostUsd || 0);
+
+  if (totalCalls === 0) {
+    return (
+      <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Spend &amp; Savings</h3>
+        <p className="text-[11px] text-zinc-500 mt-3">
+          No AI activity yet. Run a task and its cost and savings will show up here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Spend &amp; Savings</h3>
+        <span className="text-[10px] font-mono text-zinc-500">
+          {totalCalls} call(s){avgLatencyS > 0 ? ` · avg ${avgLatencyS.toFixed(0)}s` : ""}
+        </span>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-end gap-x-10 gap-y-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">Estimated saved</div>
+          <div className="text-3xl font-bold font-mono text-emerald-300 leading-none mt-1.5">
+            ${avoided.toFixed(2)}
+          </div>
+          <div className="text-[10px] text-zinc-500 mt-1.5">
+            by running {localShare}% of work on this machine
+          </div>
+        </div>
+        <div className="flex gap-7">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Actual spend</div>
+            <div className="text-lg font-bold font-mono text-zinc-100 mt-1">${spend.toFixed(4)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">If all cloud</div>
+            <div className="text-lg font-bold font-mono text-zinc-500 mt-1">
+              ${(spend + avoided).toFixed(4)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Tokens</div>
+            <div className="text-lg font-bold font-mono text-zinc-100 mt-1">
+              {Number(totalTokens || 0).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <div className="flex h-2.5 rounded-full overflow-hidden bg-zinc-800">
+          <div className="bg-emerald-500/80" style={{ width: `${localShare}%` }} />
+          <div className="bg-purple-500/80 flex-1" />
+        </div>
+        <div className="flex justify-between text-[10px] font-mono mt-1.5">
+          <span className="text-emerald-400">{localShare}% local · $0</span>
+          <span className="text-purple-300">
+            {100 - localShare}% cloud · ${spend.toFixed(4)}
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-3 text-[10px] text-zinc-500 leading-snug">
+        Savings estimate prices local tokens at a reference cloud rate of ${REFERENCE_INPUT_PER_M}/1M input
+        and ${REFERENCE_OUTPUT_PER_M}/1M output.
+      </p>
+    </div>
+  );
+}
+
+// ── 3. Usage over the last 14 days ──────────────────────────────────────────
+function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
+  const rows = daily || [];
+  const hasActivity = rows.some((d) => d.calls > 0);
+  const maxTokens = Math.max(1, ...rows.map((d) => d.prompt_tokens + d.completion_tokens));
+
+  return (
+    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Usage — last 14 days</h3>
+        <span className="text-[10px] font-mono text-zinc-500">
+          {hasActivity ? `peak ${maxTokens.toLocaleString()} tokens/day` : "no activity"}
+        </span>
+      </div>
+      <div className="mt-4 flex items-end gap-1.5 h-24">
+        {rows.map((d) => {
+          const tokens = d.prompt_tokens + d.completion_tokens;
+          const height = tokens === 0 ? 3 : Math.max(8, Math.round((tokens / maxTokens) * 100));
+          return (
+            <div
+              key={d.date}
+              className="flex-1 h-full flex items-end group"
+              title={`${d.date}: ${tokens.toLocaleString()} tokens · ${d.calls} call(s) · $${Number(
+                d.cost_usd
+              ).toFixed(4)}`}
+            >
+              <div
+                className={`w-full rounded-t transition-colors ${
+                  tokens === 0
+                    ? "bg-zinc-800"
+                    : "bg-gradient-to-t from-cyan-700/40 to-cyan-400/80 group-hover:to-cyan-300"
+                }`}
+                style={{ height: `${height}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between text-[10px] font-mono text-zinc-500">
+        <span>{String(rows[0]?.date || "").slice(5)}</span>
+        <span>today</span>
+      </div>
+      {!hasActivity && (
+        <p className="mt-3 text-[11px] text-zinc-500">No AI activity in the last 14 days.</p>
+      )}
+    </div>
+  );
+}
+
+// ── 4. Models used ──────────────────────────────────────────────────────────
+function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
+  const rows = (byModel || []).slice(0, 6);
   const totalCalls = Math.max(1, (byModel || []).reduce((a, m) => a + m.calls, 0));
-  const localCalls = (byModel || [])
-    .filter((m) => m.provider === "ollama")
-    .reduce((a, m) => a + m.calls, 0);
-  const localShare = Math.round((localCalls / totalCalls) * 100);
 
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Which Model Did The Work</h3>
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Models Used</h3>
         <p className="text-[11px] text-zinc-500 mt-3">Nothing has run yet.</p>
       </div>
     );
   }
   return (
     <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Which Model Did The Work</h3>
-        <span className="text-[10px] font-mono text-emerald-400">{localShare}% local · $0</span>
-      </div>
-      <div className="mt-3 h-2 rounded-full overflow-hidden bg-zinc-800 flex">
-        <div className="bg-emerald-500/80" style={{ width: `${localShare}%` }} />
-        <div className="bg-purple-500/80 flex-1" />
-      </div>
-      <div className="mt-4 space-y-2.5">
+      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Models Used</h3>
+      <div className="mt-4 space-y-3">
         {rows.map((m) => {
           const share = Math.round((m.calls / totalCalls) * 100);
           const isLocal = m.provider === "ollama";
@@ -190,73 +265,25 @@ function ModelMixPanel({ byModel }: { byModel: ModelUsage[] }) {
                 <span className="text-zinc-300 truncate" title={`${m.provider}/${m.model}`}>
                   {m.model}
                 </span>
-                <span className={isLocal ? "text-emerald-400 shrink-0" : "text-zinc-400 shrink-0"}>
-                  {m.calls} call{m.calls === 1 ? "" : "s"} · {isLocal ? "$0" : `$${Number(m.cost_usd).toFixed(4)}`}
+                <span className={isLocal ? "text-emerald-400 shrink-0" : "text-purple-300 shrink-0"}>
+                  {m.calls} · {isLocal ? "$0" : `$${Number(m.cost_usd).toFixed(4)}`}
                 </span>
               </div>
-              <div className="mt-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-                <div
-                  className={isLocal ? "h-full bg-emerald-500/70" : "h-full bg-purple-500/70"}
-                  style={{ width: `${Math.max(3, share)}%` }}
-                />
+              <div className="mt-1 flex items-center gap-2">
+                <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                  <div
+                    className={isLocal ? "h-full bg-emerald-500/70" : "h-full bg-purple-500/70"}
+                    style={{ width: `${share}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono text-zinc-500 w-9 text-right">{share}%</span>
               </div>
             </div>
           );
         })}
       </div>
       <p className="mt-3 text-[10px] text-zinc-500">
-        Green runs on your machine for free; purple is a paid cloud model.
-      </p>
-    </div>
-  );
-}
-
-// ── 4. Spend vs Cloud-Only ──────────────────────────────────────────────────
-const REFERENCE_INPUT_PER_M = 2.5;
-const REFERENCE_OUTPUT_PER_M = 10;
-
-function SavingsPanel({ byModel, totalCostUsd }: { byModel: ModelUsage[]; totalCostUsd: number }) {
-  const local = (byModel || []).filter((m) => m.provider === "ollama");
-  const localCalls = local.reduce((a, m) => a + m.calls, 0);
-  const tokensIn = local.reduce((a, m) => a + m.prompt_tokens, 0);
-  const tokensOut = local.reduce((a, m) => a + m.completion_tokens, 0);
-  const avoided =
-    (tokensIn / 1_000_000) * REFERENCE_INPUT_PER_M + (tokensOut / 1_000_000) * REFERENCE_OUTPUT_PER_M;
-
-  if (localCalls === 0) {
-    return (
-      <p className="text-[11px] text-zinc-500">
-        All work has run on cloud models so far. Install a local model from the Marketplace to start
-        cutting cost.
-      </p>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30">
-        <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">
-          Estimated saved by running locally
-        </div>
-        <div className="text-2xl font-bold text-emerald-300 font-mono mt-0.5">${avoided.toFixed(2)}</div>
-        <div className="text-[10px] text-zinc-400 mt-1">
-          {localCalls} call{localCalls === 1 ? "" : "s"} handled on your machine instead of the cloud.
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-center">
-        <div className="p-2.5 rounded-lg bg-zinc-950/60 border border-white/[0.06]">
-          <div className="text-[10px] uppercase text-zinc-500">Actual spend</div>
-          <div className="text-sm font-bold text-zinc-100 font-mono">${Number(totalCostUsd || 0).toFixed(4)}</div>
-        </div>
-        <div className="p-2.5 rounded-lg bg-zinc-950/60 border border-white/[0.06]">
-          <div className="text-[10px] uppercase text-zinc-500">If all cloud</div>
-          <div className="text-sm font-bold text-zinc-400 font-mono">
-            ${(Number(totalCostUsd || 0) + avoided).toFixed(4)}
-          </div>
-        </div>
-      </div>
-      <p className="text-[10px] text-zinc-500 leading-snug">
-        Estimate assumes local work at a reference cloud rate of ${REFERENCE_INPUT_PER_M}/1M input and $
-        {REFERENCE_OUTPUT_PER_M}/1M output tokens.
+        Green runs locally and costs nothing; purple is a paid cloud model.
       </p>
     </div>
   );
@@ -303,7 +330,7 @@ export function PerformanceDashboard({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTelemetryOnline, setIsTelemetryOnline] = useState(false);
   const [hasStorageMetrics, setHasStorageMetrics] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<"spend" | "caches" | "services">("spend");
+  const [activeRightTab, setActiveRightTab] = useState<"caches" | "services">("caches");
   const [usage, setUsage] = useState<any>(null);
 
   const fetchStorageAndProcesses = async () => {
@@ -596,75 +623,38 @@ export function PerformanceDashboard({
         {/* ── 2-COLUMN MAIN TELEMETRY WORKBENCH ─────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           
-          {/* LEFT 6 COLS: what this work actually costs you ─────────────────── */}
-          <div className="lg:col-span-6 space-y-5">
+          {/* LEFT: what the AI work costs you ───────────────────────────────── */}
+          <div className="lg:col-span-7 space-y-5">
+            <SpendSavingsCard
+              byModel={usage?.by_model || []}
+              totalCostUsd={usage?.cost_usd || 0}
+              totalCalls={usage?.total_calls || 0}
+              totalTokens={(usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0)}
+              avgLatencyS={
+                usage && usage.total_calls > 0 ? usage.total_latency_ms / usage.total_calls / 1000 : 0
+              }
+            />
             <UsageTrendChart daily={usage?.daily || []} />
-            <ModelMixPanel byModel={usage?.by_model || []} />
           </div>
 
-          {/* RIGHT 6 COLS: Diagnostic Console & Spectrum Histogram ──────────── */}
-          <div className="lg:col-span-6 rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col justify-between space-y-4 shadow-2xl backdrop-blur-md">
+          {/* RIGHT: which models ran + workspace maintenance ────────────────── */}
+          <div className="lg:col-span-5 space-y-5">
+            <ModelsUsedPanel byModel={usage?.by_model || []} />
+
+            <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col space-y-4 shadow-2xl backdrop-blur-md">
             
             {/* Header */}
             <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
-                Workspace Diagnostics
+                Workspace Maintenance
               </h3>
-              <span className="text-[10px] font-mono text-zinc-500">Live Threads</span>
-            </div>
-
-            {/* AI Usage & Cost Metrics (replaces duplicated host stats already shown above) */}
-            <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-zinc-950/60 border border-white/[0.06] text-xs font-mono">
-              <div>
-                <div className="text-[10px] text-zinc-500 uppercase">Host Arch</div>
-                <div className="text-zinc-200 font-bold mt-0.5">{hostPlatform} {hostArchitecture}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-zinc-500 uppercase">AI Calls</div>
-                <div className="text-zinc-200 font-bold mt-0.5">{usage?.total_calls ?? 0}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-zinc-500 uppercase">Prompt Tokens</div>
-                <div className="text-zinc-200 font-bold mt-0.5">
-                  {Number(usage?.prompt_tokens ?? 0).toLocaleString()}
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Completion Tokens</div>
-                <div className="text-zinc-200 font-bold mt-0.5">
-                  {Number(usage?.completion_tokens ?? 0).toLocaleString()}
-                </div>
-              </div>
-              <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Avg Latency</div>
-                <div className="text-zinc-200 font-bold mt-0.5">
-                  {usage && usage.total_calls > 0
-                    ? `${(usage.total_latency_ms / usage.total_calls / 1000).toFixed(1)}s`
-                    : "0.0s"}
-                </div>
-              </div>
-              <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Est. Cost</div>
-                <div className="text-emerald-400 font-bold mt-0.5">
-                  ${Number(usage?.cost_usd ?? 0).toFixed(4)}
-                </div>
-              </div>
+              <span className="text-[10px] font-mono text-zinc-500">
+                {storage.cacheReclaimableMb.toFixed(0)} MB reclaimable
+              </span>
             </div>
 
             {/* Tab Underline Navigation */}
             <div className="flex items-center gap-6 border-b border-hairline text-xs font-semibold">
-              <button
-                type="button"
-                onClick={() => setActiveRightTab("spend")}
-                className={`pb-2.5 transition-colors cursor-pointer ${
-                  activeRightTab === "spend"
-                    ? "text-zinc-100 border-b-2 border-zinc-200 font-bold"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                Spend & Savings
-              </button>
               <button
                 type="button"
                 onClick={() => setActiveRightTab("caches")}
@@ -691,10 +681,6 @@ export function PerformanceDashboard({
 
             {/* Tab Views */}
             <div className="flex-1 min-h-[220px]">
-              {activeRightTab === "spend" && (
-                <SavingsPanel byModel={usage?.by_model || []} totalCostUsd={usage?.cost_usd || 0} />
-              )}
-
               {activeRightTab === "caches" && (
                 <div className="space-y-3">
                   <div className="overflow-x-auto">
@@ -773,6 +759,9 @@ export function PerformanceDashboard({
                 </div>
               )}
             </div>
+
+          </div>
+
 
           </div>
 
