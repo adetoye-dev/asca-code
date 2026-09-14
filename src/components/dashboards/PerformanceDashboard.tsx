@@ -539,18 +539,26 @@ export function PerformanceDashboard({
   const [isTelemetryOnline, setIsTelemetryOnline] = useState(false);
   const [hasStorageMetrics, setHasStorageMetrics] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"spectrum" | "caches" | "services">("spectrum");
+  const [usage, setUsage] = useState<any>(null);
 
   const fetchStorageAndProcesses = async () => {
     setIsRefreshing(true);
     try {
-      const [storageRes, procRes, sysMetrics] = await Promise.all([
+      const [storageRes, procRes, sysMetrics, usageRes] = await Promise.all([
         fetch("/api/system/storage"),
         fetch("/api/system/processes"),
         systemMetricsService.fetchMetrics(),
+        fetch("/api/ai/usage").catch(() => null),
       ]);
 
       if (sysMetrics) {
         setMetrics(sysMetrics);
+      }
+
+      if (usageRes && usageRes.ok) {
+        try {
+          setUsage(await usageRes.json());
+        } catch {}
       }
 
       if (storageRes.ok) {
@@ -641,7 +649,6 @@ export function PerformanceDashboard({
     : 88;
 
   const diskPercent = activeMetrics?.disk_usage_percent ?? (hasStorageMetrics && Number.isFinite(storage.usedPercent) ? Math.round(storage.usedPercent) : 61);
-  const diskFreeGb = activeMetrics?.disk_free_gb ?? (hasStorageMetrics ? storage.freeGb : 361.4);
   const diskTotalGb = activeMetrics?.disk_total_gb ?? (hasStorageMetrics ? storage.totalGb : 926.4);
   const diskUsedGb = activeMetrics?.disk_used_gb ?? (hasStorageMetrics ? storage.usedGb : 565);
   const formatGb = (value: number) => Number.isFinite(value) ? value.toFixed(1) : "unknown";
@@ -849,32 +856,42 @@ export function PerformanceDashboard({
               <span className="text-[10px] font-mono text-zinc-500">Live Threads</span>
             </div>
 
-            {/* Top 6-Metric Highlights Grid (Exact Reference Inspo) */}
+            {/* AI Usage & Cost Metrics (replaces duplicated host stats already shown above) */}
             <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-zinc-950/60 border border-white/[0.06] text-xs font-mono">
               <div>
                 <div className="text-[10px] text-zinc-500 uppercase">Host Arch</div>
                 <div className="text-zinc-200 font-bold mt-0.5">{hostPlatform} {hostArchitecture}</div>
               </div>
               <div>
-                <div className="text-[10px] text-zinc-500 uppercase">Total RAM</div>
-                <div className="text-zinc-200 font-bold mt-0.5">{memTotalGb} GB</div>
+                <div className="text-[10px] text-zinc-500 uppercase">AI Calls</div>
+                <div className="text-zinc-200 font-bold mt-0.5">{usage?.total_calls ?? 0}</div>
               </div>
               <div>
-                <div className="text-[10px] text-zinc-500 uppercase">Disk Free</div>
-                <div className="text-emerald-400 font-bold mt-0.5">{formatGb(diskFreeGb)} GB</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Prompt Tokens</div>
+                <div className="text-zinc-200 font-bold mt-0.5">
+                  {Number(usage?.prompt_tokens ?? 0).toLocaleString()}
+                </div>
               </div>
 
               <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Core Sockets</div>
-                <div className="text-zinc-200 font-bold mt-0.5">{activeMetrics?.cpu_count || 8} Cores</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Completion Tokens</div>
+                <div className="text-zinc-200 font-bold mt-0.5">
+                  {Number(usage?.completion_tokens ?? 0).toLocaleString()}
+                </div>
               </div>
               <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Active PIDs</div>
-                <div className="text-zinc-200 font-bold mt-0.5">{processes.length} Services</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Avg Latency</div>
+                <div className="text-zinc-200 font-bold mt-0.5">
+                  {usage && usage.total_calls > 0
+                    ? `${(usage.total_latency_ms / usage.total_calls / 1000).toFixed(1)}s`
+                    : "0.0s"}
+                </div>
               </div>
               <div className="pt-2 border-t border-white/[0.04]">
-                <div className="text-[10px] text-zinc-500 uppercase">Reclaimable</div>
-                <div className="text-amber-400 font-bold mt-0.5">{storage.cacheReclaimableMb.toFixed(0)} MB</div>
+                <div className="text-[10px] text-zinc-500 uppercase">Est. Cost</div>
+                <div className="text-emerald-400 font-bold mt-0.5">
+                  ${Number(usage?.cost_usd ?? 0).toFixed(4)}
+                </div>
               </div>
             </div>
 
