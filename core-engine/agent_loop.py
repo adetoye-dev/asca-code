@@ -713,6 +713,7 @@ def run_agent_loop(
     edited_files: set[str] = set()
     final_answer = ""
     recent_read_path: Optional[str] = None
+    recent_read_range: Optional[tuple[int, int]] = None
     executed_read_calls: dict[str, int] = {}
     # Signatures of edit calls that already SUCCEEDED this turn. Re-applying an
     # identical edit duplicates the inserted block (observed in the wild: the same
@@ -774,6 +775,10 @@ def run_agent_loop(
             for tool_name, tool_args in tool_calls:
                 # Normalize arguments
                 norm_args = agent_tools.normalize_tool_arguments(tool_name, tool_args)
+                # Snapshot the model's intent BEFORE the harness injects path/line
+                # hints, so duplicate detection sees two identical model calls as
+                # identical even when the harness anchored them differently.
+                model_args_snapshot = dict(norm_args)
                 tool_func = agent_tools.TOOL_REGISTRY.get(tool_name)
 
                 if not tool_func:
@@ -789,6 +794,13 @@ def run_agent_loop(
                         logger.info("Auto-resolving placeholder edit path '%s' to recently read file '%s'", target_p, recent_read_path)
                         target_p = recent_read_path
                         norm_args["path"] = recent_read_path
+                    # Anchor ambiguous SEARCH blocks to the line the model just read.
+                    if (
+                        target_p == recent_read_path
+                        and recent_read_range is not None
+                        and not any(k in norm_args for k in ("start_line", "startLine", "start"))
+                    ):
+                        norm_args["start_line"] = recent_read_range[0]
 
                 TOOL_DISPLAY_NAMES = {
                     "read_file": "Read File",
@@ -835,7 +847,7 @@ def run_agent_loop(
                 report(step_name, arg_summary, "running")
 
                 # Global duplicate call prevention (prevents alternating ping-pong loops)
-                call_sig = f"{tool_name}:{json.dumps(norm_args, sort_keys=True)}"
+                call_sig = f"{tool_name}:{json.dumps(model_args_snapshot, sort_keys=True)}"
                 is_duplicate = False
                 edit_tool_names = ("edit_file", "patch", "replace_file_content", "modify_file")
 
@@ -943,6 +955,12 @@ def run_agent_loop(
                 # Append guidance to observation for proactive model orientation
                 if tool_name == "read_file" and not is_err:
                     recent_read_path = target_p
+                    try:
+                        lo = int(norm_args.get("start_line") or 1)
+                        hi = int(norm_args.get("end_line") or lo)
+                        recent_read_range = (max(1, lo), hi)
+                    except (TypeError, ValueError):
+                        recent_read_range = None
                     if is_mutation_request(user_request):
                         observation += (
                             f"\n\n[Harness Guidance]: Target lines loaded above from '{target_p}'. "

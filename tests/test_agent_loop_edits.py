@@ -79,6 +79,26 @@ class DuplicateEditTests(unittest.TestCase):
         self.assertIn("raise TypeError", content)
         self.assertIn("float(a) * float(b)", content)
 
+    def test_ambiguous_edit_is_anchored_to_last_read_line(self):
+        self.file.write_text(
+            "def f1(a, b):\n    return a * b\n\n"
+            "def f2(a, b):\n    return a * b\n\n"
+            "def f3(a, b):\n    return a * b\n",
+            encoding="utf-8",
+        )
+        read_call = (
+            'Action: read_file\nAction Input: {"path": "calc.py", "start_line": 4, "end_line": 6}'
+        )
+        edit = (
+            "[calc.py]\n<<<<<<< SEARCH\n    return a * b\n=======\n    return a + b\n>>>>>>> REPLACE"
+        )
+        self._run([read_call, edit, "Done."])
+        content = self.file.read_text()
+        self.assertEqual(content.count("return a * b"), 2)
+        self.assertEqual(content.count("return a + b"), 1)
+        # The harness should have anchored the edit to the f2 block the model read.
+        self.assertIn("def f2(a, b):\n    return a + b", content)
+
 
 class ContextCompactionTests(unittest.TestCase):
     def test_small_history_is_untouched(self):

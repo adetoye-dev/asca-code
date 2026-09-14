@@ -390,6 +390,43 @@ def find_files(project_root: str, pattern: str = "", **kwargs: Any) -> str:
     return f"Found {len(matches)} matches:\n" + "\n".join(matches)
 
 
+def _coerce_anchor_line(kwargs: dict[str, Any]) -> Optional[int]:
+    """Pull a 1-based anchor line out of the kwargs aliases, if any."""
+    for key in ("start_line", "startLine", "start"):
+        value = kwargs.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _occurrence_line_numbers(content: str, needle: str) -> list[tuple[int, int]]:
+    """Return (start_index, 1-based start_line) for every occurrence of needle."""
+    results: list[tuple[int, int]] = []
+    idx = content.find(needle)
+    while idx != -1:
+        line_no = content.count("\n", 0, idx) + 1
+        results.append((idx, line_no))
+        idx = content.find(needle, idx + len(needle))
+    return results
+
+
+def _pick_occurrence_by_anchor(
+    content: str, needle: str, anchor_line: int
+) -> Optional[int]:
+    """Pick the occurrence nearest to anchor_line; return None when ambiguous."""
+    occs = _occurrence_line_numbers(content, needle)
+    if not occs:
+        return None
+    distances = [abs(ln - anchor_line) for _, ln in occs]
+    nearest = min(distances)
+    if distances.count(nearest) > 1:
+        return None
+    return occs[distances.index(nearest)][0]
+
+
 def edit_file(
     project_root: str,
     path: str = "",
@@ -480,12 +517,30 @@ def edit_file(
     # Tier 1: Exact substring match
     if norm_search in norm_content:
         occurrences = norm_content.count(norm_search)
-        if occurrences > 1:
-            return (
-                f"Error: Search block occurs {occurrences} times in '{path}'. "
-                "Please include more surrounding context lines to make the SEARCH block unique."
+        if occurrences == 1:
+            new_content = norm_content.replace(norm_search, norm_replace, 1)
+        else:
+            # Disambiguate by the line the model is looking at (from its last
+            # read_file, which the harness passes as `start_line`). This turns
+            # a hard refusal into a correct, targeted edit in the common case of
+            # a short SEARCH block that matches several places in a file.
+            anchor_line = _coerce_anchor_line(kwargs)
+            target_idx = None
+            if anchor_line is not None:
+                target_idx = _pick_occurrence_by_anchor(
+                    norm_content, norm_search, anchor_line
+                )
+            if target_idx is None:
+                return (
+                    f"Error: Search block occurs {occurrences} times in '{path}'. "
+                    "Include more surrounding context lines, or pass `start_line` "
+                    "with the line number of the occurrence you mean (from your last read_file)."
+                )
+            new_content = (
+                norm_content[:target_idx]
+                + norm_replace
+                + norm_content[target_idx + len(norm_search):]
             )
-        new_content = norm_content.replace(norm_search, norm_replace, 1)
         if "\r\n" in content:
             new_content = new_content.replace("\n", "\r\n")
 
