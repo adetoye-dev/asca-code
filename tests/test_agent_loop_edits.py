@@ -80,5 +80,44 @@ class DuplicateEditTests(unittest.TestCase):
         self.assertIn("float(a) * float(b)", content)
 
 
+class ContextCompactionTests(unittest.TestCase):
+    def test_small_history_is_untouched(self):
+        history = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        out = agent_loop._compact_history(history, "task", [])
+        self.assertEqual(out, history)
+
+    def test_over_budget_history_is_compacted_to_summary_plus_recent(self):
+        history = [{"role": "user", "content": "x" * 100}]
+        for _ in range(30):
+            history.append({"role": "assistant", "content": "y" * 500})
+            history.append({"role": "user", "content": "z" * 500})
+
+        step = agent_loop.AgentStep(
+            name="Edit File",
+            detail="calc.py",
+            status="done",
+            tool_name="edit_file",
+            arguments={},
+            observation="",
+            elapsed_s=0.0,
+        )
+        out = agent_loop._compact_history(
+            history, "Add a feature to calc.py", [step], max_tokens=2000
+        )
+
+        self.assertEqual(len(out), 1 + agent_loop.KEEP_RECENT_MESSAGES)
+        self.assertIn("CONTEXT COMPACTED", out[0]["content"])
+        self.assertIn("Objective:", out[0]["content"])
+        self.assertIn("edit_file", out[0]["content"])
+        # The most recent turns must survive verbatim.
+        self.assertEqual(
+            out[-agent_loop.KEEP_RECENT_MESSAGES:],
+            history[-agent_loop.KEEP_RECENT_MESSAGES:],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

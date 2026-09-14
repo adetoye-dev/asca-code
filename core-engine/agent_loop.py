@@ -49,6 +49,58 @@ class AgentStep:
     elapsed_s: float = 0.0
 
 
+# ── Context Compaction ─────────────────────────────────────────────────────
+# Long-running agent conversations would otherwise re-send the entire history
+# every round, ballooning token cost and degrading local-model quality. We keep
+# the most recent turns verbatim and replace older history with a deterministic
+# rolling summary (no extra LLM call, so compaction costs nothing).
+
+MAX_PROMPT_TOKENS = 8000
+KEEP_RECENT_MESSAGES = 6
+_EDIT_TOOL_NAMES = ("edit_file", "patch", "replace_file_content", "modify_file")
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap token estimate (~4 chars/token), sufficient for budget gating."""
+    return max(1, len(text or "") // 4)
+
+
+def _build_compaction_summary(task_content: str, steps: list[AgentStep]) -> str:
+    """Deterministically summarise the dropped prefix of a conversation."""
+    lines = [
+        "[CONTEXT COMPACTED - earlier turns summarised to save tokens]",
+        f"Objective: {task_content.strip()[:600]}",
+    ]
+    edit_rows = [
+        f"- [{s.status}] {s.tool_name} {s.detail[:80]}"
+        for s in steps
+        if s.tool_name in _EDIT_TOOL_NAMES
+    ]
+    if edit_rows:
+        lines.append("Edits applied so far:")
+        lines.extend(edit_rows[-25:])
+    else:
+        lines.append("No file edits have been applied yet.")
+    return "\n".join(lines)
+
+
+def _compact_history(
+    history: list[dict[str, str]],
+    task_content: str,
+    steps: list[AgentStep],
+    max_tokens: int = MAX_PROMPT_TOKENS,
+    keep_recent: int = KEEP_RECENT_MESSAGES,
+) -> list[dict[str, str]]:
+    """Keep recent turns verbatim and replace older history with a summary."""
+    if len(history) <= keep_recent:
+        return history
+    total_tokens = sum(estimate_tokens(m.get("content", "")) for m in history)
+    if total_tokens <= max_tokens:
+        return history
+    summary = _build_compaction_summary(task_content, steps)
+    return [{"role": "user", "content": summary}] + history[-keep_recent:]
+
+
 def generate_execution_plan(
     user_request: str,
     project_root: str,
@@ -668,6 +720,10 @@ def run_agent_loop(
     successful_edit_sigs: dict[str, int] = {}
 
     for round_idx in range(1, max_iterations + 1):
+        # Compact older history once it grows past the token budget so every
+        # round doesn't re-send the whole conversation to the model.
+        history = _compact_history(history, task_content, steps)
+
         # Build prompt from conversation history
         prompt_parts = ["Below is the conversation history and observations:\n"]
         for msg in history:
