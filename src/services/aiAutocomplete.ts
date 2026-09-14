@@ -1,5 +1,5 @@
 /**
- * aiAutocomplete.ts — Monaco Inline Completions (Copilot-Style Ghost Text)
+ * aiAutocomplete.ts — Monaco Inline Completions (AI Ghost Text)
  *
  * Implements monaco.languages.registerInlineCompletionsProvider with:
  * 1. Fill-In-The-Middle (FIM) prompt formatting for local models (Qwen2.5-Coder, DeepSeek-Coder, StarCoder).

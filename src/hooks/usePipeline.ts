@@ -191,7 +191,7 @@ export function usePipeline(): UsePipelineReturn {
   // Re-hydrate keys/base URLs whenever the AI Models & Providers page saves,
   // or another tab changes storage, so editor AI never runs with a stale key.
   useEffect(() => {
-    const refresh = () => setAiSettingsState((prev) => hydrateAiSettings(prev));
+    const refresh = () => setAiSettingsState((prev: any) => hydrateAiSettings(prev));
     const onStorage = (e: StorageEvent) => {
       if (!e.key || e.key.includes("ai_providers") || e.key.includes("ai_settings")) refresh();
     };

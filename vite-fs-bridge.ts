@@ -2514,6 +2514,32 @@ export function realFilesystemPlugin(): Plugin {
               bucket.cost_usd += Number(r.cost_usd || 0);
               bucket.latency_ms += Number(r.latency_ms || 0);
             }
+            const dailyMap = new Map<string, any>();
+            for (const r of rows) {
+              const when = new Date(Number(r.ts || 0) * 1000);
+              const key = Number.isNaN(when.getTime())
+                ? "unknown"
+                : when.toISOString().slice(0, 10);
+              if (!dailyMap.has(key)) {
+                dailyMap.set(key, {
+                  date: key,
+                  calls: 0,
+                  prompt_tokens: 0,
+                  completion_tokens: 0,
+                  cost_usd: 0,
+                });
+              }
+              const bucket = dailyMap.get(key);
+              bucket.calls += 1;
+              bucket.prompt_tokens += Number(r.prompt_tokens || 0);
+              bucket.completion_tokens += Number(r.completion_tokens || 0);
+              bucket.cost_usd += Number(r.cost_usd || 0);
+            }
+            const daily = Array.from(dailyMap.values())
+              .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+              .slice(-14)
+              .map((d) => ({ ...d, cost_usd: Number(Number(d.cost_usd).toFixed(6)) }));
+
             const roundedTotals = {
               ...totals,
               cost_usd: Number(totals.cost_usd.toFixed(6)),
@@ -2523,6 +2549,7 @@ export function realFilesystemPlugin(): Plugin {
             res.end(
               JSON.stringify({
                 ...roundedTotals,
+                daily,
                 by_model: Array.from(byModel.values()).sort((a, b) => b.calls - a.calls),
                 recent: rows.slice(-20).reverse(),
               })

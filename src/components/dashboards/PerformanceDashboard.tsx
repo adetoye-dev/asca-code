@@ -11,7 +11,7 @@
  * - Seamless live synchronization with systemMetricsService, cache purge, and process monitor.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
   RefreshCw,
   HardDrive,
@@ -76,415 +76,188 @@ function HatchedBarGauge({
 }
 
 // ── 2. Live CPU Horizon Time-Series Chart ────────────────────────────────────
-interface TelemetryHorizonChartProps {
-  history: number[];
-  currentVal: number;
-  cores: number;
+// ── 2. AI Usage & Cost Trend ────────────────────────────────────────────────
+interface UsageDay {
+  date: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
 }
 
-function TelemetryHorizonChart({
-  history,
-  currentVal,
-  cores,
-}: TelemetryHorizonChartProps) {
-  const width = 500;
-  const height = 150;
-  const paddingBottom = 22;
-  const chartH = height - paddingBottom;
-
-  // Split history into historical (left 55%) and active (right 45%)
-  const splitIndex = Math.floor(history.length * 0.55);
-  const splitX = (splitIndex / (history.length - 1)) * width;
-
-  const points = useMemo(() => {
-    return history.map((val, idx) => {
-      const x = (idx / (history.length - 1)) * width;
-      const y = chartH - (Math.min(100, Math.max(0, val)) / 100) * (chartH - 12) - 6;
-      return { x, y, val };
-    });
-  }, [history, chartH, width]);
-
-  const historicalPath = useMemo(() => {
-    if (points.length === 0) return "";
-    const histPts = points.slice(0, splitIndex + 1);
-    return histPts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-  }, [points, splitIndex]);
-
-  const activePath = useMemo(() => {
-    if (points.length === 0) return "";
-    const activePts = points.slice(splitIndex);
-    return activePts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-  }, [points, splitIndex]);
-
-  const activeArea = useMemo(() => {
-    if (points.length === 0) return "";
-    const activePts = points.slice(splitIndex);
-    if (activePts.length === 0) return "";
-    const firstX = activePts[0].x;
-    const lastX = activePts[activePts.length - 1].x;
-    const lineParts = activePts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-    return `${lineParts} L ${lastX} ${chartH} L ${firstX} ${chartH} Z`;
-  }, [points, splitIndex, chartH]);
-
+function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
+  const rows = daily || [];
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Usage & Cost</h3>
+        <p className="text-[11px] text-zinc-500 mt-3">
+          No AI activity recorded yet. Run a task and its tokens and cost will appear here.
+        </p>
+      </div>
+    );
+  }
+  const maxTokens = Math.max(1, ...rows.map((d) => d.prompt_tokens + d.completion_tokens));
+  const totalCalls = rows.reduce((a, d) => a + d.calls, 0);
+  const totalTokens = rows.reduce((a, d) => a + d.prompt_tokens + d.completion_tokens, 0);
+  const totalCost = rows.reduce((a, d) => a + d.cost_usd, 0);
   return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col justify-between space-y-3.5 shadow-2xl backdrop-blur-md">
-      {/* Panel Header */}
-      <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
-          CPU Horizon
-        </h3>
-        <span className="text-[10px] font-mono text-zinc-500">60s Trailing</span>
+    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Usage & Cost</h3>
+        <span className="text-[10px] font-mono text-zinc-500">last {rows.length} day(s)</span>
       </div>
-
-      {/* SVG Horizon Graph */}
-      <div className="relative w-full h-[140px] sm:h-[155px] overflow-hidden">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="cyanAreaGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#00e5ff" stopOpacity="0.28" />
-              <stop offset="90%" stopColor="#00e5ff" stopOpacity="0.01" />
-            </linearGradient>
-            <filter id="cyanGlow">
-              <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor="rgba(0, 229, 255, 0.7)" />
-            </filter>
-          </defs>
-
-          {/* Grid horizontal guidelines */}
-          {[0.25, 0.5, 0.75].map((fraction) => (
-            <line
-              key={fraction}
-              x1="0"
-              y1={chartH * fraction}
-              x2={width}
-              y2={chartH * fraction}
-              stroke="rgba(255, 255, 255, 0.04)"
-              strokeDasharray="4 4"
-            />
-          ))}
-
-          {/* Vertical dashed now-marker / threshold */}
-          <line
-            x1={splitX}
-            y1={0}
-            x2={splitX}
-            y2={chartH}
-            stroke="#ffffff"
-            strokeOpacity="0.35"
-            strokeWidth="1.5"
-            strokeDasharray="3 3"
-          />
-
-          {/* Historical line (subtle gray) */}
-          <path d={historicalPath} fill="none" stroke="#52525b" strokeWidth="1.8" />
-
-          {/* Active Area Glow */}
-          <path d={activeArea} fill="url(#cyanAreaGrad)" />
-
-          {/* Active Live Line (Electric Cyan) */}
-          <path
-            d={activePath}
-            fill="none"
-            stroke="#00e5ff"
-            strokeWidth="2.2"
-            filter="url(#cyanGlow)"
-          />
-
-          {/* Pulsing Dot on Current Value */}
-          {points.length > 0 && (
-            <g transform={`translate(${points[points.length - 1].x}, ${points[points.length - 1].y})`}>
-              <circle r="4" fill="#00e5ff" filter="url(#cyanGlow)" />
-              <circle r="7" fill="#00e5ff" opacity="0.3" className="animate-ping" />
-            </g>
-          )}
-
-          {/* Bottom axis ticks */}
-          {Array.from({ length: 50 }).map((_, i) => {
-            const tx = (i / 49) * width;
-            const isMajor = i % 10 === 0;
-            return (
-              <line
-                key={i}
-                x1={tx}
-                y1={chartH + 2}
-                x2={tx}
-                y2={chartH + (isMajor ? 8 : 4)}
-                stroke="rgba(255, 255, 255, 0.18)"
-                strokeWidth={isMajor ? 1.5 : 1}
-              />
-            );
-          })}
-
-          {/* Time text axis labels */}
-          <text x="4" y={height - 2} fill="#71717a" fontSize="9" fontFamily="monospace">-60s</text>
-          <text x={splitX - 18} y={height - 2} fill="#a1a1aa" fontSize="9" fontFamily="monospace">T-0s</text>
-          <text x={width - 24} y={height - 2} fill="#00e5ff" fontSize="9" fontFamily="monospace" fontWeight="bold">NOW</text>
-        </svg>
+      <div className="mt-4 flex items-end gap-1.5 h-28">
+        {rows.map((d) => {
+          const tokens = d.prompt_tokens + d.completion_tokens;
+          const height = Math.max(3, (tokens / maxTokens) * 100);
+          return (
+            <div
+              key={d.date}
+              className="flex-1 flex flex-col items-center justify-end h-full group"
+              title={`${d.date}: ${tokens.toLocaleString()} tokens, ${d.calls} call(s), $${Number(d.cost_usd).toFixed(4)}`}
+            >
+              <div className="w-full rounded-t bg-gradient-to-t from-cyan-700/40 to-cyan-400/80 group-hover:from-cyan-600/60 group-hover:to-cyan-300 transition-colors" style={{ height: `${height}%` }} />
+            </div>
+          );
+        })}
       </div>
-
-      {/* Footer 4-Metric Readout */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/[0.06] text-xs font-mono">
+      <div className="mt-2 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+        <span>{String(rows[0].date).slice(5)}</span>
+        <span>{String(rows[rows.length - 1].date).slice(5)}</span>
+      </div>
+      <div className="mt-3 pt-3 border-t border-white/[0.06] grid grid-cols-3 gap-2 text-center">
         <div>
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Scheduler</div>
-          <div className="text-zinc-100 font-bold mt-0.5">Dynamic Scaled</div>
+          <div className="text-[10px] uppercase text-zinc-500">Calls</div>
+          <div className="text-sm font-bold text-zinc-100 font-mono">{totalCalls}</div>
         </div>
         <div>
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">User Space</div>
-          <div className="text-purple-300 font-bold mt-0.5">{(currentVal * 0.65).toFixed(1)}%</div>
+          <div className="text-[10px] uppercase text-zinc-500">Tokens</div>
+          <div className="text-sm font-bold text-zinc-100 font-mono">{totalTokens.toLocaleString()}</div>
         </div>
         <div>
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Kernel System</div>
-          <div className="text-zinc-300 font-bold mt-0.5">{(currentVal * 0.35).toFixed(1)}%</div>
-        </div>
-        <div>
-          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Active Cores</div>
-          <div className="text-emerald-400 font-bold mt-0.5">{cores} Cores</div>
+          <div className="text-[10px] uppercase text-zinc-500">Spend</div>
+          <div className="text-sm font-bold text-emerald-400 font-mono">${totalCost.toFixed(4)}</div>
         </div>
       </div>
     </div>
   );
 }
 
-// ── 3. Stepped Memory Watermark & Buffer Horizon Chart ───────────────────────
-interface SteppedWatermarkChartProps {
-  memPercent: number;
-  storage: StorageMetrics;
+// ── 3. Which Model Did The Work ─────────────────────────────────────────────
+interface ModelUsage {
+  provider: string;
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
 }
 
-function SteppedWatermarkChart({
-  memPercent,
-  storage,
-}: SteppedWatermarkChartProps) {
-  const width = 500;
-  const height = 150;
-  const paddingBottom = 22;
-  const chartH = height - paddingBottom;
+function ModelMixPanel({ byModel }: { byModel: ModelUsage[] }) {
+  const rows = (byModel || []).slice(0, 5);
+  const totalCalls = Math.max(1, (byModel || []).reduce((a, m) => a + m.calls, 0));
+  const localCalls = (byModel || [])
+    .filter((m) => m.provider === "ollama")
+    .reduce((a, m) => a + m.calls, 0);
+  const localShare = Math.round((localCalls / totalCalls) * 100);
 
-  // Generate stepped path simulating memory allocations & buffer commits
-  const stepCount = 18;
-  const stepWidth = width / stepCount;
-  const baselineHeight = (memPercent / 100) * (chartH - 25);
-
-  const path = useMemo(() => {
-    let d = `M 0 ${chartH - baselineHeight * 0.45}`;
-    for (let i = 1; i <= stepCount; i++) {
-      const curX = i * stepWidth;
-      // Step elevation formula
-      const mult = i < 5 ? 0.45 : i < 11 ? 0.75 : i < 15 ? 0.95 : 0.82;
-      const y = chartH - Math.min(chartH - 8, baselineHeight * mult + (i % 2 === 0 ? 6 : -4));
-      d += ` H ${curX} V ${y}`;
-    }
-    return d;
-  }, [baselineHeight, chartH, stepWidth, stepCount]);
-
-  const areaPath = useMemo(() => {
-    return `${path} V ${chartH} H 0 Z`;
-  }, [path, chartH]);
-
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Which Model Did The Work</h3>
+        <p className="text-[11px] text-zinc-500 mt-3">Nothing has run yet.</p>
+      </div>
+    );
+  }
   return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col justify-between space-y-3.5 shadow-2xl backdrop-blur-md">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
-          Memory Watermark & Buffers
-        </h3>
-        <span className="text-[10px] font-mono text-zinc-500">Allocation Headroom</span>
+    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Which Model Did The Work</h3>
+        <span className="text-[10px] font-mono text-emerald-400">{localShare}% local · $0</span>
       </div>
-
-      {/* Stepped Area SVG */}
-      <div className="relative w-full h-[140px] sm:h-[155px] overflow-hidden">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="purpleStepGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#9333ea" stopOpacity="0.30" />
-              <stop offset="60%" stopColor="#7e22ce" stopOpacity="0.10" />
-              <stop offset="100%" stopColor="#3b0764" stopOpacity="0.01" />
-            </linearGradient>
-            <filter id="purpleGlow">
-              <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor="rgba(168, 85, 247, 0.65)" />
-            </filter>
-          </defs>
-
-          {/* Grid lines */}
-          {[0.25, 0.5, 0.75].map((fraction) => (
-            <line
-              key={fraction}
-              x1="0"
-              y1={chartH * fraction}
-              x2={width}
-              y2={chartH * fraction}
-              stroke="rgba(255, 255, 255, 0.04)"
-              strokeDasharray="4 4"
-            />
-          ))}
-
-          {/* Capacity ceiling dashed guide */}
-          <line
-            x1="0"
-            y1={14}
-            x2={width}
-            y2={14}
-            stroke="#a855f7"
-            strokeOpacity="0.3"
-            strokeWidth="1"
-            strokeDasharray="2 3"
-          />
-
-          {/* Area Fill */}
-          <path d={areaPath} fill="url(#purpleStepGrad)" />
-
-          {/* Stepped Contour Line */}
-          <path
-            d={path}
-            fill="none"
-            stroke="#c084fc"
-            strokeWidth="2.2"
-            filter="url(#purpleGlow)"
-          />
-
-          {/* Bottom tick marks */}
-          {Array.from({ length: 50 }).map((_, i) => {
-            const tx = (i / 49) * width;
-            const isMajor = i % 10 === 0;
-            return (
-              <line
-                key={i}
-                x1={tx}
-                y1={chartH + 2}
-                x2={tx}
-                y2={chartH + (isMajor ? 8 : 4)}
-                stroke="rgba(255, 255, 255, 0.18)"
-                strokeWidth={isMajor ? 1.5 : 1}
-              />
-            );
-          })}
-
-          <text x="4" y={height - 2} fill="#71717a" fontSize="9" fontFamily="monospace">BASE_ALLOC</text>
-          <text x={width / 2 - 35} y={height - 2} fill="#a1a1aa" fontSize="9" fontFamily="monospace">WATERMARK_COMMIT</text>
-          <text x={width - 45} y={height - 2} fill="#c084fc" fontSize="9" fontFamily="monospace" fontWeight="bold">CURRENT</text>
-        </svg>
+      <div className="mt-3 h-2 rounded-full overflow-hidden bg-zinc-800 flex">
+        <div className="bg-emerald-500/80" style={{ width: `${localShare}%` }} />
+        <div className="bg-purple-500/80 flex-1" />
       </div>
+      <div className="mt-4 space-y-2.5">
+        {rows.map((m) => {
+          const share = Math.round((m.calls / totalCalls) * 100);
+          const isLocal = m.provider === "ollama";
+          return (
+            <div key={`${m.provider}/${m.model}`}>
+              <div className="flex items-center justify-between text-[11px] font-mono gap-2">
+                <span className="text-zinc-300 truncate" title={`${m.provider}/${m.model}`}>
+                  {m.model}
+                </span>
+                <span className={isLocal ? "text-emerald-400 shrink-0" : "text-zinc-400 shrink-0"}>
+                  {m.calls} call{m.calls === 1 ? "" : "s"} · {isLocal ? "$0" : `$${Number(m.cost_usd).toFixed(4)}`}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className={isLocal ? "h-full bg-emerald-500/70" : "h-full bg-purple-500/70"}
+                  style={{ width: `${Math.max(3, share)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[10px] text-zinc-500">
+        Green runs on your machine for free; purple is a paid cloud model.
+      </p>
+    </div>
+  );
+}
 
-      {/* Itemized Cache Pills Strip */}
-      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-white/[0.06] text-[11px] font-mono">
-        {storage.categories.map((cat) => (
-          <div
-            key={cat.id}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-workbench border border-hairline"
-          >
-            <span className="text-zinc-400">{cat.name.split(" ")[0]}:</span>
-            <span className="text-zinc-100 font-bold">{cat.sizeMb.toFixed(0)} MB</span>
+// ── 4. Spend vs Cloud-Only ──────────────────────────────────────────────────
+const REFERENCE_INPUT_PER_M = 2.5;
+const REFERENCE_OUTPUT_PER_M = 10;
+
+function SavingsPanel({ byModel, totalCostUsd }: { byModel: ModelUsage[]; totalCostUsd: number }) {
+  const local = (byModel || []).filter((m) => m.provider === "ollama");
+  const localCalls = local.reduce((a, m) => a + m.calls, 0);
+  const tokensIn = local.reduce((a, m) => a + m.prompt_tokens, 0);
+  const tokensOut = local.reduce((a, m) => a + m.completion_tokens, 0);
+  const avoided =
+    (tokensIn / 1_000_000) * REFERENCE_INPUT_PER_M + (tokensOut / 1_000_000) * REFERENCE_OUTPUT_PER_M;
+
+  if (localCalls === 0) {
+    return (
+      <p className="text-[11px] text-zinc-500">
+        All work has run on cloud models so far. Install a local model from the Marketplace to start
+        cutting cost.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30">
+        <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">
+          Estimated saved by running locally
+        </div>
+        <div className="text-2xl font-bold text-emerald-300 font-mono mt-0.5">${avoided.toFixed(2)}</div>
+        <div className="text-[10px] text-zinc-400 mt-1">
+          {localCalls} call{localCalls === 1 ? "" : "s"} handled on your machine instead of the cloud.
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-center">
+        <div className="p-2.5 rounded-lg bg-zinc-950/60 border border-white/[0.06]">
+          <div className="text-[10px] uppercase text-zinc-500">Actual spend</div>
+          <div className="text-sm font-bold text-zinc-100 font-mono">${Number(totalCostUsd || 0).toFixed(4)}</div>
+        </div>
+        <div className="p-2.5 rounded-lg bg-zinc-950/60 border border-white/[0.06]">
+          <div className="text-[10px] uppercase text-zinc-500">If all cloud</div>
+          <div className="text-sm font-bold text-zinc-400 font-mono">
+            ${(Number(totalCostUsd || 0) + avoided).toFixed(4)}
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── 4. Dual-Tone Resource Spectrum Histogram ─────────────────────────────────
-interface SpectrumHistogramProps {
-  processes: RunningProcessItem[];
-}
-
-function SpectrumHistogram({ processes }: SpectrumHistogramProps) {
-  const barCount = 28;
-  const width = 500;
-  const height = 180;
-  const barW = width / barCount - 3;
-
-  // 14 dark gray baseline bars on left + 14 matte purple bars on right
-  const bars = useMemo(() => {
-    return Array.from({ length: barCount }).map((_, i) => {
-      const isRightActive = i >= 14;
-      let heightPct = 0;
-      let label = "";
-
-      if (!isRightActive) {
-        // Left rising baseline envelope (20% to 85%)
-        const rel = (i + 1) / 14;
-        heightPct = 20 + Math.pow(rel, 1.4) * 68 + (i % 2 === 0 ? 4 : -3);
-        label = `Baseline Task #${i + 1}`;
-      } else {
-        // Right falling active workload (100% down to 8%)
-        const rel = (i - 14) / 14;
-        const p = processes[i - 14];
-        heightPct = p
-          ? Math.max(6, Math.min(96, p.cpuPercent))
-          : 95 - Math.pow(rel, 0.7) * 85 + (i % 3 === 0 ? -4 : 3);
-        label = p ? `${p.name} (PID ${p.pid})` : `Decorative IDE Worker #${i - 13}`;
-      }
-
-      return {
-        idx: i,
-        heightPct: Math.max(6, Math.min(96, heightPct)),
-        isRightActive,
-        label,
-      };
-    });
-  }, [barCount, processes]);
-
-  const [hoveredBar, setHoveredBar] = useState<{ label: string; pct: number } | null>(null);
-
-  return (
-    <div className="relative w-full h-full flex flex-col justify-between space-y-2">
-      <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 pb-1">
-        <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-sm bg-[#3f3f46]" />
-          <span>System Baseline</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm bg-[#a855f7]" />
-          <span className="text-purple-300 font-semibold">Active IDE Workload</span>
         </div>
       </div>
-
-      <div className="relative w-full h-[150px] overflow-hidden">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-          {/* Vertical grid lines */}
-          {Array.from({ length: 9 }).map((_, i) => {
-            const x = (i / 8) * width;
-            return (
-              <line
-                key={i}
-                x1={x}
-                y1={0}
-                x2={x}
-                y2={height}
-                stroke="rgba(255, 255, 255, 0.04)"
-                strokeDasharray="2 2"
-              />
-            );
-          })}
-
-          {/* Bars */}
-          {bars.map((b) => {
-            const x = b.idx * (width / barCount) + 1.5;
-            const barH = (b.heightPct / 100) * (height - 10);
-            const y = height - barH;
-            const color = b.isRightActive ? "#a855f7" : "#3f3f46";
-
-            return (
-              <rect
-                key={b.idx}
-                x={x}
-                y={y}
-                width={barW}
-                height={barH}
-                fill={color}
-                rx={1.5}
-                className="transition-all duration-300 cursor-pointer hover:opacity-80"
-                onMouseEnter={() => setHoveredBar({ label: b.label, pct: b.heightPct })}
-                onMouseLeave={() => setHoveredBar(null)}
-              />
-            );
-          })}
-        </svg>
-      </div>
-
-      {/* Hover tooltip bar */}
-      <div className="h-6 flex items-center justify-between text-[11px] font-mono px-2 rounded bg-zinc-900/60 border border-white/[0.04] text-zinc-400">
-        <span>{hoveredBar ? hoveredBar.label : "Hover over any spectrum bar to inspect thread telemetry"}</span>
-        {hoveredBar && <span className="text-purple-300 font-bold">{hoveredBar.pct.toFixed(1)}% Load</span>}
-      </div>
+      <p className="text-[10px] text-zinc-500 leading-snug">
+        Estimate assumes local work at a reference cloud rate of ${REFERENCE_INPUT_PER_M}/1M input and $
+        {REFERENCE_OUTPUT_PER_M}/1M output tokens.
+      </p>
     </div>
   );
 }
@@ -498,17 +271,9 @@ export function PerformanceDashboard({
     () => systemMetricsService.getMetrics() || systemMetrics
   );
 
-  // Maintain rolling CPU history for real-time horizon
-  const [cpuHistory, setCpuHistory] = useState<number[]>(() => [
-    12, 14, 18, 15, 11, 9, 14, 16, 22, 19, 15, 12, 18, 24, 21, 16, 18, 14, 15, 17, 20, 18, 16, 15, 19, 14, 16, 18, 15, 16,
-  ]);
-
   useEffect(() => {
     return systemMetricsService.subscribe((latest) => {
       setMetrics(latest);
-      if (latest && Number.isFinite(latest.cpu_usage_percent)) {
-        setCpuHistory((prev) => [...prev.slice(1), latest.cpu_usage_percent]);
-      }
     });
   }, []);
 
@@ -538,7 +303,7 @@ export function PerformanceDashboard({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTelemetryOnline, setIsTelemetryOnline] = useState(false);
   const [hasStorageMetrics, setHasStorageMetrics] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<"spectrum" | "caches" | "services">("spectrum");
+  const [activeRightTab, setActiveRightTab] = useState<"spend" | "caches" | "services">("spend");
   const [usage, setUsage] = useState<any>(null);
 
   const fetchStorageAndProcesses = async () => {
@@ -831,18 +596,10 @@ export function PerformanceDashboard({
         {/* ── 2-COLUMN MAIN TELEMETRY WORKBENCH ─────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           
-          {/* LEFT 6 COLS: Telemetry Horizon Line & Stepped Memory Watermark ─── */}
+          {/* LEFT 6 COLS: what this work actually costs you ─────────────────── */}
           <div className="lg:col-span-6 space-y-5">
-            <TelemetryHorizonChart
-              history={cpuHistory}
-              currentVal={cpuPercent}
-              cores={activeMetrics?.cpu_count || 8}
-            />
-
-            <SteppedWatermarkChart
-              memPercent={memPercent}
-              storage={storage}
-            />
+            <UsageTrendChart daily={usage?.daily || []} />
+            <ModelMixPanel byModel={usage?.by_model || []} />
           </div>
 
           {/* RIGHT 6 COLS: Diagnostic Console & Spectrum Histogram ──────────── */}
@@ -899,14 +656,14 @@ export function PerformanceDashboard({
             <div className="flex items-center gap-6 border-b border-hairline text-xs font-semibold">
               <button
                 type="button"
-                onClick={() => setActiveRightTab("spectrum")}
+                onClick={() => setActiveRightTab("spend")}
                 className={`pb-2.5 transition-colors cursor-pointer ${
-                  activeRightTab === "spectrum"
+                  activeRightTab === "spend"
                     ? "text-zinc-100 border-b-2 border-zinc-200 font-bold"
                     : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                Core & Process Spectrum
+                Spend & Savings
               </button>
               <button
                 type="button"
@@ -934,8 +691,8 @@ export function PerformanceDashboard({
 
             {/* Tab Views */}
             <div className="flex-1 min-h-[220px]">
-              {activeRightTab === "spectrum" && (
-                <SpectrumHistogram processes={processes} />
+              {activeRightTab === "spend" && (
+                <SavingsPanel byModel={usage?.by_model || []} totalCostUsd={usage?.cost_usd || 0} />
               )}
 
               {activeRightTab === "caches" && (

@@ -4,7 +4,7 @@
  * Integrates @monaco-editor/react with:
  * 1. Syntax highlighting & TextMate tokenization for all major languages.
  * 2. VS Code settings (minimap, bracket colorization, indentation guides).
- * 3. Copilot-style AI inline completions (ghost text) with FIM.
+ * 3. AI inline completions (ghost text) via fill-in-the-middle.
  * 4. Cmd+S / Ctrl+S keyboard shortcuts to save to physical disk.
  */
 
@@ -128,7 +128,7 @@ export function MonacoEditorContainer({
               selection.startLineNumber,
               model.getLineMaxColumn(selection.startLineNumber)
             );
-        editor.executeEdits("copilot-inline", [{ range: editRange, text: replacement }]);
+        editor.executeEdits("acsa-inline", [{ range: editRange, text: replacement }]);
         setIsInlinePromptOpen(false);
         setInlinePrompt("");
         editor.focus();
@@ -141,7 +141,7 @@ export function MonacoEditorContainer({
     }
   };
 
-  // ── Copilot file review ──────────────────────────────────────────────────
+  // ── ACSA file review ──────────────────────────────────────────────────
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState("");
@@ -210,7 +210,7 @@ export function MonacoEditorContainer({
             message: `${issue.title}${issue.detail ? ` — ${issue.detail}` : ""}${
               issue.suggestion ? `\nFix: ${issue.suggestion}` : ""
             }`,
-            source: "ACSA Copilot",
+            source: "ACSA",
           };
         });
         monaco.editor.setModelMarkers(model, "acsa-review", markers);
@@ -265,7 +265,7 @@ export function MonacoEditorContainer({
         settings: settingsRef.current,
       });
       if (result.ok && result.replacement && result.replacement.trim()) {
-        editor.executeEdits("copilot-fix", [{ range, text: result.replacement }]);
+        editor.executeEdits("acsa-fix", [{ range, text: result.replacement }]);
         setReviewIssues((prev) => prev.filter((_, i) => i !== index));
       }
     } finally {
@@ -333,7 +333,7 @@ export function MonacoEditorContainer({
       onSave(path);
     });
 
-    // Register Cmd+K / Ctrl+K inline Copilot prompt
+    // Register Cmd+K / Ctrl+K inline edit prompt
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
       setIsInlinePromptOpen(true);
     });
@@ -365,7 +365,7 @@ export function MonacoEditorContainer({
 
   return (
     <div className="relative h-full w-full bg-workbench overflow-hidden">
-      {/* ── Copilot Review Controls ──────────────────────────────────────── */}
+      {/* ── AI Review Controls ──────────────────────────────────────── */}
       <div className="absolute top-2 right-3 z-40 flex items-center gap-2">
         <button
           type="button"
@@ -373,7 +373,7 @@ export function MonacoEditorContainer({
           disabled={isReviewing || !isReviewableFile(path)}
           title={
             isReviewableFile(path)
-              ? "Copilot: review this file for bugs, errors and refactor opportunities"
+              ? "Review this file for bugs, errors and refactor opportunities"
               : "This file type is not reviewable"
           }
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
@@ -401,11 +401,11 @@ export function MonacoEditorContainer({
         )}
       </div>
 
-      {/* ── Copilot Review Findings Panel ────────────────────────────────── */}
+      {/* ── Review Findings Panel ────────────────────────────────── */}
       {isReviewPanelOpen && (
         <div className="absolute bottom-3 right-3 z-40 w-[300px] max-w-[80%] max-h-[42%] overflow-y-auto rounded-lg bg-[#18181b]/92 backdrop-blur-xl border border-amber-500/30 shadow-xl p-2 space-y-1">
           <div className="flex items-center justify-between px-1 pb-1 border-b border-white/[0.06]">
-            <span className="text-[11px] font-semibold text-amber-300">Copilot Review</span>
+            <span className="text-[11px] font-semibold text-amber-300">ACSA Review</span>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-zinc-500 font-mono">
                 {reviewIssues.length} finding(s)
@@ -479,7 +479,7 @@ export function MonacoEditorContainer({
                   onClick={() => handleFixIssue(issue, index)}
                   className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
                 >
-                  {fixingIndex === index ? "Fixing…" : "Fix with Copilot"}
+                  {fixingIndex === index ? "Fixing…" : "Fix with AI"}
                 </button>
               </div>
             </div>
@@ -492,13 +492,13 @@ export function MonacoEditorContainer({
         <div className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
       )}
 
-      {/* Floating Copilot Cmd+K Prompt Overlay */}
+      {/* Floating Cmd+K Inline Edit Overlay */}
       {isInlinePromptOpen && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150">
           <div className="flex items-center justify-between mb-1.5 px-1">
             <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
               <span>✨</span>
-              <span>Copilot Inline Edit</span>
+              <span>ACSA Inline Edit</span>
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-mono">
                 {settingsRef.current.model || "Active AI"}
               </span>

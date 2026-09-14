@@ -2,7 +2,7 @@
  * App.tsx — ACSA Code Desktop IDE
  *
  * Mounts the complete VS Code workbench layout (IdeLayout) powered by
- * DockviewReact, Monaco Editor with Copilot ghost text autocomplete,
+ * DockviewReact, Monaco Editor with AI ghost-text autocomplete,
  * and the physical filesystem verification pipeline.
  *
  * Startup behaviour:

@@ -56,27 +56,7 @@ export function AiManagementDashboard({
   const [isStartingOllama, setIsStartingOllama] = useState(false);
   const [showOllamaWizard, setShowOllamaWizard] = useState(false);
   const [openSpecsModelTag, setOpenSpecsModelTag] = useState<string | null>(null);
-  const [usage, setUsage] = useState<any>(null);
   const [savedFlash, setSavedFlash] = useState(false);
-
-  // Poll the usage ledger (persisted by the Python engine in .acsa/usage.jsonl).
-  useEffect(() => {
-    let alive = true;
-    const loadUsage = () => {
-      fetch("/api/ai/usage")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (alive) setUsage(data);
-        })
-        .catch(() => {});
-    };
-    loadUsage();
-    const id = window.setInterval(loadUsage, 15000);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, []);
 
   // Model pulling & downloader state
   const [pullingModelTag, setPullingModelTag] = useState<string | null>(null);
@@ -345,29 +325,6 @@ export function AiManagementDashboard({
             </span>
           </div>
         </div>
-
-        {/* ── Usage & Cost Metrics ─────────────────────────────────────── */}
-        {usage && usage.total_calls > 0 && (
-          <div className="shrink-0 grid grid-cols-2 sm:grid-cols-5 gap-2">
-            {[
-              ["API Calls", String(usage.total_calls)],
-              ["Prompt Tokens", Number(usage.prompt_tokens || 0).toLocaleString()],
-              ["Completion Tokens", Number(usage.completion_tokens || 0).toLocaleString()],
-              ["Total Latency", `${((usage.total_latency_ms || 0) / 1000).toFixed(1)}s`],
-              ["Est. Cost", `$${Number(usage.cost_usd || 0).toFixed(4)}`],
-            ].map(([label, value]) => (
-              <div
-                key={label}
-                className="px-3 py-2 rounded-xl bg-zinc-900/70 border border-zinc-800 flex flex-col justify-center"
-              >
-                <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">{label}</span>
-                <span className="text-sm font-semibold text-zinc-100 font-mono truncate" title={String(value)}>
-                  {value}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* ── Main Two-Column Workbench Container ────────────────────────── */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row rounded-2xl bg-workbench border border-zinc-800/80 overflow-hidden shadow-xl">

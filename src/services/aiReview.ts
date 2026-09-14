@@ -1,5 +1,5 @@
 /**
- * aiReview.ts — Copilot-style file review
+ * aiReview.ts — AI file review
  *
  * Scans the currently open file and returns structured findings: bugs, logic
  * errors, edge cases, security problems and refactor suggestions. Findings are

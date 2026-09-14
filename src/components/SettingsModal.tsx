@@ -15,7 +15,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Bot, Search, Layers, ChevronRight, ExternalLink, EyeOff, ArrowRight, Check, Zap, Pin, Cpu, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
+import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Bot, Search, Layers, ChevronRight, ExternalLink, EyeOff, ArrowRight, Check, Pin, Cpu, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 
@@ -138,15 +138,6 @@ const INITIAL_AGENTS: AIAgentItem[] = [
     badge: "Bundled",
     description: "ACP adapter for OpenAI's coding assistant",
     author: "OpenAI +2",
-    installed: true,
-  },
-  {
-    id: "copilot",
-    name: "GitHub Copilot",
-    version: "v1.538.0",
-    badge: "Bundled",
-    description: "GitHub's AI pair programmer",
-    author: "GitHub",
     installed: true,
   },
   {
@@ -652,8 +643,6 @@ export function SettingsModal({
                               <Bot className="w-4 h-4 text-amber-400" />
                             ) : agent.id.includes("codex") ? (
                               <Bot className="w-4 h-4 text-emerald-400" />
-                            ) : agent.id.includes("copilot") ? (
-                              <Zap className="w-4 h-4 text-purple-400" />
                             ) : agent.id.includes("junie") ? (
                               <Bot className="w-4 h-4 text-purple-400" />
                             ) : agent.id.includes("deterministic") ? (
