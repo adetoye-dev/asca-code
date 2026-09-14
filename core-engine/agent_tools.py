@@ -776,6 +776,82 @@ def run_command(project_root: str, command: str = "", timeout_seconds: int = 60,
         return f"Error executing command: {exc}"
 
 
+def run_tests(project_root: str, timeout_seconds: int = 180, **kwargs: Any) -> str:
+    """Run the project's configured test suite and report a clean pass/fail result."""
+    root = Path(project_root).resolve()
+    if not root.exists():
+        return "Error: project root does not exist."
+
+    argv: Optional[list[str]] = None
+    label = ""
+
+    # 1. Prefer the project's own npm test script when one is declared.
+    package_json = root / "package.json"
+    if package_json.exists():
+        try:
+            scripts = json.loads(package_json.read_text(encoding="utf-8")).get("scripts", {})
+        except (OSError, ValueError, TypeError):
+            scripts = {}
+        if scripts.get("test"):
+            argv = ["npm", "test"]
+            label = "npm test"
+
+    # 2. Fall back to stdlib unittest discovery when Python tests exist.
+    if argv is None:
+        tests_dir = root / "tests"
+        has_py_tests = tests_dir.is_dir() and any(tests_dir.glob("test_*.py"))
+        if has_py_tests:
+            if (tests_dir / "__init__.py").exists():
+                argv = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+                label = f"{sys.executable} -m unittest discover -s tests -t ."
+            else:
+                argv = [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
+                label = f"{sys.executable} -m unittest discover -s tests"
+
+    # 3. No suite at all: say so instead of letting the model improvise `pytest`
+    #    against a project with no tests (pytest then exits 5 and looks like a
+    #    real failure, which previously sent the agent into a retry loop).
+    if argv is None:
+        return (
+            "No test suite is configured for this project. Do not improvise a test "
+            "command (e.g. pytest) when no tests exist - that is not a real failure. "
+            "Verify with `run_command` (e.g. `npm run typecheck`, `npm run build`) or "
+            "rely on the syntax gate instead."
+        )
+
+    start_t = time.monotonic()
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Error: test suite timed out after {timeout_seconds}s ({label})."
+    except Exception as exc:
+        return f"Error running tests: {exc}"
+
+    elapsed = round(time.monotonic() - start_t, 2)
+    combined = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    lines = combined.splitlines()
+    failures = [ln for ln in lines if ln.startswith("FAIL") or ln.startswith("ERROR:")]
+    summary_lines = [ln for ln in lines if ln.strip().startswith("Ran ")]
+    tail = lines[-40:] if len(lines) > 40 else lines
+
+    status = "SUCCESS" if proc.returncode == 0 else "FAILED"
+    parts = [f"Tests completed in {elapsed}s: [{status}] ({label})"]
+    if summary_lines:
+        parts.append("\n".join(summary_lines[-2:]))
+    if failures:
+        parts.append("Failures:")
+        parts.extend(f"  {f}" for f in failures[:15])
+    else:
+        parts.append("\n".join(tail[-12:]))
+    return "\n".join(parts)
+
+
 def locate_concept(project_root: str, concept: str = "", **kwargs: Any) -> str:
     """Resolve high-level UI or architectural concepts using universal dynamic semantic grounding.
     
@@ -1031,6 +1107,7 @@ TOOL_REGISTRY = {
     "find_files": find_files,
     "edit_file": edit_file,
     "run_command": run_command,
+    "run_tests": run_tests,
     "search_symbols": search_symbols,
     "get_file_outline": get_file_outline,
     # High-utility aliases for LLM compatibility:
@@ -1132,6 +1209,13 @@ TOOL_SCHEMAS = [
         "parameters": {
             "command": "The terminal verification command string to execute",
             "timeout_seconds": "Timeout in seconds (default: 60)",
+        },
+    },
+    {
+        "name": "run_tests",
+        "description": "Run the project's configured test suite (npm test, or stdlib unittest discovery for Python tests) and get a clean pass/fail summary. Prefer this over improvising a test command; it reports 'no test suite' instead of a false failure.",
+        "parameters": {
+            "timeout_seconds": "Timeout in seconds (default: 180)",
         },
     },
     {
