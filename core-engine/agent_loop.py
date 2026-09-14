@@ -296,7 +296,7 @@ Format B (JSON block):
 ### OPERATIONAL RULES
 1. INVESTIGATE FIRST: Check the REPOSITORY ARCHITECTURE MAP and LANDMARKS GUIDE above. Use `locate_concept` or `grep_search` to locate relevant code before attempting edits.
 2. READ BEFORE EDITING: Call `read_file` to view the exact lines surrounding your intended change.
-3. SURGICAL EDITS: When calling `edit_file`, ensure your `search` block matches the exact existing lines (including indentation and newlines) found via `read_file`.
+3. SURGICAL EDITS: When calling `edit_file`, ALWAYS provide `search` as the exact existing lines (including indentation and newlines) copied from `read_file`. NEVER emit `start_line`/`end_line` numbers in place of exact SEARCH text - line numbers are only a disambiguation hint for the harness.
 4. CHECK ALL OCCURRENCES: If the user requests a change across the project (e.g. renaming a variable, endpoint, or component), search for all occurrences to maintain consistency across the codebase.
 5. DESCRIPTIVE LABELS: When rendering counts, metrics, or telemetry in UI components, always include clear contextual labels or units (e.g. 'Total: {{count}}' or '{{count}} items') rather than rendering an isolated number.
 6. VERIFY: After making edits, verify they are sound. Prefer the dedicated `run_tests` tool to check behaviour, and the project's real build/check command (via `run_command`: e.g. `cargo check`, `npx tsc --noEmit`, `npm run build`, `python -m compileall`) to check it compiles. `run_tests` knows whether a test suite exists and reports cleanly - never improvise `pytest` when no tests exist, because pytest exit code 5 ("no tests collected") is NOT a failure and must never be retried in a loop.

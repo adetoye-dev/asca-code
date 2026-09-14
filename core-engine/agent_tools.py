@@ -1246,13 +1246,13 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "edit_file",
-        "description": "Surgically edit a file using a SEARCH and REPLACE block or line ranges (start_line, end_line, replace).",
+        "description": "Surgically edit a file using a SEARCH and REPLACE block. The SEARCH text MUST be copied exactly (indentation included) from your last read_file output - never approximate it, and never use line numbers as a substitute for exact text.",
         "parameters": {
             "path": "Relative file path to edit",
-            "search": "Exact lines of code currently in the file to be replaced (optional if start_line/end_line specified)",
+            "search": "REQUIRED: exact existing lines to replace, copied verbatim from read_file output",
             "replace": "New lines of code to insert (or empty string to delete)",
-            "start_line": "Optional 1-based start line number to replace",
-            "end_line": "Optional 1-based end line number to replace",
+            "start_line": "Optional disambiguation hint: 1-based line number of the occurrence you mean",
+            "end_line": "Optional disambiguation hint: 1-based end line number",
         },
     },
     {
