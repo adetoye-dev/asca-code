@@ -131,7 +131,7 @@ function SpendSavingsCard({
   }
 
   return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+    <div className="h-full flex flex-col rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Spend &amp; Savings</h3>
         <span className="text-[10px] font-mono text-zinc-500">
@@ -182,7 +182,7 @@ function SpendSavingsCard({
         </div>
       </div>
 
-      <p className="mt-3 text-[10px] text-zinc-500 leading-snug">
+      <p className="mt-auto pt-3 text-[10px] text-zinc-500 leading-snug">
         Savings estimate prices local tokens at a reference cloud rate of ${REFERENCE_INPUT_PER_M}/1M input
         and ${REFERENCE_OUTPUT_PER_M}/1M output.
       </p>
@@ -197,14 +197,14 @@ function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
   const maxTokens = Math.max(1, ...rows.map((d) => d.prompt_tokens + d.completion_tokens));
 
   return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+    <div className="h-full flex flex-col rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Usage — last 14 days</h3>
         <span className="text-[10px] font-mono text-zinc-500">
           {hasActivity ? `peak ${maxTokens.toLocaleString()} tokens/day` : "no activity"}
         </span>
       </div>
-      <div className="mt-4 flex items-end gap-1.5 h-24">
+      <div className="mt-4 flex flex-1 min-h-24 items-end gap-1.5">
         {rows.map((d) => {
           const tokens = d.prompt_tokens + d.completion_tokens;
           const height = tokens === 0 ? 3 : Math.max(8, Math.round((tokens / maxTokens) * 100));
@@ -253,9 +253,9 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
     );
   }
   return (
-    <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
+    <div className="h-full flex flex-col rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
       <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Models Used</h3>
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 space-y-3 flex-1">
         {rows.map((m) => {
           const share = Math.round((m.calls / totalCalls) * 100);
           const isLocal = m.provider === "ollama";
@@ -282,7 +282,7 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
           );
         })}
       </div>
-      <p className="mt-3 text-[10px] text-zinc-500">
+      <p className="mt-auto pt-3 text-[10px] text-zinc-500">
         Green runs locally and costs nothing; purple is a paid cloud model.
       </p>
     </div>
@@ -621,10 +621,10 @@ export function PerformanceDashboard({
         )}
 
         {/* ── 2-COLUMN MAIN TELEMETRY WORKBENCH ─────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-2 gap-5">
           
-          {/* LEFT: what the AI work costs you ───────────────────────────────── */}
-          <div className="lg:col-span-7 space-y-5">
+          {/* ROW 1 — spend hero (left) ──────────────────────────────────────── */}
+          <div className="lg:col-span-7 lg:row-start-1 min-h-0">
             <SpendSavingsCard
               byModel={usage?.by_model || []}
               totalCostUsd={usage?.cost_usd || 0}
@@ -634,14 +634,21 @@ export function PerformanceDashboard({
                 usage && usage.total_calls > 0 ? usage.total_latency_ms / usage.total_calls / 1000 : 0
               }
             />
+          </div>
+
+          {/* ROW 1 — models (right) ─────────────────────────────────────────── */}
+          <div className="lg:col-span-5 lg:row-start-1 min-h-0">
+            <ModelsUsedPanel byModel={usage?.by_model || []} />
+          </div>
+
+          {/* ROW 2 — usage trend (left) ─────────────────────────────────────── */}
+          <div className="lg:col-span-7 lg:row-start-2 min-h-0">
             <UsageTrendChart daily={usage?.daily || []} />
           </div>
 
-          {/* RIGHT: which models ran + workspace maintenance ────────────────── */}
-          <div className="lg:col-span-5 space-y-5">
-            <ModelsUsedPanel byModel={usage?.by_model || []} />
-
-            <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col space-y-4 shadow-2xl backdrop-blur-md">
+          {/* ROW 2 — workspace maintenance (right) ──────────────────────────── */}
+          <div className="lg:col-span-5 lg:row-start-2 min-h-0">
+            <div className="h-full rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 flex flex-col space-y-4 shadow-2xl backdrop-blur-md">
             
             {/* Header */}
             <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
