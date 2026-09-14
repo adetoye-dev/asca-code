@@ -59,6 +59,8 @@ export function isHiddenFileOrDir(name: string): boolean {
     lower.includes("context_index") ||
     lower.endsWith(".pyc") ||
     lower.endsWith(".pyo") ||
+    lower.endsWith(".bak") ||
+    lower.endsWith(".orig") ||
     lower === ".ds_store" ||
     lower === "thumbs.db"
   );
