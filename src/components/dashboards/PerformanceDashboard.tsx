@@ -621,7 +621,7 @@ export function PerformanceDashboard({
         )}
 
         {/* ── 2-COLUMN MAIN TELEMETRY WORKBENCH ─────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-2 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           
           {/* ROW 1 — spend hero (left) ──────────────────────────────────────── */}
           <div className="lg:col-span-7 lg:row-start-1 min-h-0">
