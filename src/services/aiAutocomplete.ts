@@ -4,7 +4,7 @@
  * Implements monaco.languages.registerInlineCompletionsProvider with:
  * 1. Fill-In-The-Middle (FIM) prompt formatting for local models (Qwen2.5-Coder, DeepSeek-Coder, StarCoder).
  * 2. Keystroke debouncing (250ms) and active request abortion via AbortController.
- * 3. Support for Local Ollama, llama.cpp sidecar, Cloud OpenAI-compatible endpoints, and offline heuristic synthesizer.
+ * 3. Support for Local Ollama, Cloud OpenAI-compatible endpoints, and offline heuristic synthesizer.
  */
 
 import type * as MonacoType from "monaco-editor";
@@ -152,29 +152,6 @@ async function fetchCompletion({
     if (res.ok) {
       const data = await res.json();
       return data.response || "";
-    }
-  }
-
-  // 2. Local llama.cpp Sidecar
-  if (provider === "local") {
-    const url = (baseUrl || "http://127.0.0.1:8080") + "/completion";
-    const prompt = `<|fim_prefix|>${prefix}<|fim_suffix|>${suffix}<|fim_middle|>`;
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        n_predict: 48,
-        temperature: 0.1,
-        stop: ["\n\n"],
-      }),
-      signal,
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return data.content || "";
     }
   }
 

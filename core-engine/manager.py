@@ -78,6 +78,7 @@ from prompt_injector import (  # noqa: E402
     format_unified_prompt,
     inject_constraints,
 )
+from usage_metrics import record_llm_call  # noqa: E402
 from diff_applier import (  # noqa: E402
     apply_diff_text,
     parse_diff_text,
@@ -118,6 +119,7 @@ class SliderPreset(str, Enum):
 
 class LoopOutcome(str, Enum):
     SUCCESS = "success"
+    FAILED = "failed"
     MAX_RETRIES_EXCEEDED = "max_retries_exceeded"
     LLM_UNREACHABLE = "llm_unreachable"
     TIMEOUT = "timeout"
@@ -339,6 +341,7 @@ def request_user_permission(command: str, description: str = "", timeout: float 
 _last_llm_error: str = ""
 
 
+@record_llm_call
 def _call_llm(
     prompt: str,
     config: Optional[ProjectConfig] = None,
@@ -2633,6 +2636,34 @@ def orchestrate(
             finally:
                 shutil.rmtree(staging_dir, ignore_errors=True)
         else:
+            # A mutation request that changed nothing on disk is usually a false
+            # success - the agent finished without actually doing the work. Only
+            # accept it when the answer explicitly states no change was needed.
+            no_change_phrases = (
+                "already correct", "no changes needed", "no change needed",
+                "already implemented", "already present", "nothing to change",
+                "already exists", "no edits required", "no edit required",
+                "already there", "already matches",
+            )
+            changed_nothing_ok = any(
+                phrase in (agent_result.answer or "").lower()
+                for phrase in no_change_phrases
+            )
+            if not changed_nothing_ok:
+                logger.warning(
+                    "Mutation request produced no file edits - reporting failure instead of false success"
+                )
+                return OrchestrationResult(
+                    outcome=LoopOutcome.FAILED,
+                    total_rounds=agent_result.total_rounds,
+                    rounds=[],
+                    final_patches=[],
+                    elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
+                    answer=(agent_result.answer or "")
+                    + "\n\n[WARNING] The agent finished without making any file changes. "
+                      "The requested edit may not have been applied.",
+                    intent="mutation",
+                )
             return OrchestrationResult(
                 outcome=LoopOutcome.SUCCESS,
                 total_rounds=agent_result.total_rounds,

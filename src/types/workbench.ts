@@ -40,7 +40,6 @@ export interface ExtensionManifest {
 
 export type AIProviderId =
   | "ollama"
-  | "llamacpp"
   | "openai"
   | "anthropic"
   | "google"

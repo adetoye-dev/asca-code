@@ -780,26 +780,6 @@ export function SettingsModal({
                       </p>
                     </div>
 
-                    {/* Local llama.cpp Sidecar */}
-                    <div
-                      onClick={() => setProvider("local")}
-                      className={`p-3 rounded-card border cursor-pointer transition ${
-                        provider === "local"
-                          ? "bg-surface-selected border-accent text-zinc-100 ring-1 ring-accent shadow-sm"
-                          : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <ProviderLogo providerId="llamacpp" className="w-4 h-4" />
-                        <span className="font-semibold text-xs text-zinc-100">
-                          llama.cpp / LM Studio
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-zinc-400 leading-tight">
-                        Hardware-accelerated GGUF local inference server on port 8080.
-                      </p>
-                    </div>
-
                     {/* Cloud OpenAI / Anthropic */}
                     <div
                       onClick={() => setProvider("openai")}

@@ -97,6 +97,13 @@ def _load_module(path: Path):
     return module
 
 
+def _assert_usage_recorded(root: Path) -> None:
+    usage_file = root / ".acsa" / "usage.jsonl"
+    assert usage_file.exists(), ".acsa/usage.jsonl was not created"
+    lines = [ln for ln in usage_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines, "usage ledger is empty - LLM calls were not recorded"
+
+
 def setup_edit(root: Path) -> None:
     (root / "calc.py").write_text(
         "def multiply(a, b):\n    return a * b\n", encoding="utf-8"
@@ -117,6 +124,7 @@ def verify_edit(root: Path) -> None:
         raise AssertionError("multiply('x', 3) did not raise TypeError")
     except TypeError:
         pass
+    _assert_usage_recorded(root)
 
 
 def setup_greenfield(root: Path) -> None:
@@ -129,6 +137,54 @@ def verify_greenfield(root: Path) -> None:
     mod = _load_module(path)
     assert mod.add(2, 3) == 5, "add() does not return the sum"
     assert mod.add(-1, 1) == 0, "add() mishandles negatives"
+    _assert_usage_recorded(root)
+
+
+def setup_multifile(root: Path) -> None:
+    (root / "a.py").write_text("def helper(x):\n    return x + 1\n", encoding="utf-8")
+    (root / "b.py").write_text(
+        "from a import helper\n\n\ndef compute(x):\n    return helper(x) * 10\n",
+        encoding="utf-8",
+    )
+
+
+def verify_multifile(root: Path) -> None:
+    a_src = (root / "a.py").read_text(encoding="utf-8")
+    b_src = (root / "b.py").read_text(encoding="utf-8")
+    assert "def add_one" in a_src, "a.py function was not renamed"
+    assert "from a import add_one" in b_src, "b.py import was not updated"
+    assert "helper" not in b_src, "b.py still references the old name"
+    sys.path.insert(0, str(root))
+    try:
+        mod_a = _load_module(root / "a.py")
+        mod_b = _load_module(root / "b.py")
+        assert mod_a.add_one(2) == 3, "renamed function behaves incorrectly"
+        assert mod_b.compute(2) == 30, "b.py behaviour changed unexpectedly"
+    finally:
+        sys.path.pop(0)
+    _assert_usage_recorded(root)
+
+
+def setup_newproject(root: Path) -> None:
+    return None
+
+
+def verify_newproject(root: Path) -> None:
+    utils = root / "utils.py"
+    main = root / "main.py"
+    assert utils.exists() and main.exists(), "expected utils.py and main.py to be scaffolded"
+    sys.path.insert(0, str(root))
+    try:
+        mod = _load_module(utils)
+        assert mod.greet("world") == "Hello, world", "greet() returns the wrong string"
+    finally:
+        sys.path.pop(0)
+    main_src = main.read_text(encoding="utf-8")
+    assert ("import greet" in main_src) or ("from utils import" in main_src), (
+        "main.py does not import greet from utils"
+    )
+    assert "greet(" in main_src, "main.py never calls greet()"
+    _assert_usage_recorded(root)
 
 
 SCENARIOS = {
@@ -144,6 +200,18 @@ SCENARIOS = {
         setup_greenfield,
         verify_greenfield,
     ),
+    "multifile": (
+        "multifile",
+        "Rename the function helper to add_one in a.py and update b.py to import and use the new name everywhere.",
+        setup_multifile,
+        verify_multifile,
+    ),
+    "newproject": (
+        "newproject",
+        "Create utils.py with a function greet(name) that returns 'Hello, ' + name, and create main.py that imports greet from utils and prints greet('world') when run.",
+        setup_newproject,
+        verify_newproject,
+    ),
 }
 
 
@@ -152,7 +220,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
-        "--scenario", choices=["edit", "greenfield", "all"], default="edit"
+        "--scenario",
+        choices=["edit", "greenfield", "multifile", "newproject", "all"],
+        default="edit",
     )
     args = parser.parse_args()
     MODEL = args.model
@@ -161,7 +231,11 @@ def main() -> int:
         print(f"SKIP: Ollama not reachable at {OLLAMA_URL}")
         return 0
 
-    names = ["edit", "greenfield"] if args.scenario == "all" else [args.scenario]
+    names = (
+        ["edit", "greenfield", "multifile", "newproject"]
+        if args.scenario == "all"
+        else [args.scenario]
+    )
     failures = 0
     for name in names:
         scenario_name, task, setup, verify = SCENARIOS[name]

@@ -2282,6 +2282,69 @@ export function realFilesystemPlugin(): Plugin {
           }
 
           // ── POST /api/ai/test-connection ────────────────────────────────────
+          if (pathname === "/api/ai/usage" && req.method === "GET") {
+            const usageRoot = resolveProjectRoot(process.cwd());
+            const usagePath = path.join(usageRoot, ".acsa", "usage.jsonl");
+            const rows: any[] = [];
+            if (fs.existsSync(usagePath)) {
+              const raw = fs.readFileSync(usagePath, "utf-8");
+              for (const line of raw.split("\n")) {
+                const trimmed = line.trim();
+                if (!trimmed) continue;
+                try {
+                  rows.push(JSON.parse(trimmed));
+                } catch {}
+              }
+            }
+
+            const totals = {
+              total_calls: rows.length,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              cost_usd: 0,
+              total_latency_ms: 0,
+            };
+            const byModel = new Map<string, any>();
+            for (const r of rows) {
+              totals.prompt_tokens += Number(r.prompt_tokens || 0);
+              totals.completion_tokens += Number(r.completion_tokens || 0);
+              totals.cost_usd += Number(r.cost_usd || 0);
+              totals.total_latency_ms += Number(r.latency_ms || 0);
+              const key = `${r.provider || "?"}/${r.model || "?"}`;
+              if (!byModel.has(key)) {
+                byModel.set(key, {
+                  provider: r.provider,
+                  model: r.model,
+                  calls: 0,
+                  prompt_tokens: 0,
+                  completion_tokens: 0,
+                  cost_usd: 0,
+                  latency_ms: 0,
+                });
+              }
+              const bucket = byModel.get(key);
+              bucket.calls += 1;
+              bucket.prompt_tokens += Number(r.prompt_tokens || 0);
+              bucket.completion_tokens += Number(r.completion_tokens || 0);
+              bucket.cost_usd += Number(r.cost_usd || 0);
+              bucket.latency_ms += Number(r.latency_ms || 0);
+            }
+            const roundedTotals = {
+              ...totals,
+              cost_usd: Number(totals.cost_usd.toFixed(6)),
+              total_latency_ms: Number(totals.total_latency_ms.toFixed(1)),
+            };
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                ...roundedTotals,
+                by_model: Array.from(byModel.values()).sort((a, b) => b.calls - a.calls),
+                recent: rows.slice(-20).reverse(),
+              })
+            );
+            return;
+          }
+
           if (pathname === "/api/ai/test-connection" && req.method === "POST") {
             const body = await parseJsonBody(req);
             const { provider, baseUrl, apiKey } = body;
@@ -2299,32 +2362,6 @@ export function realFilesystemPlugin(): Plugin {
                 }
                 res.end(JSON.stringify({ ok: false, latencyMs: latency, error: `Ollama returned HTTP ${check.status}` }));
                 return;
-              } else if (provider === "llamacpp") {
-                const url = baseUrl || "http://127.0.0.1:8080";
-                try {
-                  const check = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
-                  const latency = Date.now() - start;
-                  let models: string[] = [];
-                  if (check.ok) {
-                    try {
-                      const mRes = await fetch(`${url}/v1/models`, { signal: AbortSignal.timeout(2000) });
-                      if (mRes.ok) {
-                        const mData = await mRes.json();
-                        models = (mData.data || []).map((m: any) => m.id);
-                      }
-                    } catch {}
-                  }
-                  res.end(JSON.stringify({
-                    ok: check.ok,
-                    latencyMs: latency,
-                    models,
-                    message: check.ok ? `llama.cpp server is online (${url})` : `llama.cpp returned HTTP ${check.status}`
-                  }));
-                  return;
-                } catch (err: any) {
-                  res.end(JSON.stringify({ ok: false, error: `llama.cpp server is not running at ${url}` }));
-                  return;
-                }
               } else if (provider === "deterministic") {
                 res.end(JSON.stringify({ ok: true, latencyMs: 2, message: "Deterministic AST compiler ready" }));
                 return;
@@ -3749,7 +3786,6 @@ export function realFilesystemPlugin(): Plugin {
 
             const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
               ollama: "http://127.0.0.1:11434",
-              llamacpp: "http://127.0.0.1:8080",
               openai: "https://api.openai.com/v1",
               anthropic: "https://api.anthropic.com/v1",
               google: "https://generativelanguage.googleapis.com/v1beta/openai",

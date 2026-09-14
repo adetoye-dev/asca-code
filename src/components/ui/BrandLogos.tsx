@@ -65,7 +65,6 @@ export const BRAND_LOGO_URLS: Record<string, string> = {
   databricks: "/logos/databricks.svg",
   copilot: "/logos/copilot.svg",
   github: "/logos/github.svg",
-  llamacpp: "/logos/llamacpp.svg",
   openrouter: "/logos/openrouter.svg",
   cognition: "/logos/cognition.svg",
   devin: "/logos/devin.svg",
@@ -278,10 +277,6 @@ export function RunwayLogo({ className = "w-4 h-4 shrink-0", size, style, title 
 
 export function DatabricksLogo({ className = "w-4 h-4 shrink-0", size, style, title = "Databricks", ...rest }: LogoProps) {
   return <BrandLogoImg providerId="databricks" className={className} size={size} style={style} title={title} {...(rest as any)} />;
-}
-
-export function LlamaCppLogo({ className = "w-4 h-4 shrink-0", size, style, title = "llama.cpp", ...rest }: LogoProps) {
-  return <BrandLogoImg providerId="llamacpp" className={className} size={size} style={style} title={title} {...(rest as any)} />;
 }
 
 export function OpenRouterLogo({ className = "w-4 h-4 shrink-0", size, style, title = "OpenRouter", ...rest }: LogoProps) {
@@ -620,16 +615,6 @@ export const AI_BRAND_REGISTRY: Record<string, AIBrandMetadata> = {
     component: GithubLogo,
     aliases: ["github", "github.com"],
   },
-  llamacpp: {
-    id: "llamacpp",
-    name: "llama.cpp",
-    domain: "github.com/ggerganov/llama.cpp",
-    category: "local",
-    primaryColor: "#06B6D4",
-    description: "Ultra-compact C/C++ GGUF inference runtime for CPU & Metal execution.",
-    component: LlamaCppLogo,
-    aliases: ["llamacpp", "llama.cpp", "gguf"],
-  },
   openrouter: {
     id: "openrouter",
     name: "OpenRouter",
@@ -865,9 +850,6 @@ export function resolveBrandId(providerOrModel: string): string {
   }
   if (p.includes("github")) {
     return "github";
-  }
-  if (p.includes("llamacpp") || p.includes("llama.cpp") || hasToken(p, "gguf")) {
-    return "llamacpp";
   }
   if (p.includes("openrouter")) {
     return "openrouter";

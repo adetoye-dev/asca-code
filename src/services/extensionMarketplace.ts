@@ -79,7 +79,7 @@ export const CURATED_EXTENSIONS: ExtensionManifest[] = [
     displayName: "Continue - Open-source AI Code Assistant",
     publisher: "Continue",
     version: "0.8.50",
-    description: "Connect any models (Ollama, llama.cpp, Claude, GPT-4) for tab autocomplete and edits.",
+    description: "Connect any models (Ollama, Claude, GPT-4, Gemini) for tab autocomplete and edits.",
     iconUrl: "https://raw.githubusercontent.com/continuedev/continue/main/extension/assets/logo.png",
     downloadCount: 850000,
     installed: true,

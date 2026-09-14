@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_tools import run_tests
+from agent_tools import _is_allowed_verification_command, run_tests
 
 
 class RunTestsToolTests(unittest.TestCase):
@@ -48,6 +48,14 @@ class RunTestsToolTests(unittest.TestCase):
     def test_reports_no_suite_instead_of_false_failure(self):
         result = run_tests(str(self.root))
         self.assertIn("No test suite", result)
+
+    def test_python_compileall_is_allowlisted(self):
+        self.assertTrue(_is_allowed_verification_command(["python3", "-m", "compileall", "."]))
+        self.assertTrue(_is_allowed_verification_command(["python", "-m", "py_compile", "x.py"]))
+        self.assertTrue(_is_allowed_verification_command(["python3", "-m", "unittest", "discover"]))
+        # Arbitrary python must still require approval
+        self.assertFalse(_is_allowed_verification_command(["python3", "-c", "print(1)"]))
+        self.assertFalse(_is_allowed_verification_command(["python3", "-m", "pip", "install", "x"]))
 
 
 if __name__ == "__main__":

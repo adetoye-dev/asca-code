@@ -740,6 +740,12 @@ def _is_allowed_verification_command(argv: list[str]) -> bool:
         return len(argv) >= 3 and argv[1] == "run" and argv[2] in APPROVED_NPM_VERIFICATION_SCRIPTS
     if command_name == "npx":
         return len(argv) >= 2 and argv[1] in {"tsc", "eslint", "prettier", "vitest", "jest"}
+    if command_name in {"python", "python3"}:
+        return (
+            len(argv) >= 3
+            and argv[1] == "-m"
+            and argv[2] in {"compileall", "py_compile", "unittest"}
+        )
     return False
 
 

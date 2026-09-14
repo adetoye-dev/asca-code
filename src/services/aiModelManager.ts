@@ -3,7 +3,7 @@
  *
  * Provides:
  * 1. Multi-provider configuration management (persisted in localStorage).
- * 2. Local-first defaults (Deterministic AST / Ollama / llama.cpp as original default).
+ * 2. Local-first defaults (Deterministic AST / Ollama).
  * 3. Default model selection and switching.
  * 4. Model inventory for inline prompt model picker.
  */
@@ -26,18 +26,6 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     baseUrl: "http://127.0.0.1:11434",
     selectedModel: "qwen2.5-coder:7b",
     availableModels: ["qwen2.5-coder:7b"],
-    speedBadge: "Fast",
-  },
-  llamacpp: {
-    id: "llamacpp",
-    name: "llama.cpp (Local GGUF)",
-    category: "local",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "http://127.0.0.1:8080",
-    selectedModel: "",
-    availableModels: [],
     speedBadge: "Fast",
   },
   openai: {
@@ -342,9 +330,6 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
           migrated.ollama.availableModels = ["qwen2.5-coder:7b"];
           migrated.ollama.isConnected = true;
           migrated.ollama.isDefault = true;
-          migrated.llamacpp.isConnected = false;
-          migrated.llamacpp.selectedModel = "";
-          migrated.llamacpp.availableModels = [];
           localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
           localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
           return migrated;
@@ -377,22 +362,10 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
     }
     delete (merged as any).deterministic;
 
-    // Sanitize llamacpp: prevent stale fake connected state from older sessions
-    if (merged.llamacpp) {
-      if (
-        merged.llamacpp.selectedModel === "default-gguf" ||
-        merged.llamacpp.availableModels.includes("default-gguf")
-      ) {
-        merged.llamacpp.selectedModel = "";
-        merged.llamacpp.availableModels = [];
-        merged.llamacpp.isConnected = false;
-      }
-    }
-
     // ── Active Sanitation & Model Refresh for Cloud Models ───────
     let needsCloudResave = false;
     for (const [pId, initConfig] of Object.entries(INITIAL_PROVIDERS) as [AIProviderId, AIProviderConfig][]) {
-      if (pId === "ollama" || pId === "llamacpp") continue;
+      if (pId === "ollama") continue;
       const current = merged[pId];
       if (current) {
         // If parsed storage has models, curate them to strict code flagships; otherwise seed with initConfig.availableModels
@@ -427,7 +400,7 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
     }
 
     // Resave cleaned storage if deterministic was stripped or models were migrated
-    if (parsed.deterministic || parsed.llamacpp?.selectedModel === "default-gguf" || needsCloudResave) {
+    if (parsed.deterministic || needsCloudResave) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       } catch {}
@@ -693,17 +666,6 @@ export function getConfiguredModelsList(includeLocal: boolean = false): Configur
             });
           }
         }
-      } else if (p.id === "llamacpp") {
-        if (p.isConnected && p.selectedModel) {
-          list.push({
-            providerId: p.id,
-            providerName: p.name,
-            model: p.selectedModel,
-            speedBadge: p.speedBadge || "Fast",
-            isDefault: p.isDefault,
-            category: p.category,
-          });
-        }
       }
     }
   }
@@ -726,7 +688,7 @@ export function saveActiveSelectedModel(providerId: AIProviderId, model: string)
   if (!providerId || !model) return;
   try {
     const all = loadAllProviders();
-    if (all[providerId]?.category === "local" || providerId === "ollama" || providerId === "llamacpp") {
+    if (all[providerId]?.category === "local" || providerId === "ollama") {
       // Local models are background workers and must never be saved as the chat model selector choice
       return;
     }
@@ -755,7 +717,7 @@ export function getActiveSelectedModel(): StoredSelectedModel | null {
       const pid = parsed.providerId as AIProviderId;
       const all = loadAllProviders();
       // Purge any legacy local model from persistent storage so it never pollutes the chat selector
-      if (all[pid]?.category === "local" || pid === "ollama" || pid === "llamacpp") {
+      if (all[pid]?.category === "local" || pid === "ollama") {
         localStorage.removeItem(SELECTED_MODEL_KEY);
         return null;
       }
@@ -896,8 +858,8 @@ export function isModelVisionCapable(providerId: string, modelName: string): boo
     return true;
   }
 
-  // 4. Local engines (Ollama, llama.cpp): default to false unless explicit vision weights are indicated
-  if (p === "ollama" || p === "llamacpp") {
+  // 4. Local engines (Ollama): default to false unless explicit vision weights are indicated
+  if (p === "ollama") {
     return false;
   }
 
@@ -962,4 +924,3 @@ export function findBestAvailableVisionModel(
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.item || visionModels[0];
 }
-

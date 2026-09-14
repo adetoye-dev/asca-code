@@ -56,6 +56,26 @@ export function AiManagementDashboard({
   const [isStartingOllama, setIsStartingOllama] = useState(false);
   const [showOllamaWizard, setShowOllamaWizard] = useState(false);
   const [openSpecsModelTag, setOpenSpecsModelTag] = useState<string | null>(null);
+  const [usage, setUsage] = useState<any>(null);
+
+  // Poll the usage ledger (persisted by the Python engine in .acsa/usage.jsonl).
+  useEffect(() => {
+    let alive = true;
+    const loadUsage = () => {
+      fetch("/api/ai/usage")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (alive) setUsage(data);
+        })
+        .catch(() => {});
+    };
+    loadUsage();
+    const id = window.setInterval(loadUsage, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
 
   // Model pulling & downloader state
   const [pullingModelTag, setPullingModelTag] = useState<string | null>(null);
@@ -182,8 +202,6 @@ export function AiManagementDashboard({
     let isConnected = false;
     if (activeProvider.id === "ollama") {
       isConnected = ollamaStatus?.running ?? activeProvider.isConnected;
-    } else if (activeProvider.id === "llamacpp") {
-      isConnected = activeProvider.isConnected;
     } else if (activeProvider.category === "cloud") {
       isConnected = !!(apiKeyInput && apiKeyInput.trim().length > 3);
     }
@@ -316,6 +334,29 @@ export function AiManagementDashboard({
             </span>
           </div>
         </div>
+
+        {/* ── Usage & Cost Metrics ─────────────────────────────────────── */}
+        {usage && usage.total_calls > 0 && (
+          <div className="shrink-0 grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {[
+              ["API Calls", String(usage.total_calls)],
+              ["Prompt Tokens", Number(usage.prompt_tokens || 0).toLocaleString()],
+              ["Completion Tokens", Number(usage.completion_tokens || 0).toLocaleString()],
+              ["Total Latency", `${((usage.total_latency_ms || 0) / 1000).toFixed(1)}s`],
+              ["Est. Cost", `$${Number(usage.cost_usd || 0).toFixed(4)}`],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="px-3 py-2 rounded-xl bg-zinc-900/70 border border-zinc-800 flex flex-col justify-center"
+              >
+                <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono">{label}</span>
+                <span className="text-sm font-semibold text-zinc-100 font-mono truncate" title={String(value)}>
+                  {value}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ── Main Two-Column Workbench Container ────────────────────────── */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row rounded-2xl bg-workbench border border-zinc-800/80 overflow-hidden shadow-xl">
@@ -922,28 +963,10 @@ export function AiManagementDashboard({
                   })()}
                 </div>
               ) : (
-                /* ── Standard Provider Configuration (Cloud & llama.cpp) ─── */
+                /* ── Standard Provider Configuration ─── */
                 <>
-                  {/* Model Selection Dropdown or llama.cpp guide */}
-                  {activeProvider.id === "llamacpp" && activeProvider.availableModels.length === 0 ? (
-                    <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-2.5">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-                        <Icon icon={Cpu} className="w-4 h-4 text-purple-400" />
-                        <span>Local llama.cpp Server (Port 8080)</span>
-                      </div>
-                      <p className="text-[11px] text-zinc-400 leading-relaxed">
-                        llama.cpp allows running raw quantized <code className="text-purple-300 font-mono">.gguf</code> models locally. Start your server with:
-                      </p>
-                      <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-[11px] text-zinc-300 space-y-1">
-                        <div className="text-zinc-500"># Start local server with GGUF model:</div>
-                        <div className="text-emerald-400">./llama-server -m /path/to/model.gguf --port 8080</div>
-                      </div>
-                      <p className="text-[10px] text-zinc-500">
-                        Click <strong>Test Connection</strong> below to verify the server and auto-discover loaded models.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
+                  {/* Model Selection Dropdown */}
+                  <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-semibold text-zinc-300">Active Model</label>
                         {activeProvider.category === "cloud" && (
@@ -1016,8 +1039,7 @@ export function AiManagementDashboard({
                       <p className="text-[11px] text-zinc-500">
                         Powers inline completions, code suggestions, syntax repair, and AI assistant conversations.
                       </p>
-                    </div>
-                  )}
+                  </div>
 
                   {/* API Key Input (if cloud provider) */}
                   {activeProvider.category === "cloud" ? (
