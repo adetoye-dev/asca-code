@@ -247,7 +247,7 @@ Format B (JSON block):
 3. SURGICAL EDITS: When calling `edit_file`, ensure your `search` block matches the exact existing lines (including indentation and newlines) found via `read_file`.
 4. CHECK ALL OCCURRENCES: If the user requests a change across the project (e.g. renaming a variable, endpoint, or component), search for all occurrences to maintain consistency across the codebase.
 5. DESCRIPTIVE LABELS: When rendering counts, metrics, or telemetry in UI components, always include clear contextual labels or units (e.g. 'Total: {{count}}' or '{{count}} items') rather than rendering an isolated number.
-6. VERIFY: After making edits, call `run_command` with the appropriate build or test command (e.g. `npm test`, `cargo check`, `pytest`, or build commands) to verify that code compiles cleanly.
+6. VERIFY: After making edits, verify they are sound. Prefer the project's real build/check command when one exists (e.g. `cargo check`, `npx tsc --noEmit`, `npm run build`, `python -m compileall`). Only run a test command (`pytest`, `npm test`) if the project actually has tests - check for a test file/directory or a "test" script in package.json first. If no tests exist, do NOT run `pytest`/`npm test`: a pytest exit code of 5 means "no tests were collected", which is NOT a failure and must never be retried in a loop.
 7. COMPLETION: Once all edits are complete and verified, output your final explanation to the user WITHOUT any further tool calls.
 8. DO NOT REPEAT YOURSELF: If your tool call fails or you see "Error:", read the error carefully. Do not repeat the exact same tool call again. Stop and adjust your approach.
 9. COMPLETE DELETION VS. PLACEHOLDER SUBSTITUTION:
@@ -662,6 +662,10 @@ def run_agent_loop(
     final_answer = ""
     recent_read_path: Optional[str] = None
     executed_read_calls: dict[str, int] = {}
+    # Signatures of edit calls that already SUCCEEDED this turn. Re-applying an
+    # identical edit duplicates the inserted block (observed in the wild: the same
+    # guard clause inserted 3x) and silently corrupts the file.
+    successful_edit_sigs: dict[str, int] = {}
 
     for round_idx in range(1, max_iterations + 1):
         # Build prompt from conversation history
@@ -776,23 +780,40 @@ def run_agent_loop(
                 # Global duplicate call prevention (prevents alternating ping-pong loops)
                 call_sig = f"{tool_name}:{json.dumps(norm_args, sort_keys=True)}"
                 is_duplicate = False
+                edit_tool_names = ("edit_file", "patch", "replace_file_content", "modify_file")
 
                 if tool_name in ("read_file", "locate_concept", "grep_search", "list_dir", "find_files"):
                     if call_sig in executed_read_calls:
                         is_duplicate = True
                     else:
                         executed_read_calls[call_sig] = round_idx
+                elif tool_name in edit_tool_names:
+                    # A successful identical edit must never be applied twice. The old check
+                    # only compared against the immediately previous step, so an intervening
+                    # read/command let the same SEARCH/REPLACE be re-applied again and again.
+                    if call_sig in successful_edit_sigs:
+                        is_duplicate = True
+                    elif len(steps) > 0 and steps[-1].tool_name == tool_name and steps[-1].arguments == norm_args:
+                        is_duplicate = True
                 elif len(steps) > 0 and steps[-1].tool_name == tool_name and steps[-1].arguments == norm_args:
                     is_duplicate = True
 
                 tool_start = time.monotonic()
                 if is_duplicate:
-                    prev_round = executed_read_calls.get(call_sig, max(1, round_idx - 1))
-                    observation = (
-                        f"[DUPLICATE TOOL CALL PREVENTED]: You already executed `{tool_name}` with these exact parameters in turn {prev_round}.\n"
-                        f"The requested code and context are ALREADY in your context history above!\n"
-                        f"DO NOT repeat read or locate calls. Your next required action is to call `edit_file` to execute your modifications directly on disk."
-                    )
+                    if tool_name in edit_tool_names and call_sig in successful_edit_sigs:
+                        observation = (
+                            "[DUPLICATE EDIT PREVENTED]: This exact edit was ALREADY applied successfully "
+                            f"in round {successful_edit_sigs[call_sig]}. The file on disk already contains your change.\n"
+                            "Re-applying it would insert the same code a second time and corrupt the file.\n"
+                            "Do NOT repeat this edit. Read the file once if you need to confirm, then finish."
+                        )
+                    else:
+                        prev_round = executed_read_calls.get(call_sig, max(1, round_idx - 1))
+                        observation = (
+                            f"[DUPLICATE TOOL CALL PREVENTED]: You already executed `{tool_name}` with these exact parameters in turn {prev_round}.\n"
+                            f"The requested code and context are ALREADY in your context history above!\n"
+                            f"DO NOT repeat read or locate calls. Your next required action is to call `edit_file` to execute your modifications directly on disk."
+                        )
                 else:
                     try:
                         observation = tool_func(project_root=project_root, **norm_args)
@@ -815,6 +836,8 @@ def run_agent_loop(
                     or (tool_name in ("write_file", "create_file", "new_file") and "Successfully wrote" in observation)
                     or (tool_name in ("delegate_to_local_worker", "local_worker", "delegate") and "[SUCCESS]" in observation)
                 ):
+                    if tool_name in edit_tool_names and "Success" in observation:
+                        successful_edit_sigs[call_sig] = round_idx
                     target_p = norm_args.get("path") or norm_args.get("target_file") or ""
                     if target_p:
                         edited_files.add(target_p)

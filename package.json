@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "python3 -m unittest discover -s tests -t .",
+    "test:verbose": "python3 -m unittest discover -s tests -t . -v",
     "preview": "vite preview",
     "tauri": "tauri"
   },

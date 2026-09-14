@@ -1095,17 +1095,31 @@ def _parse_search_replace_blocks(raw_response: str, project_root: str) -> list[D
         if not target_path:
             s_test = search_block.strip()
             if s_test:
-                for p in root.rglob("*"):
-                    if any(part in ignored_dirs for part in p.parts):
-                        continue
-                    if p.is_file():
-                        try:
-                            c = p.read_text(encoding="utf-8", errors="ignore")
-                            if s_test in c:
-                                target_path = str(p.resolve())
-                                break
-                        except Exception:
+                # Fallback: locate the edit target by matching the SEARCH text.
+                # os.walk + directory pruning keeps us out of node_modules/.git/etc.
+                # (the previous rglob("*") traversal descended into every ignored
+                # directory and read every file on each missing path hint).
+                for dirpath, dirnames, filenames in os.walk(root):
+                    dirnames[:] = [
+                        d
+                        for d in dirnames
+                        if d not in ignored_dirs and not d.startswith(".")
+                    ]
+                    for fname in filenames:
+                        if fname in ignored_dirs or fname.startswith("."):
                             continue
+                        p = Path(dirpath) / fname
+                        try:
+                            if p.stat().st_size > 2 * 1024 * 1024:
+                                continue
+                            c = p.read_text(encoding="utf-8", errors="ignore")
+                        except (OSError, UnicodeDecodeError):
+                            continue
+                        if s_test in c:
+                            target_path = str(p.resolve())
+                            break
+                    if target_path:
+                        break
 
         if not target_path:
             continue
@@ -1617,6 +1631,7 @@ def collect_project_context(
     is_api_request = any(t in lower_req for t in API_TERMS)
 
     candidates: list[tuple[int, str, str, int]] = []
+    seen_this_run: set[str] = set()
     allowed_suffixes = {".ts", ".tsx", ".js", ".jsx", ".py", ".css", ".html", ".json", ".yaml", ".yml", ".md", ".rs", ".go", ".c", ".cpp"}
     ignored_parts = {".git", "node_modules", "dist", "build", ".venv", "__pycache__", ".tauri", ".acsa", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".next", ".cache"}
 
@@ -1644,6 +1659,7 @@ def collect_project_context(
 
         if len(content) > 300_000 or not content.strip():
             continue
+        seen_this_run.add(relative)
 
         lines = content.splitlines()
         n_lines = len(lines)
@@ -1762,7 +1778,12 @@ def collect_project_context(
 
     try:
         index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(json.dumps(cached, separators=(",", ":")), encoding="utf-8")
+        # Only persist entries we actually revalidated this run. Without this the
+        # cache is append-only: files that were deleted, moved, grew past the size
+        # cap, or became ignored (e.g. .mypy_cache) stay in the index forever - it
+        # grew to tens of MB by retaining its own previous 37 MB snapshot.
+        pruned_cache = {k: cached[k] for k in seen_this_run if k in cached}
+        index_path.write_text(json.dumps(pruned_cache, separators=(",", ":")), encoding="utf-8")
     except OSError:
         pass
     return contexts

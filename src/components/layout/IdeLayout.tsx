@@ -821,6 +821,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         }}
         onCancelPipeline={cancelPipeline}
         isWide={true}
+        activeAiSettings={aiSettings}
         selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
         failureDetail={orchestrationResult?.error_detail}
         orchestrationResult={orchestrationResult}
@@ -1312,6 +1313,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               onClose={() => setIsRightPanelOpen(false)}
               onPopOutWide={openAiChatTab}
               isWide={false}
+              activeAiSettings={aiSettings}
               selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
               failureDetail={orchestrationResult?.error_detail}
               orchestrationResult={orchestrationResult}

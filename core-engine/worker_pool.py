@@ -162,7 +162,8 @@ class HardwareSafeWorkerPool:
         # Acquire lock to ensure only 1 local task runs at any time
         with self._lock:
             file_exists = file_path.exists() and file_path.is_file()
-            existing_content = file_path.read_text(encoding="utf-8", errors="replace") if file_exists else ""
+            original_bytes = file_path.read_bytes() if file_exists else None
+            existing_content = original_bytes.decode("utf-8", errors="replace") if original_bytes is not None else ""
             active_model = model or self.auto_select_worker_model()
             logger.info("Local worker [%s] running task on %s", active_model, rel_path)
 
@@ -253,15 +254,32 @@ class HardwareSafeWorkerPool:
 
             # Check for SEARCH/REPLACE block
             search_matches = list(re.finditer(r"<{5,9}\s*SEARCH\s*\n([\s\S]*?)\n={5,9}\s*\n([\s\S]*?)\n>{5,9}\s*REPLACE", raw_response))
-            if len(search_matches) > 1:
-                applied_msg = "Rejected local worker output: multiple SEARCH/REPLACE blocks require transactional application."
-            elif search_matches and file_exists:
-                search_match = search_matches[0]
-                search_block = search_match.group(1)
-                replace_block = search_match.group(2)
-                res = edit_file(project_root=str(root), path=rel_path, search=search_block, replace=replace_block)
-                edit_applied = "Successfully applied edit" in res
-                applied_msg = res
+            if search_matches and file_exists:
+                edit_results = []
+                edit_applied = True
+                for search_match in search_matches:
+                    try:
+                        res = edit_file(
+                            project_root=str(root),
+                            path=rel_path,
+                            search=search_match.group(1),
+                            replace=search_match.group(2),
+                        )
+                    except Exception as exc:
+                        res = f"Error applying edit block: {exc}"
+                    edit_results.append(res)
+                    # NOTE: edit_file() reports success as "Success: Successfully updated
+                    # '<path>' (...)". The old check looked for "Successfully applied edit",
+                    # a string no code path ever emits, so every delegated edit was marked
+                    # as failed and silently rolled back. Match the real contract instead.
+                    if not res.startswith("Success"):
+                        edit_applied = False
+                        applied_msg = res
+                        break
+                if edit_applied:
+                    applied_msg = f"Successfully applied {len(edit_results)} edit(s) to '{rel_path}'."
+                elif original_bytes is not None:
+                    file_path.write_bytes(original_bytes)
             elif not file_exists and "```" in raw_response:
                 # Extract code block
                 code_match = re.search(r"```(?:[A-Za-z0-9_-]+)?\s*\n([\s\S]*?)\n```", raw_response)
@@ -280,8 +298,8 @@ class HardwareSafeWorkerPool:
                 if report.total_errors > 0:
                     syntax_ok = False
                     syntax_msg = f"{report.total_errors} syntax error(s) detected post-edit"
-                    if file_exists:
-                        file_path.write_text(existing_content, encoding="utf-8")
+                    if original_bytes is not None:
+                        file_path.write_bytes(original_bytes)
                     elif file_path.exists():
                         file_path.unlink()
                     edit_applied = False

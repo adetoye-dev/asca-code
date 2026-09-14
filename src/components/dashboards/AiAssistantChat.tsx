@@ -71,6 +71,7 @@ interface AiAssistantChatProps {
   agentSteps?: AgentStep[];
   pendingPermission?: { id: string; command: string; description: string } | null;
   respondToPermission?: (id: string, decision: "approved" | "rejected") => Promise<void>;
+  activeAiSettings?: { provider: string; model: string } | null;
 }
 
 export type WorkflowMode = "agent" | "chat" | "plan";
@@ -112,6 +113,7 @@ export function AiAssistantChat({
   agentSteps = [],
   pendingPermission = null,
   respondToPermission,
+  activeAiSettings = null,
 }: AiAssistantChatProps) {
 
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelItem[]>(() => getConfiguredModelsList());
@@ -126,6 +128,10 @@ export function AiAssistantChat({
     }
   };
   const [localWorker, setLocalWorker] = useState<string>(getAutoSelectedLocalWorker());
+  const effectiveProvider =
+    selectedModelItem?.providerId || activeAiSettings?.provider || "ollama";
+  const effectiveModel =
+    selectedModelItem?.model || activeAiSettings?.model || localWorker;
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
@@ -691,6 +697,10 @@ export function AiAssistantChat({
             <div className="px-2.5 py-3 text-center space-y-2">
               <div className="text-xs text-zinc-400 font-sans">No Cloud Brain Configured</div>
               <p className="text-[10px] text-zinc-500 font-sans">
+                Running on the local worker instead:{" "}
+                <span className="text-emerald-400 font-mono">{localWorker}</span>
+              </p>
+              <p className="text-[10px] text-zinc-500 font-sans">
                 Add an API key to enable high-reasoning planning and task orchestration.
               </p>
               <button
@@ -1034,8 +1044,8 @@ Click to re-index project.`}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-400">
-                      <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3 h-3" />
-                      <span className="font-mono text-[11px] text-zinc-300">{selectedModelItem?.model || "AI Model"}</span>
+                      <ProviderLogo providerId={effectiveProvider} className="w-3 h-3" />
+                      <span className="font-mono text-[11px] text-zinc-300">{effectiveModel}</span>
                     </div>
                   </div>
 
@@ -1167,10 +1177,14 @@ Click to re-index project.`}
                               setIsModeMenuOpen(false);
                             }}
                             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 font-medium transition-all shadow-sm"
-                            title="Select Cloud Orchestrator Brain"
+                            title={
+                              selectedModelItem
+                                ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
+                                : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
+                            }
                           >
-                            <ProviderLogo providerId={selectedModelItem?.providerId || "openai"} className="w-3.5 h-3.5 shrink-0" />
-                            <span className="font-mono text-[11px]">{selectedModelItem?.model || "Configure Brain"}</span>
+                            <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
+                            <span className="font-mono text-[11px]">{effectiveModel}</span>
                             <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
                           </button>
 
@@ -1757,11 +1771,15 @@ Click to re-index project.`}
                         setIsModeMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 transition-colors"
-                      title={selectedModelItem ? `Brain: ${selectedModelItem.model} (Worker: ${localWorker})` : "Configure Cloud Brain"}
+                      title={
+                        selectedModelItem
+                          ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
+                          : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
+                      }
                     >
-                      <ProviderLogo providerId={selectedModelItem?.providerId || "openai"} className="w-3.5 h-3.5 shrink-0" />
+                      <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
                       <span className="font-mono text-[10px] truncate">
-                        {selectedModelItem?.model || "Brain"}
+                        {effectiveModel}
                       </span>
                       <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 shrink-0 ml-auto" />
                     </button>
