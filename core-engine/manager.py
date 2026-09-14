@@ -2161,6 +2161,8 @@ def classify_intent(user_request: str) -> str:
 
     # 3. Pure read-only QA starters
     pure_qa_starters = (
+        "explain",
+        "describe",
         "what is",
         "what are",
         "what does",
@@ -2178,6 +2180,80 @@ def classify_intent(user_request: str) -> str:
 
     # 4. Default: In an autonomous coding agent, route requests to the agent loop
     return "mutation"
+
+
+# ── Cost-Saving Task Routing ─────────────────────────────────────────────────
+
+CLOUD_PROVIDERS = {
+    "openai", "anthropic", "google", "groq", "deepseek", "openrouter",
+    "mistral", "moonshot", "xai", "together", "perplexity",
+}
+ROUTE_SIMPLE_TO_LOCAL_ENV = "ACSA_ROUTE_SIMPLE_TO_LOCAL"
+
+
+def _is_simple_mutation_request(user_request: str) -> bool:
+    """Conservative heuristic for tasks a small local model can handle."""
+    text = (user_request or "").strip()
+    if not text or len(text) > 240:
+        return False
+    if classify_intent(text) != "mutation":
+        return False
+    complex_terms = (
+        "architecture", "microservice", "scaffold", "full-stack", "new project",
+        "refactor", "migrate", "everywhere", "across the codebase", "codebase",
+        "pipeline", "database schema", "api design", "system design",
+        "multi-file", "all files", "deep research", "review the whole",
+    )
+    lower = text.lower()
+    return not any(term in lower for term in complex_terms)
+
+
+def _pick_best_local_ollama_model(base_url: str = "http://127.0.0.1:11434") -> Optional[str]:
+    """Return the best installed local Ollama model, or None if unreachable."""
+    try:
+        from worker_pool import score_local_model
+
+        req = urllib.request.Request(f"{base_url.rstrip('/')}/api/tags")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=2) as resp:
+            models = [
+                m.get("name", "")
+                for m in json.loads(resp.read().decode("utf-8")).get("models", [])
+                if m.get("name")
+            ]
+        if not models:
+            return None
+        return sorted(models, key=score_local_model, reverse=True)[0]
+    except Exception:
+        return None
+
+
+def _maybe_route_to_local(config: ProjectConfig, user_request: str) -> ProjectConfig:
+    """Route simple, focused mutations to the local worker to cut cloud cost.
+
+    Opt out with ACSA_ROUTE_SIMPLE_TO_LOCAL=0. Cloud configs are left untouched
+    for complex work, inquiries, and when no local model is reachable.
+    """
+    if os.environ.get(ROUTE_SIMPLE_TO_LOCAL_ENV, "1") != "1":
+        return config
+    if config.llm_provider not in CLOUD_PROVIDERS:
+        return config
+    if not _is_simple_mutation_request(user_request):
+        return config
+    local_model = _pick_best_local_ollama_model()
+    if not local_model:
+        return config
+    logger.info(
+        "Cost routing: simple request -> local model '%s' (was %s/%s)",
+        local_model,
+        config.llm_provider,
+        config.llm_model,
+    )
+    config.llm_provider = "ollama"
+    config.llm_model = local_model
+    config.llm_base_url = "http://127.0.0.1:11434"
+    config.llm_api_key = None
+    return config
 
 
 # ── Main Orchestration Loop ─────────────────────────────────────────────────
@@ -3046,6 +3122,8 @@ def main() -> int:
                     attached_images = []
             except Exception as exc:
                 logger.warning("Failed to parse images file: %s", exc)
+
+    config = _maybe_route_to_local(config, req_str)
 
     result = orchestrate(
         user_request=req_str,

@@ -1,10 +1,12 @@
 """Unit tests for small, independently-testable engine helpers."""
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import manager
 import worker_pool
@@ -96,6 +98,60 @@ class ContextIndexPruningTests(unittest.TestCase):
         self.assertNotIn(".mypy_cache/3.12/builtins.data.json", data)
         self.assertNotIn(".acsa/context-index.json", data)
         self.assertTrue(any(k.endswith("real.py") for k in data))
+
+
+class TaskRoutingTests(unittest.TestCase):
+    def _config(self, provider, model):
+        return manager.ProjectConfig(
+            project_root="/tmp/acsa-routing", llm_provider=provider, llm_model=model
+        )
+
+    def test_simple_mutation_detection(self):
+        self.assertTrue(manager._is_simple_mutation_request("add input validation to multiply"))
+        self.assertFalse(manager._is_simple_mutation_request("explain what this code does"))
+        self.assertFalse(manager._is_simple_mutation_request("refactor the entire codebase"))
+        self.assertFalse(manager._is_simple_mutation_request("x" * 300))
+
+    def test_cloud_simple_request_routes_to_local(self):
+        cfg = self._config("deepseek", "deepseek-v4-pro")
+        with mock.patch.object(
+            manager, "_pick_best_local_ollama_model", return_value="deepseek-coder:6.7b"
+        ):
+            out = manager._maybe_route_to_local(cfg, "add input validation to multiply")
+        self.assertEqual(out.llm_provider, "ollama")
+        self.assertEqual(out.llm_model, "deepseek-coder:6.7b")
+
+    def test_complex_or_inquiry_requests_keep_cloud(self):
+        with mock.patch.object(
+            manager, "_pick_best_local_ollama_model", return_value="deepseek-coder:6.7b"
+        ) as picker:
+            complex_out = manager._maybe_route_to_local(
+                self._config("deepseek", "deepseek-v4-pro"), "refactor the entire codebase"
+            )
+            inquiry_out = manager._maybe_route_to_local(
+                self._config("deepseek", "deepseek-v4-pro"), "explain what this code does"
+            )
+        self.assertEqual(complex_out.llm_provider, "deepseek")
+        self.assertEqual(inquiry_out.llm_provider, "deepseek")
+        self.assertEqual(picker.call_count, 0)
+
+    def test_local_provider_is_untouched_and_toggle_disables_routing(self):
+        cfg = self._config("ollama", "qwen2.5-coder:7b")
+        self.assertIs(manager._maybe_route_to_local(cfg, "add input validation"), cfg)
+        with mock.patch.dict(os.environ, {manager.ROUTE_SIMPLE_TO_LOCAL_ENV: "0"}), mock.patch.object(
+            manager, "_pick_best_local_ollama_model", return_value="x"
+        ):
+            out = manager._maybe_route_to_local(
+                self._config("deepseek", "deepseek-v4-pro"), "add input validation"
+            )
+        self.assertEqual(out.llm_provider, "deepseek")
+
+    def test_unreachable_local_model_keeps_cloud(self):
+        with mock.patch.object(manager, "_pick_best_local_ollama_model", return_value=None):
+            out = manager._maybe_route_to_local(
+                self._config("deepseek", "deepseek-v4-pro"), "add input validation"
+            )
+        self.assertEqual(out.llm_provider, "deepseek")
 
 
 if __name__ == "__main__":
