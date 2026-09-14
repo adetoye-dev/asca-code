@@ -474,6 +474,14 @@ function broadcastTerminalData(data: string) {
 }
 
 /** Parse a model's file-review response into a validated list of issues. */
+/** True when a model response is a valid "no issues" review rather than noise. */
+function looksLikeCleanReview(raw: string): boolean {
+  const text = (raw || "").trim();
+  if (!text) return true;
+  return /"issues"\s*:\s*\[\s*\]/.test(text);
+}
+
+
 function extractReviewIssues(raw: string): any[] {
   if (!raw) return [];
   let text = raw.trim();
@@ -523,6 +531,130 @@ function extractReviewIssues(raw: string): any[] {
     if (out.length >= 25) break;
   }
   return out;
+}
+
+
+/** Approximate USD per 1M tokens: [input, output]. Keep in sync with usage_metrics.py. */
+const PROVIDER_PRICING: Record<string, [number, number]> = {
+  openai: [2.5, 10],
+  anthropic: [3, 15],
+  google: [1.25, 5],
+  groq: [0.79, 0.79],
+  deepseek: [0.27, 1.1],
+  mistral: [0.2, 0.6],
+  moonshot: [0.6, 0.6],
+  xai: [2, 8],
+  together: [0.88, 0.88],
+  perplexity: [1, 1],
+  openrouter: [1, 3],
+};
+
+function estimateCostUsd(provider: string, promptTokens: number, completionTokens: number): number {
+  const price = PROVIDER_PRICING[(provider || "").toLowerCase()];
+  if (!price) return 0;
+  return (promptTokens / 1_000_000) * price[0] + (completionTokens / 1_000_000) * price[1];
+}
+
+/** Append one LLM call to the project's usage ledger. */
+function recordUsageEntry(
+  projectRoot: string,
+  provider: string,
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+  latencyMs: number
+): void {
+  try {
+    const dir = path.join(resolveProjectRoot(projectRoot), ".acsa");
+    fs.mkdirSync(dir, { recursive: true });
+    const entry = {
+      ts: Date.now() / 1000,
+      provider: provider || "unknown",
+      model: model || "unknown",
+      prompt_tokens: Math.max(0, Math.round(promptTokens)),
+      completion_tokens: Math.max(0, Math.round(completionTokens)),
+      latency_ms: Math.round(latencyMs * 10) / 10,
+      cost_usd: Number(estimateCostUsd(provider, promptTokens, completionTokens).toFixed(6)),
+    };
+    fs.appendFileSync(path.join(dir, "usage.jsonl"), JSON.stringify(entry) + "\n", "utf-8");
+  } catch {}
+}
+
+/** Pick the most capable installed local Ollama model (null if unreachable). */
+async function pickBestLocalOllamaModel(baseUrl = "http://127.0.0.1:11434"): Promise<string | null> {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/tags`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const models: string[] = (data.models || []).map((m: any) => m.name).filter(Boolean);
+    if (!models.length) return null;
+    const score = (name: string) => {
+      const s = name.toLowerCase();
+      let value = 0;
+      if (/(coder|code|dev|synth)/.test(s)) value += 50;
+      if (/qwen/.test(s)) value += 25;
+      else if (/deepseek/.test(s)) value += 24;
+      else if (/codestral|mistral/.test(s)) value += 22;
+      else if (/llama/.test(s)) value += 20;
+      const size = s.match(/(\d+(?:\.\d+)?)b/);
+      if (size) value += Math.min(parseFloat(size[1]), 70) * 0.5;
+      const version = s.match(/(\d+(?:\.\d+)?)/);
+      if (version) value += Math.min(parseFloat(version[1]), 40);
+      return value;
+    };
+    return [...models].sort((a, b) => score(b) - score(a))[0];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Editor AI features (review, inline edit) should never dead-end on a cloud
+ * provider that has no API key. When the configured provider is unusable but a
+ * local Ollama model is reachable, transparently fall back to it.
+ */
+async function resolveEditorProvider(params: {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+  note: string;
+}> {
+  const provider = (params.provider || "ollama").trim();
+  const hasKey = Boolean((params.apiKey || "").trim());
+  if (provider === "ollama" || hasKey) {
+    return {
+      provider,
+      model: params.model,
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      note: "",
+    };
+  }
+  const localModel = await pickBestLocalOllamaModel();
+  if (localModel) {
+    return {
+      provider: "ollama",
+      model: localModel,
+      apiKey: "",
+      baseUrl: "",
+      note: `No API key for '${provider}' — used local ${localModel} instead.`,
+    };
+  }
+  return {
+    provider,
+    model: params.model,
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    note: "",
+  };
 }
 
 
@@ -2642,7 +2774,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/ai/review-file" && req.method === "POST") {
             try {
               const body = await parseJsonBody(req);
-              const {
+              let {
                 path: reviewPath = "",
                 content = "",
                 language = "",
@@ -2657,6 +2789,14 @@ export function realFilesystemPlugin(): Plugin {
                 res.end(JSON.stringify({ ok: false, error: "File is empty.", issues: [] }));
                 return;
               }
+
+              const reviewStartedAt = Date.now();
+              const resolved = await resolveEditorProvider({ provider, model, apiKey, baseUrl });
+              provider = resolved.provider;
+              model = resolved.model;
+              apiKey = resolved.apiKey;
+              baseUrl = resolved.baseUrl;
+              const fallbackNote = resolved.note;
 
               const clipped = String(content).length > 12000 ? String(content).slice(0, 12000) : String(content);
               const systemPrompt =
@@ -2726,8 +2866,30 @@ export function realFilesystemPlugin(): Plugin {
                 raw = (data.choices?.[0]?.message?.content || "").trim();
               }
 
+              recordUsageEntry(
+                process.cwd(),
+                provider,
+                effectiveModel,
+                Math.round((systemPrompt.length + userPrompt.length) / 4),
+                Math.round(raw.length / 4),
+                Date.now() - reviewStartedAt
+              );
+              const issues = extractReviewIssues(raw);
+              const warning =
+                issues.length === 0 && !looksLikeCleanReview(raw)
+                  ? "The model returned a response that could not be parsed as review findings."
+                  : "";
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ ok: true, model: effectiveModel, issues: extractReviewIssues(raw) }));
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  model: effectiveModel,
+                  provider,
+                  note: fallbackNote,
+                  warning,
+                  issues,
+                })
+              );
             } catch (err: any) {
               res.setHeader("Content-Type", "application/json");
               res.end(JSON.stringify({ ok: false, error: err?.message || String(err), issues: [] }));
@@ -2738,7 +2900,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/ai/inline-edit" && req.method === "POST") {
             try {
               const body = await parseJsonBody(req);
-              const {
+              let {
                 provider = "ollama",
                 model = "",
                 instruction = "",
@@ -2748,6 +2910,12 @@ export function realFilesystemPlugin(): Plugin {
                 baseUrl = "",
                 apiKey = "",
               } = body;
+
+              const inlineResolved = await resolveEditorProvider({ provider, model, apiKey, baseUrl });
+              provider = inlineResolved.provider;
+              model = inlineResolved.model;
+              apiKey = inlineResolved.apiKey;
+              baseUrl = inlineResolved.baseUrl;
 
               const systemPrompt =
                 "You are an expert code editing assistant. Given existing code and instructions, return ONLY the updated replacement code. Do not include conversational commentary, explanations, or markdown code fences.";

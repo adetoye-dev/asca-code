@@ -18,6 +18,11 @@ export interface ReviewResponse {
   ok: boolean;
   issues: ReviewIssue[];
   model?: string;
+  provider?: string;
+  /** Set when the configured provider was unusable and we fell back to local. */
+  note?: string;
+  /** Set when the model produced something we could not parse as findings. */
+  warning?: string;
   error?: string;
 }
 
@@ -71,6 +76,9 @@ export async function reviewFile(params: {
       ok: Boolean(data.ok),
       issues: Array.isArray(data.issues) ? data.issues : [],
       model: data.model,
+      provider: data.provider,
+      note: data.note,
+      warning: data.warning,
       error: data.error,
     };
   } catch (err: any) {

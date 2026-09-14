@@ -142,6 +142,7 @@ export function MonacoEditorContainer({
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [reviewNote, setReviewNote] = useState("");
   const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
 
   const clearReviewMarkers = () => {
@@ -168,12 +169,15 @@ export function MonacoEditorContainer({
       });
       if (!result.ok) {
         setReviewIssues([]);
+        setReviewNote("");
         setReviewError(result.error || "Review failed.");
         setIsReviewPanelOpen(true);
         clearReviewMarkers();
         return;
       }
       setReviewIssues(result.issues);
+      setReviewNote(result.note || "");
+      if (result.warning) setReviewError(result.warning);
       setIsReviewPanelOpen(true);
 
       const model = editor.getModel();
@@ -209,6 +213,7 @@ export function MonacoEditorContainer({
   useEffect(() => {
     setReviewIssues([]);
     setReviewError("");
+    setReviewNote("");
     setIsReviewPanelOpen(false);
     const monaco = monacoRef.current;
     const model = editorRef.current?.getModel();
@@ -327,6 +332,9 @@ export function MonacoEditorContainer({
             </span>
           </div>
           {reviewError && <div className="text-[11px] text-red-300 px-1">{reviewError}</div>}
+          {reviewNote && (
+            <div className="text-[10px] text-amber-300/90 px-1 leading-snug">{reviewNote}</div>
+          )}
           {!reviewError && reviewIssues.length === 0 && (
             <div className="text-[11px] text-emerald-300 px-1">
               No issues found — this file looks clean.
