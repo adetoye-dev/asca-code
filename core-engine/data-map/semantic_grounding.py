@@ -43,7 +43,7 @@ ROLE_SYNONYMS: dict[str, list[str]] = {
         "footer", "statusbar", "status bar", "bottombar", "bottom bar",
         "bottom panel", "dock", "metrics", "breadcrumbs"
     ],
-    "entrypoint": [
+    "entrypoints": [
         "main", "entry", "entrypoint", "root", "app", "index", "bootstrap", "init"
     ],
     "routing": [

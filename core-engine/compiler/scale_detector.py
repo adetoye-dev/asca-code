@@ -97,7 +97,7 @@ def detect_project_scale(project_root_str: str) -> ProjectScaleProfile:
                 except Exception:
                     pass
 
-    tier = ScaleTier.MICRO if loc < 1000 and files < 10 else (ScaleTier.ENTERPRISE if loc > 25000 else ScaleTier.STANDARD)
+    tier = ScaleTier.MICRO if loc < 1000 else (ScaleTier.ENTERPRISE if loc > 25000 else ScaleTier.STANDARD)
     primary_lang = max(lang_counts, key=lang_counts.get) if lang_counts else "python"
     frameworks = []
     if (project_root / "package.json").exists():

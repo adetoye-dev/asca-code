@@ -14,14 +14,18 @@ Implements the standard industry tool suite (Claude Code / Aider / Cline):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("agent_tools")
 
 _DATA_MAP_DIR = Path(__file__).resolve().parent / "data-map"
 if str(_DATA_MAP_DIR) not in sys.path:
@@ -397,17 +401,46 @@ def edit_file(
     root = Path(project_root).resolve()
     if not path:
         path = str(kwargs.get("file") or kwargs.get("filepath") or kwargs.get("file_path") or kwargs.get("filePath") or kwargs.get("target") or kwargs.get("filename") or kwargs.get("target_file") or kwargs.get("targetFile") or "")
-    path = path.strip("`'\" \t\n")
+    path = path.strip("`'\" \t\n[]:*#")
+    if path.startswith("a/") or path.startswith("b/"):
+        path = path[2:]
 
     if not search:
         search = str(kwargs.get("find") or kwargs.get("old_str") or kwargs.get("old_code") or kwargs.get("original") or kwargs.get("before") or kwargs.get("search_block") or kwargs.get("old") or "")
     if not replace and "replace" not in kwargs:
-        replace = str(kwargs.get("new_str") or kwargs.get("new_code") or kwargs.get("replacement") or kwargs.get("after") or kwargs.get("replace_block") or kwargs.get("new") or "")
+        replace = str(kwargs.get("new_str") or kwargs.get("new_code") or kwargs.get("replacement") or kwargs.get("after") or kwargs.get("replace_block") or kwargs.get("new") or kwargs.get("new_content") or kwargs.get("newContent") or kwargs.get("content") or "")
+
+    # Check if a unified diff / patch was provided instead of search/replace
+    if not search:
+        patch_text = str(kwargs.get("patch") or kwargs.get("diff") or kwargs.get("unified_diff") or "")
+        if patch_text:
+            hunk_count = sum(1 for line in patch_text.splitlines() if line.startswith("@@"))
+            if hunk_count > 1:
+                return (
+                    "Error: Multi-hunk unified diffs are not supported. "
+                    "Send one edit_file call per hunk, or use explicit search/replace blocks."
+                )
+            s_lines = []
+            r_lines = []
+            for line in patch_text.splitlines():
+                if line.startswith(("---", "+++", "index ", "diff ")):
+                    continue
+                if line.startswith("@@"):
+                    continue
+                if line.startswith("-"):
+                    s_lines.append(line[1:])
+                elif line.startswith("+"):
+                    r_lines.append(line[1:])
+                else:
+                    ctx = line[1:] if line.startswith(" ") else line
+                    s_lines.append(ctx)
+                    r_lines.append(ctx)
+            if s_lines or r_lines:
+                search = "\n".join(s_lines)
+                replace = "\n".join(r_lines)
 
     if not path:
         return "Error: path cannot be empty."
-    if not search:
-        return "Error: search block cannot be empty."
 
     target = _resolve_safe_path(project_root, path)
     if not target.exists():
@@ -421,6 +454,24 @@ def edit_file(
         content = target.read_text(encoding="utf-8")
     except Exception as exc:
         return f"Error reading file '{path}': {exc}"
+
+    # Line-range extraction if search block was not provided directly
+    if not search:
+        start_line = kwargs.get("start_line") or kwargs.get("startLine") or kwargs.get("start")
+        end_line = kwargs.get("end_line") or kwargs.get("endLine") or kwargs.get("end") or start_line
+        if start_line is not None:
+            try:
+                sl = int(start_line)
+                el = int(end_line)
+                c_lines = content.splitlines(keepends=True)
+                if 1 <= sl <= len(c_lines):
+                    el = min(max(el, sl), len(c_lines))
+                    search = "".join(c_lines[sl - 1 : el])
+            except Exception as e:
+                logger.warning("Could not extract lines %s-%s: %s", start_line, end_line, e)
+
+    if not search:
+        return "Error: search block cannot be empty. Specify exact existing lines to replace or start_line/end_line."
 
     norm_content = content.replace("\r\n", "\n")
     norm_search = search.replace("\r\n", "\n")
@@ -592,6 +643,51 @@ def write_file(
         return f"Error writing file '{path}': {exc}"
 
 
+_PERMISSION_REQUESTER: Optional[Callable[[str, str], bool]] = None
+
+
+def set_permission_requester(handler: Optional[Callable[[str, str], bool]]) -> None:
+    """Register a permission handler: handler(command, description) -> bool."""
+    global _PERMISSION_REQUESTER
+    _PERMISSION_REQUESTER = handler
+
+
+def get_permission_requester() -> Optional[Callable[[str, str], bool]]:
+    return _PERMISSION_REQUESTER
+
+
+PERMANENTLY_PROHIBITED_COMMANDS = [
+    re.compile(r"rm\s+-(?:rf?|fr?)\s+[/~]", re.IGNORECASE),
+    re.compile(r"\bmkfs\b", re.IGNORECASE),
+    re.compile(r"\bdd\s+if=", re.IGNORECASE),
+    re.compile(r":\(\)\s*\{\s*:\|:&\s*\};:"),
+]
+
+SENSITIVE_COMMAND_PATTERNS = [
+    (re.compile(r"\bgit\s+(?:commit|push|checkout|reset|rebase|clean|stash|branch\s+-[dD]|rm|merge)\b", re.IGNORECASE), "Version control mutation"),
+    (re.compile(r"\bgit\s+add\b", re.IGNORECASE), "Staging workspace files"),
+    (re.compile(r"\bnpm\s+publish\b", re.IGNORECASE), "Publishing package to npm registry"),
+    (re.compile(r"\bpip\s+upload\b", re.IGNORECASE), "Uploading package to PyPI repository"),
+    (re.compile(r"\brm\s+", re.IGNORECASE), "File deletion via terminal"),
+]
+
+ALLOWED_COMMAND_PREFIXES = ("npm", "npx", "pytest", "cargo", "tsc")
+APPROVED_NPM_VERIFICATION_SCRIPTS = {"build", "test", "lint", "typecheck", "check", "verify"}
+
+
+def _is_allowed_verification_command(argv: list[str]) -> bool:
+    command_name = Path(argv[0]).name.lower()
+    if command_name in {"pytest", "tsc"} or command_name.startswith(("pytest.", "tsc.")):
+        return True
+    if command_name == "cargo":
+        return len(argv) >= 2 and argv[1] in {"check", "test", "build", "fmt", "clippy", "metadata"}
+    if command_name == "npm":
+        return len(argv) >= 3 and argv[1] == "run" and argv[2] in APPROVED_NPM_VERIFICATION_SCRIPTS
+    if command_name == "npx":
+        return len(argv) >= 2 and argv[1] in {"tsc", "eslint", "prettier", "vitest", "jest"}
+    return False
+
+
 def run_command(project_root: str, command: str = "", timeout_seconds: int = 60, **kwargs: Any) -> str:
     """Execute a terminal command inside the project directory and capture output."""
     if not command:
@@ -608,16 +704,56 @@ def run_command(project_root: str, command: str = "", timeout_seconds: int = 60,
     if not clean_cmd:
         return "Error: command cannot be empty."
 
-    dangerous = ["rm -rf /", "rm -rf ~", "mkfs", "dd if=/dev/zero", ":(){ :|:& };:"]
-    if any(d in clean_cmd for d in dangerous):
-        return f"Error: Command rejected by safety filter: {clean_cmd}"
+    # Tier C: Permanently Prohibited Bombs (destructive system attacks)
+    for pat in PERMANENTLY_PROHIBITED_COMMANDS:
+        if pat.search(clean_cmd):
+            return f"Error: Prohibited destructive command rejected by safety filter: '{clean_cmd}'."
+
+    # Tier B: Sensitive Commands Requiring User Authorization
+    matched_reason = None
+    for pat, reason in SENSITIVE_COMMAND_PATTERNS:
+        if pat.search(clean_cmd):
+            matched_reason = reason
+            break
+
+    if matched_reason:
+        requester = get_permission_requester()
+        if requester is not None:
+            desc = f"Action: {matched_reason}\nCommand: `{clean_cmd}`"
+            approved = requester(clean_cmd, desc)
+            if not approved:
+                return (
+                    f"Command rejected by user: The user declined authorization to run '{clean_cmd}'. "
+                    "Do NOT attempt to run this command again. Continue with your remaining work or conclude your response."
+                )
+            logger.info("User approved execution of sensitive command: %s", clean_cmd)
+        else:
+            return (
+                f"Error: Command requires explicit user authorization: '{clean_cmd}' ({matched_reason}). "
+                "No interactive approval channel is active. Please ask the user directly before attempting this action."
+            )
+
+    try:
+        argv = shlex.split(clean_cmd, posix=os.name != "nt")
+    except ValueError as exc:
+        return f"Error: Invalid command syntax: {exc}"
+    if not argv:
+        return "Error: command cannot be empty."
+    if not _is_allowed_verification_command(argv):
+        requester = get_permission_requester()
+        if requester is None:
+            return (
+                f"Error: Command requires explicit user authorization: '{clean_cmd}'. "
+                "Only configured safe command prefixes are allowed without approval."
+            )
+        if not requester(clean_cmd, f"Action: Execute command outside the safe allowlist\nCommand: `{clean_cmd}`"):
+            return f"Command rejected by user: The user declined authorization to run '{clean_cmd}'."
 
     start_t = time.monotonic()
     try:
         proc = subprocess.run(
-            clean_cmd,
+            argv,
             cwd=str(root),
-            shell=True,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -772,11 +908,19 @@ def normalize_tool_arguments(tool_name: str, raw_args: dict[str, Any]) -> dict[s
                 break
         for r_key in ("is_regex", "regex", "isRegex", "use_regex"):
             if r_key in args:
-                args["is_regex"] = bool(args.pop(r_key))
+                val = args.pop(r_key)
+                if isinstance(val, str):
+                    args["is_regex"] = val.strip().lower() in ("true", "1", "yes")
+                else:
+                    args["is_regex"] = bool(val)
                 break
         for c_key in ("case_sensitive", "caseSensitive", "is_case_sensitive", "case"):
             if c_key in args:
-                args["case_sensitive"] = bool(args.pop(c_key))
+                val = args.pop(c_key)
+                if isinstance(val, str):
+                    args["case_sensitive"] = val.strip().lower() in ("true", "1", "yes")
+                else:
+                    args["case_sensitive"] = bool(val)
                 break
         for m_key in ("max_results", "limit", "max", "maxResults"):
             if m_key in args:
@@ -812,9 +956,23 @@ def normalize_tool_arguments(tool_name: str, raw_args: dict[str, Any]) -> dict[s
             if s_key in args and args[s_key] is not None:
                 args["search"] = str(args.pop(s_key))
                 break
-        for r_key in ("replace", "new_str", "new_code", "replacement", "after", "replace_block", "new"):
+        for r_key in ("replace", "new_str", "new_code", "replacement", "after", "replace_block", "new", "new_content", "newContent", "content"):
             if r_key in args and args[r_key] is not None:
                 args["replace"] = str(args.pop(r_key))
+                break
+        for sl_key in ("start_line", "startLine", "start", "from_line", "line_start"):
+            if sl_key in args and args[sl_key] is not None:
+                try:
+                    args["start_line"] = int(args.pop(sl_key))
+                except Exception:
+                    pass
+                break
+        for el_key in ("end_line", "endLine", "end", "to_line", "line_end"):
+            if el_key in args and args[el_key] is not None:
+                try:
+                    args["end_line"] = int(args.pop(el_key))
+                except Exception:
+                    pass
                 break
 
     elif tool_name in ("run_command", "bash", "terminal", "command", "exec"):
@@ -842,8 +1000,27 @@ def normalize_tool_arguments(tool_name: str, raw_args: dict[str, Any]) -> dict[s
                 args["query"] = str(args.pop(q_key)).strip()
                 break
 
+    elif tool_name in ("delegate_to_local_worker", "local_worker", "delegate"):
+        for f_key in ("target_file", "path", "file", "target", "filePath", "targetFile"):
+            if f_key in args and args[f_key] is not None:
+                args["target_file"] = str(args.pop(f_key)).strip("`'\" \t\n")
+                break
+        for i_key in ("instruction", "task", "prompt", "spec", "action"):
+            if i_key in args and args[i_key] is not None:
+                args["instruction"] = str(args.pop(i_key)).strip()
+                break
+        for c_key in ("context", "surrounding_code", "contract", "types"):
+            if c_key in args and args[c_key] is not None:
+                args["context"] = str(args.pop(c_key)).strip()
+                break
+
     return args
 
+
+try:
+    from worker_pool import delegate_to_local_worker
+except ImportError:
+    delegate_to_local_worker = None  # type: ignore
 
 TOOL_REGISTRY = {
     "locate_concept": locate_concept,
@@ -874,6 +1051,11 @@ TOOL_REGISTRY = {
     "replace_file_content": edit_file,
     "modify_file": edit_file,
 }
+
+if delegate_to_local_worker:
+    TOOL_REGISTRY["delegate_to_local_worker"] = delegate_to_local_worker
+    TOOL_REGISTRY["local_worker"] = delegate_to_local_worker
+    TOOL_REGISTRY["delegate"] = delegate_to_local_worker
 
 TOOL_SCHEMAS = [
     {
@@ -926,18 +1108,29 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "edit_file",
-        "description": "Surgically edit a file using a SEARCH and REPLACE block. The SEARCH block must contain exact lines currently in the file.",
+        "description": "Surgically edit a file using a SEARCH and REPLACE block or line ranges (start_line, end_line, replace).",
         "parameters": {
             "path": "Relative file path to edit",
-            "search": "Exact lines of code currently in the file to be replaced",
-            "replace": "New lines of code to insert in place of the search block",
+            "search": "Exact lines of code currently in the file to be replaced (optional if start_line/end_line specified)",
+            "replace": "New lines of code to insert (or empty string to delete)",
+            "start_line": "Optional 1-based start line number to replace",
+            "end_line": "Optional 1-based end line number to replace",
+        },
+    },
+    {
+        "name": "delegate_to_local_worker",
+        "description": "Delegate a surgical code implementation or refactoring task to the local offline code worker ($0 token cost). The local worker runs safely in a sequential worker pool (concurrency=1) and returns precision code edits.",
+        "parameters": {
+            "target_file": "Relative workspace path to the file being edited or created",
+            "instruction": "Specific, unambiguous code instructions for the local worker to implement",
+            "context": "Optional surrounding lines, interface contracts, or types the worker needs",
         },
     },
     {
         "name": "run_command",
-        "description": "Run a shell command in the project root to run linters, tests, or builds (e.g. 'npm run build', 'npx tsc', 'pytest').",
+        "description": "Run a verification shell command in the project root (e.g. 'npm run build', 'npx tsc', 'pytest', 'cargo check'). Git mutation and staging commands require explicit user authorization; unauthorized or prohibited staging operations remain blocked by the runtime safety policy.",
         "parameters": {
-            "command": "The terminal command string to execute",
+            "command": "The terminal verification command string to execute",
             "timeout_seconds": "Timeout in seconds (default: 60)",
         },
     },

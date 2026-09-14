@@ -17,7 +17,12 @@ import {
   getConfiguredModelsList,
   ConfiguredModelItem,
   loadAllProviders,
-  saveProviderConfig,
+  getAutoSelectedLocalWorker,
+  isModelVisionCapable,
+  findBestAvailableVisionModel,
+  resolveInitialSelectedModel,
+  saveActiveSelectedModel,
+  getActiveSelectedModel,
 } from "../../services/aiModelManager";
 import {
   ProviderLogo,
@@ -47,7 +52,8 @@ interface AiAssistantChatProps {
     overrideModel?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
     activeFilePath?: string,
     selectedCode?: string,
-    conversationHistory?: Array<{ role: string; content: string }>
+    conversationHistory?: Array<{ role: string; content: string }>,
+    images?: string[]
   ) => void;
   onCancelPipeline: () => void;
   projectRoot?: string;
@@ -63,9 +69,26 @@ interface AiAssistantChatProps {
   streamingAnswer?: string;
   streamingThought?: string;
   agentSteps?: AgentStep[];
+  pendingPermission?: { id: string; command: string; description: string } | null;
+  respondToPermission?: (id: string, decision: "approved" | "rejected") => Promise<void>;
 }
 
 export type WorkflowMode = "agent" | "chat" | "plan";
+
+export function cleanThoughtText(raw?: string): string {
+  if (!raw) return "";
+  return raw
+    .replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "")
+    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/gi, "")
+    .replace(/<(?:invoke|function_call|call|action|tool)\b[\s\S]*?(?:<\/(?:invoke|function_call|call|action|tool)>|$)/gi, "")
+    .replace(/<(?:parameter|arg|argument)\b[\s\S]*?(?:<\/(?:parameter|arg|argument)>|$)/gi, "")
+    .replace(/```(?:json)?\s*\{\s*"(?:tool|name)"[\s\S]*?\}\s*```/gi, "")
+    .replace(/Action:\s*[A-Za-z0-9_]+\s*\nAction Input:\s*\{[\s\S]*?\}/g, "")
+    .replace(/(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+\]?[:*#`\s]*\n<{5,9}\s*SEARCH[\s\S]*?>{5,9}\s*REPLACE/g, "")
+    .replace(/(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$|\Z))/g, "")
+    .replace(/<\/(?:tool_call|invoke|function_call|call|action|parameter|arg|argument|think)>/gi, "")
+    .trim();
+}
 
 export function AiAssistantChat({
   prompt,
@@ -87,14 +110,24 @@ export function AiAssistantChat({
   streamingAnswer = "",
   streamingThought = "",
   agentSteps = [],
+  pendingPermission = null,
+  respondToPermission,
 }: AiAssistantChatProps) {
 
-  const [configuredModels, setConfiguredModels] = useState<ConfiguredModelItem[]>(getConfiguredModelsList());
-  const [selectedModelItem, setSelectedModelItem] = useState<ConfiguredModelItem | null>(() => {
-    const list = getConfiguredModelsList();
-    return list.find((m) => m.isDefault) || list[0] || null;
-  });
+  const [configuredModels, setConfiguredModels] = useState<ConfiguredModelItem[]>(() => getConfiguredModelsList());
+  const [selectedModelItem, setSelectedModelItem] = useState<ConfiguredModelItem | null>(() =>
+    resolveInitialSelectedModel()
+  );
+
+  const handleSelectModel = (item: ConfiguredModelItem | null) => {
+    setSelectedModelItem(item);
+    if (item) {
+      saveActiveSelectedModel(item.providerId, item.model);
+    }
+  };
+  const [localWorker, setLocalWorker] = useState<string>(getAutoSelectedLocalWorker());
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
   // Persistent chat history across tab switches, panel open/close, and reloads
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
@@ -141,6 +174,15 @@ export function AiAssistantChat({
     }
   };
 
+  const isCurrentModelVisionCapable = selectedModelItem
+    ? isModelVisionCapable(selectedModelItem.providerId, selectedModelItem.model)
+    : false;
+
+  const bestVisionAlternative =
+    attachedImages.length > 0 && !isCurrentModelVisionCapable
+      ? findBestAvailableVisionModel(loadAllProviders())
+      : null;
+
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const heroMenuRef = useRef<HTMLDivElement>(null);
@@ -185,7 +227,7 @@ export function AiAssistantChat({
   useEffect(() => {
     if (prevStatusRef.current === "running" && (status === "success" || status === "failed" || status === "error")) {
       const isSuccess = status === "success";
-      let errorType: "offline" | "timeout" | "syntax" | "general" = "general";
+      let errorType: "offline" | "timeout" | "syntax" | "api" | "general" = "general";
       const detailLower = (failureDetail || "").toLowerCase();
       if (
         detailLower.includes("unable to connect") ||
@@ -200,6 +242,22 @@ export function AiAssistantChat({
       ) {
         errorType = "timeout";
       } else if (
+        detailLower.includes("api error") ||
+        detailLower.includes("http 40") ||
+        detailLower.includes("http 50") ||
+        detailLower.includes("404") ||
+        detailLower.includes("401") ||
+        detailLower.includes("403") ||
+        detailLower.includes("429") ||
+        detailLower.includes("responses endpoint") ||
+        detailLower.includes("v1/responses") ||
+        detailLower.includes("api key") ||
+        detailLower.includes("not supported in the v1") ||
+        detailLower.includes("returned no changes") ||
+        detailLower.includes("empty response")
+      ) {
+        errorType = "api";
+      } else if (
         detailLower.includes("syntax") ||
         detailLower.includes("lint") ||
         detailLower.includes("paradox") ||
@@ -208,12 +266,17 @@ export function AiAssistantChat({
         errorType = "syntax";
       }
 
+      const hasEditedFiles = Boolean(
+        (orchestrationResult?.edited_files && orchestrationResult.edited_files.length > 0) ||
+        (orchestrationResult?.final_patches && orchestrationResult.final_patches.length > 0)
+      );
+
       const finalContent = isSuccess
         ? (orchestrationResult?.answer || streamingAnswer)
           ? (orchestrationResult?.answer || streamingAnswer)
-          : orchestrationResult
+          : hasEditedFiles
           ? `### Verified Workspace Update\n\nTask successfully verified and applied in ${orchestrationResult.total_rounds ?? 1} round(s) (${Math.round(orchestrationResult.elapsed_ms ?? 0)}ms).`
-          : "Verified changes were successfully applied to the workspace."
+          : "Task completed. No file modifications were made."
         : failureDetail
         ? `⚠️ **Task Failed:** ${failureDetail}`
         : "The task needs attention. Review Problems or Output for details.";
@@ -230,7 +293,7 @@ export function AiAssistantChat({
         provider: selectedModelItem?.providerId || "ollama",
         model: selectedModelItem?.model || "ACSA Agent",
         steps: finalizedSteps.length > 0 ? finalizedSteps : undefined,
-        thinking: streamingThought || undefined,
+        thinking: cleanThoughtText(streamingThought) || undefined,
         error: !isSuccess,
         errorType: !isSuccess ? errorType : undefined,
       };
@@ -248,7 +311,13 @@ export function AiAssistantChat({
     const refresh = () => {
       const list = getConfiguredModelsList();
       setConfiguredModels(list);
+      setLocalWorker(getAutoSelectedLocalWorker());
       setSelectedModelItem((prev) => {
+        const saved = getActiveSelectedModel();
+        if (saved) {
+          const match = list.find((m) => m.providerId === saved.providerId && m.model === saved.model);
+          if (match) return match;
+        }
         if (prev) {
           const match = list.find((m) => m.model === prev.model && m.providerId === prev.providerId);
           if (match) return match;
@@ -259,7 +328,13 @@ export function AiAssistantChat({
 
     refresh();
     window.addEventListener("acsa:models-updated", refresh);
-    return () => window.removeEventListener("acsa:models-updated", refresh);
+    window.addEventListener("acsa:local-worker-updated", refresh);
+    window.addEventListener("acsa:selected-model-changed", refresh);
+    return () => {
+      window.removeEventListener("acsa:models-updated", refresh);
+      window.removeEventListener("acsa:local-worker-updated", refresh);
+      window.removeEventListener("acsa:selected-model-changed", refresh);
+    };
   }, []);
 
   // Listen for focus requests / Start Coding with Ollama triggers
@@ -267,11 +342,11 @@ export function AiAssistantChat({
     const handleFocus = (e: any) => {
       const targetModel = e?.detail?.model;
       if (targetModel) {
-        setSelectedModelItem((prev) => {
-          const list = getConfiguredModelsList();
-          const match = list.find((m) => m.model === targetModel);
-          return match || prev;
-        });
+        const list = getConfiguredModelsList();
+        const match = list.find((m) => m.model === targetModel);
+        if (match) {
+          handleSelectModel(match);
+        }
       }
       setTimeout(() => {
         textareaRef.current?.focus();
@@ -331,48 +406,26 @@ export function AiAssistantChat({
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node) &&
-        heroMenuRef.current &&
-        !heroMenuRef.current.contains(e.target as Node)
+        (!menuRef.current || !menuRef.current.contains(e.target as Node)) &&
+        (!heroMenuRef.current || !heroMenuRef.current.contains(e.target as Node))
       ) {
         setIsModelMenuOpen(false);
       }
       if (
-        contextMenuRef.current &&
-        !contextMenuRef.current.contains(e.target as Node) &&
-        heroContextMenuRef.current &&
-        !heroContextMenuRef.current.contains(e.target as Node)
+        (!contextMenuRef.current || !contextMenuRef.current.contains(e.target as Node)) &&
+        (!heroContextMenuRef.current || !heroContextMenuRef.current.contains(e.target as Node))
       ) {
         setIsContextMenuOpen(false);
       }
       if (
-        modeMenuRef.current &&
-        !modeMenuRef.current.contains(e.target as Node) &&
-        heroModeMenuRef.current &&
-        !heroModeMenuRef.current.contains(e.target as Node)
+        (!modeMenuRef.current || !modeMenuRef.current.contains(e.target as Node)) &&
+        (!heroModeMenuRef.current || !heroModeMenuRef.current.contains(e.target as Node))
       ) {
         setIsModeMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Listen for custom event from Ollama banner to switch to Ollama
-  useEffect(() => {
-    const handleSwitch = (e: CustomEvent<{ providerId: string; model: string }>) => {
-      if (e.detail?.model) {
-        const list = getConfiguredModelsList();
-        setConfiguredModels(list);
-        const match = list.find(
-          (m) => m.providerId === e.detail.providerId && m.model === e.detail.model
-        );
-        if (match) setSelectedModelItem(match);
-      }
-    };
-    window.addEventListener(EVENT_START_CODING_WITH_OLLAMA as any, handleSwitch);
-    return () => window.removeEventListener(EVENT_START_CODING_WITH_OLLAMA as any, handleSwitch);
   }, []);
 
   useEffect(() => {
@@ -397,7 +450,7 @@ export function AiAssistantChat({
   // Scroll chat bottom on new messages, logs, or streaming updates
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps]);
+  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, pendingPermission]);
 
   // ── Handle Send ─────────────────────────────────────────────────────────
   const handleSend = async (textToSend = prompt) => {
@@ -433,7 +486,8 @@ export function AiAssistantChat({
           : undefined,
         selectedContext?.path || undefined,
         selectedContext?.code || undefined,
-        recentHistory
+        recentHistory,
+        currentImages
       );
       // Optional: add a user message to chat history too, so they see what they asked
       const userMsg: ChatMessage = {
@@ -594,66 +648,108 @@ export function AiAssistantChat({
     void handleSend(text);
   };
 
-  const renderModelMenu = (isCenterHero: boolean) => (
-    <div
-      className={`absolute ${
-        isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-1.5 left-0"
-      } w-64 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
-    >
-      <div className="text-[10px] font-semibold text-zinc-400 px-2 py-1 uppercase tracking-wider font-mono">
-        Installed AI Models
-      </div>
-      {configuredModels.length === 0 ? (
-        <div className="px-2.5 py-3 text-center text-xs text-zinc-500 font-mono">
-          No models installed yet
-        </div>
-      ) : (
-        configuredModels.map((item) => {
-          const isSelected =
-            item.model === selectedModelItem?.model && item.providerId === selectedModelItem?.providerId;
-          return (
-            <button
-              key={`${item.providerId}-${item.model}`}
-              type="button"
-              onClick={() => {
-                setSelectedModelItem(item);
-                setIsModelMenuOpen(false);
-                if (item.providerId === "ollama") {
-                  const all = loadAllProviders();
-                  if (all.ollama) {
-                    all.ollama.selectedModel = item.model;
-                    saveProviderConfig(all.ollama);
-                  }
-                }
-              }}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate font-mono text-[11px]">{item.model}</span>
-              </div>
-              {isSelected && <Icon icon={Check} className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
-            </button>
-          );
-        })
-      )}
+  const renderModelMenu = (isCenterHero: boolean) => {
+    const cleanSearch = modelSearchQuery.trim().toLowerCase();
+    const filteredModels = cleanSearch
+      ? configuredModels.filter(
+          (m) =>
+            m.model.toLowerCase().includes(cleanSearch) ||
+            m.providerName.toLowerCase().includes(cleanSearch)
+        )
+      : configuredModels;
 
-      <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between px-1">
-        <button
-          type="button"
-          onClick={() => {
-            setIsModelMenuOpen(false);
-            openAiManagementDashboard();
-          }}
-          className="text-[10px] text-purple-400 hover:text-purple-300 py-1 transition-colors font-mono font-medium"
-        >
-          + Download More Models
-        </button>
+    return (
+      <div
+        className={`absolute ${
+          isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-1.5 left-0"
+        } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col text-left`}
+      >
+        <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-800/80 shrink-0">
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider font-mono">
+            Orchestrator Brain (Cloud)
+          </span>
+          <span className="text-[10px] text-zinc-500 font-mono">
+            {configuredModels.length} models
+          </span>
+        </div>
+
+        {configuredModels.length > 5 && (
+          <div className="mb-2 shrink-0">
+            <input
+              type="text"
+              placeholder="Filter models..."
+              value={modelSearchQuery}
+              onChange={(e) => setModelSearchQuery(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
+            />
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto space-y-0.5 min-h-0 pr-0.5">
+          {configuredModels.length === 0 ? (
+            <div className="px-2.5 py-3 text-center space-y-2">
+              <div className="text-xs text-zinc-400 font-sans">No Cloud Brain Configured</div>
+              <p className="text-[10px] text-zinc-500 font-sans">
+                Add an API key to enable high-reasoning planning and task orchestration.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsModelMenuOpen(false);
+                  openAiManagementDashboard();
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold font-sans transition-colors shadow-sm"
+              >
+                ⚙️ Configure Cloud Keys
+              </button>
+            </div>
+          ) : filteredModels.length === 0 ? (
+            <div className="px-2.5 py-4 text-center text-xs text-zinc-500 font-mono">
+              No models match "{modelSearchQuery}"
+            </div>
+          ) : (
+            filteredModels.map((item) => {
+              const isSelected =
+                item.model === selectedModelItem?.model && item.providerId === selectedModelItem?.providerId;
+              return (
+                <button
+                  key={`${item.providerId}-${item.model}`}
+                  type="button"
+                  onClick={() => {
+                    handleSelectModel(item);
+                    setIsModelMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                    isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate font-mono text-[11px]">{item.model}</span>
+                  </div>
+                  {isSelected && <Icon icon={Check} className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <div className="pt-1.5 mt-1 border-t border-zinc-800/80 flex items-center justify-between px-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setIsModelMenuOpen(false);
+              openAiManagementDashboard();
+            }}
+            className="text-[10px] text-purple-400 hover:text-purple-300 py-0.5 transition-colors font-mono font-medium flex items-center gap-1"
+          >
+            <span>⚙️ Configure Cloud Keys & Models</span>
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderModeMenu = (isCenterHero: boolean) => (
     <div
@@ -947,20 +1043,46 @@ Click to re-index project.`}
                   <div className="relative rounded-2xl bg-[#1c1c24]/95 backdrop-blur-xl border border-zinc-700/60 shadow-2xl p-4 space-y-3">
                     {/* Attached Image Previews */}
                     {attachedImages.length > 0 && (
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                        {attachedImages.map((img, idx) => (
-                          <div key={idx} className="relative group shrink-0 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800">
-                            <img src={img} alt="Attachment" className="w-14 h-14 object-cover" />
-                            <button
-                              type="button"
-                              onClick={() => setAttachedImages((prev) => prev.filter((_, i) => i !== idx))}
-                              className="absolute top-0.5 right-0.5 bg-black/80 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors cursor-pointer"
-                              title="Remove image"
-                            >
-                              <Icon icon={X} className="w-3 h-3" />
-                            </button>
+                      <div className="space-y-2 pb-1">
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                          {attachedImages.map((img, idx) => (
+                            <div key={idx} className="relative group shrink-0 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800">
+                              <img src={img} alt="Attachment" className="w-14 h-14 object-cover" />
+                              <button
+                                type="button"
+                                onClick={() => setAttachedImages((prev) => prev.filter((_, i) => i !== idx))}
+                                className="absolute top-0.5 right-0.5 bg-black/80 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors cursor-pointer"
+                                title="Remove image"
+                              >
+                                <Icon icon={X} className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Non-vision model indicator */}
+                        {!isCurrentModelVisionCapable && (
+                          <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs animate-in fade-in-0 duration-150">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span className="truncate">
+                                <strong className="font-semibold text-amber-200">{selectedModelItem?.model || "Current model"}</strong> is text-only. Attached image(s) will be omitted.
+                              </span>
+                            </div>
+                            {bestVisionAlternative && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleSelectModel(bestVisionAlternative);
+                                }}
+                                className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-[11px] transition-colors cursor-pointer shrink-0 whitespace-nowrap flex items-center gap-1"
+                              >
+                                <span>Switch to {bestVisionAlternative.model}</span>
+                                <span>→</span>
+                              </button>
+                            )}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
 
@@ -1045,13 +1167,25 @@ Click to re-index project.`}
                               setIsModeMenuOpen(false);
                             }}
                             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 font-medium transition-all shadow-sm"
+                            title="Select Cloud Orchestrator Brain"
                           >
-                            <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
-                            <span className="font-mono text-[11px]">{selectedModelItem?.model || "Select Model"}</span>
+                            <ProviderLogo providerId={selectedModelItem?.providerId || "openai"} className="w-3.5 h-3.5 shrink-0" />
+                            <span className="font-mono text-[11px]">{selectedModelItem?.model || "Configure Brain"}</span>
                             <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
                           </button>
 
                           {isModelMenuOpen && renderModelMenu(true)}
+                        </div>
+
+                        {/* Dual-Engine Hybrid Pill */}
+                        <div
+                          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900/60 border border-zinc-800 text-[11px] font-mono text-zinc-400 select-none"
+                          title="Hybrid Architecture: Cloud Brain plans and orchestrates; Local Worker executes code edits locally at $0 cost"
+                        >
+                          <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
+                            ⚡ Worker: {localWorker} ($0)
+                          </span>
                         </div>
                       </div>
 
@@ -1182,8 +1316,8 @@ Click to re-index project.`}
                     msg.role === "user" ? "items-end" : "items-start"
                   }`}
                 >
-                  {/* Role Header with Model, Provider, Timestamp & 1-Click Copy */}
-                  <div className="flex items-center justify-between w-full mb-1 px-1 text-[10px] text-zinc-400">
+                  {/* Role Header with Model, Provider, Timestamp */}
+                  <div className={`flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className="flex items-center gap-1.5 min-w-0">
                       {msg.role === "user" ? (
                         <>
@@ -1213,9 +1347,6 @@ Click to re-index project.`}
                         </>
                       )}
                     </div>
-                    {msg.content && (
-                      <CopyMessageButton text={msg.content} />
-                    )}
                   </div>
 
                   {/* Message Bubble */}
@@ -1305,7 +1436,27 @@ Click to re-index project.`}
                               </button>
                             </div>
                           </>
-                        ) : (
+                        ) : msg.errorType === "api" ? (
+                          <>
+                            <div className="flex items-center gap-2 text-red-300 font-medium">
+                              <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
+                              <span>Provider API / Model Error</span>
+                            </div>
+                            <p className="text-zinc-400 text-[11px] leading-relaxed">
+                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                                `The AI provider returned an error while processing your request with ${msg.model || "the selected model"}.`}
+                            </p>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => openAiManagementDashboard()}
+                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
+                              >
+                                Configure Model / API Key
+                              </button>
+                            </div>
+                          </>
+                        ) : msg.errorType === "syntax" ? (
                           <>
                             <div className="flex items-center gap-2 text-zinc-300 font-medium">
                               <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
@@ -1315,34 +1466,55 @@ Click to re-index project.`}
                               The deterministic verification gauntlet caught syntax/linter issues or contradictions in the generated code and stopped safely without modifying disk files. Review the <strong>Output (Gauntlet)</strong> tab for diagnostic logs.
                             </p>
                           </>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span>Task Execution Notice</span>
+                            </div>
+                            <p className="text-zinc-400 text-[11px] leading-relaxed">
+                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                                "The task encountered an issue during execution. Check the output tab or console for details."}
+                            </p>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => openAiManagementDashboard()}
+                                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] transition-colors border border-zinc-700 cursor-pointer"
+                              >
+                                Check AI Settings
+                              </button>
+                            </div>
+                          </>
                         )}
                       </div>
                     )}
                   </div>
+                  {/* Bottom Message Actions (Copy button positioned under message) */}
+                  {msg.content && (
+                    <div className={`mt-1 flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} px-1`}>
+                      <CopyMessageButton text={msg.content} />
+                    </div>
+                  )}
                 </div>
               ))}
 
               {/* Active Running Agent Assistant Turn */}
               {status === "running" && (
                 <div className="flex flex-col items-start">
-                  <div className="flex items-center justify-between w-full mb-1 px-1 text-[10px] text-zinc-400">
-                    <div className="flex items-center gap-1.5">
-                      {selectedModelItem?.providerId ? (
-                        <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
-                      ) : (
-                        <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      )}
-                      <span className="font-semibold text-purple-300 font-mono text-[11px]">
-                        {selectedModelItem?.model || "ACSA Agent"}
-                      </span>
-                      <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono ml-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                        Working ({agentElapsedSeconds}s)
-                      </span>
-                    </div>
-                    {streamingAnswer && (
-                      <CopyMessageButton text={streamingAnswer} />
+                  <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400 justify-start">
+                    {selectedModelItem?.providerId ? (
+                      <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                     )}
+                    <span className="font-semibold text-purple-300 font-mono text-[11px]">
+                      {selectedModelItem?.model || "ACSA Agent"}
+                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono ml-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                      Working ({agentElapsedSeconds}s)
+                    </span>
                   </div>
 
                   <div className="max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed bg-zinc-900/90 border border-purple-500/30 text-zinc-100 rounded-tl-sm w-full shadow-lg">
@@ -1369,12 +1541,23 @@ Click to re-index project.`}
                       ) : null
                     )}
 
+                    {/* Live Permission Authorization Alert in Running Turn */}
+                    {pendingPermission && (
+                      <div className="mt-2.5 p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/40 flex items-center justify-between text-xs text-amber-300">
+                        <div className="flex items-center gap-2">
+                          <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                          <span>Awaiting your authorization to run: <code className="font-mono bg-black/60 px-1.5 py-0.5 rounded text-amber-200">{pendingPermission.command}</code></span>
+                        </div>
+                        <span className="text-[10px] text-amber-400/80 font-mono shrink-0 ml-2">Action Required Below</span>
+                      </div>
+                    )}
+
                     {/* Stop Generating Button & Active Step */}
                     <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
                       <span className="text-[11px] text-zinc-400 truncate max-w-[70%]">
                         {agentSteps.length > 0
-                          ? agentSteps[agentSteps.length - 1]?.detail || agentSteps[agentSteps.length - 1]?.name
-                          : currentAgentPhase || "Processing..."}
+                          ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
+                          : currentAgentPhase || "Initializing..."}
                       </span>
                       <button
                         type="button"
@@ -1386,6 +1569,13 @@ Click to re-index project.`}
                       </button>
                     </div>
                   </div>
+
+                  {/* Bottom Message Actions for Running Turn */}
+                  {streamingAnswer && (
+                    <div className="mt-1 flex items-center justify-start px-1">
+                      <CopyMessageButton text={streamingAnswer} />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1399,24 +1589,90 @@ Click to re-index project.`}
       {(!isWide || chatMessages.length > 0 || status === "running") && (
         <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
+            {/* Interactive Action Approval Card (Sensitive Commands Gate) */}
+            {pendingPermission && (
+              <div className="mb-3 p-3.5 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs tracking-wider uppercase">
+                    <Icon icon={Shield} className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                    <span>Action Approval Required</span>
+                  </div>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full font-mono border border-amber-500/30">
+                    Sensitive Command
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-300 mb-2.5 leading-relaxed">
+                  {pendingPermission.description || "The agent is requesting authorization to execute a sensitive command:"}
+                </p>
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-black/80 border border-zinc-800 font-mono text-xs text-emerald-400 overflow-x-auto select-all mb-3">
+                  <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span className="text-zinc-500 select-none">$</span>
+                  <span>{pendingPermission.command}</span>
+                </div>
+                <div className="flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => void respondToPermission?.(pendingPermission.id, "rejected")}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer shadow-sm"
+                  >
+                    <Icon icon={X} className="w-3.5 h-3.5 text-red-400" />
+                    <span>Reject</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void respondToPermission?.(pendingPermission.id, "approved")}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg hover:shadow-amber-500/25 transition-all cursor-pointer"
+                  >
+                    <Icon icon={Check} className="w-3.5 h-3.5" />
+                    <span>Approve &amp; Run</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Unified Omnibar Input Card */}
             <div className="relative rounded-2xl bg-zinc-900/90 border border-zinc-800/90 focus-within:border-purple-500/50 focus-within:ring-1 focus-within:ring-purple-500/20 p-2.5 transition-all shadow-lg">
               {/* Attached Image Previews */}
               {attachedImages.length > 0 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-2">
-                  {attachedImages.map((img, idx) => (
-                    <div key={idx} className="relative group shrink-0 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800">
-                      <img src={img} alt="Attachment" className="w-14 h-14 object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => setAttachedImages((prev) => prev.filter((_, i) => i !== idx))}
-                        className="absolute top-0.5 right-0.5 bg-black/80 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors cursor-pointer"
-                        title="Remove image"
-                      >
-                        <Icon icon={X} className="w-3 h-3" />
-                      </button>
+                <div className="space-y-1.5 pb-2">
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                    {attachedImages.map((img, idx) => (
+                      <div key={idx} className="relative group shrink-0 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-800">
+                        <img src={img} alt="Attachment" className="w-14 h-14 object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setAttachedImages((prev) => prev.filter((_, i) => i !== idx))}
+                          className="absolute top-0.5 right-0.5 bg-black/80 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors cursor-pointer"
+                          title="Remove image"
+                        >
+                          <Icon icon={X} className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Non-vision model indicator */}
+                  {!isCurrentModelVisionCapable && (
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[11px] animate-in fade-in-0 duration-150">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Icon icon={AlertCircle} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">
+                          <strong className="font-semibold text-amber-200">{selectedModelItem?.model || "Current model"}</strong> is text-only.
+                        </span>
+                      </div>
+                      {bestVisionAlternative && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleSelectModel(bestVisionAlternative);
+                          }}
+                          className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-[10px] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                        >
+                          Switch to {bestVisionAlternative.model} →
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
 
@@ -1501,17 +1757,26 @@ Click to re-index project.`}
                         setIsModeMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 transition-colors"
-                      title={selectedModelItem?.model || "Select Model"}
+                      title={selectedModelItem ? `Brain: ${selectedModelItem.model} (Worker: ${localWorker})` : "Configure Cloud Brain"}
                     >
-                      <ProviderLogo providerId={selectedModelItem?.providerId || "ollama"} className="w-3.5 h-3.5 shrink-0" />
+                      <ProviderLogo providerId={selectedModelItem?.providerId || "openai"} className="w-3.5 h-3.5 shrink-0" />
                       <span className="font-mono text-[10px] truncate">
-                        {selectedModelItem?.model || "Model"}
+                        {selectedModelItem?.model || "Brain"}
                       </span>
                       <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 shrink-0 ml-auto" />
                     </button>
 
                     {isModelMenuOpen && renderModelMenu(false)}
                   </div>
+
+                  {/* Local Worker status indicator in bottom bar */}
+                  {/* <div
+                    className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-900/60 border border-zinc-800/80 text-[10px] font-mono text-emerald-400 select-none"
+                    title={`Autonomous Local Worker: ${localWorker} ($0 local inference)`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
+                    <span>⚡ {localWorker.split(":")[0]} ($0)</span>
+                  </div> */}
                 </div>
 
                 {/* Right: Send / Stop icon button */}
@@ -1658,6 +1923,19 @@ function getStepCategory(name: string) {
   return { icon: Code2, color: "text-purple-400 bg-purple-500/10 border-purple-500/20", label: "AGENT" };
 }
 
+const INTERNAL_FRAMEWORK_STEPS = new Set([
+  "git intelligence",
+  "scale detection",
+  "intent analysis",
+  "agent engine",
+  "architect plan",
+  "agent setup",
+  "model reasoning",
+  "agent completed",
+  "agent guidance",
+  "verification",
+]);
+
 /* ── Collapsible Thinking & Steps Accordion ───────────────────────────── */
 interface ThinkingAccordionProps {
   steps?: AgentStep[];
@@ -1695,15 +1973,25 @@ function ThinkingAccordion({
     prevSummaryRef.current = hasSummary;
   }, [isLive, hasSummary]);
 
-  if ((!steps || steps.length === 0) && !thinking && !isLive) {
-    return null;
-  }
-
   const effectiveSteps = isLive
     ? steps
     : steps.map((s) => (s.status === "running" ? { ...s, status: "done" as const } : s));
-  const activeStep = effectiveSteps.find((s) => s.status === "running") || effectiveSteps[effectiveSteps.length - 1];
-  const completedCount = effectiveSteps.filter((s) => s.status === "done" || s.status === "success").length;
+
+  // Filter out vague internal Python lifecycle milestones (Git Intelligence, Scale Detection, etc.)
+  // Only surface actionable user-facing steps (Read File, Edit File, Search Codebase, Syntax Gate, etc.)
+  const visibleSteps = effectiveSteps.filter((s) => {
+    const name = (s.name || "").trim().toLowerCase();
+    return !INTERNAL_FRAMEWORK_STEPS.has(name);
+  });
+
+  const cleanedThought = cleanThoughtText(thinking);
+
+  if (visibleSteps.length === 0 && !cleanedThought && !isLive) {
+    return null;
+  }
+
+  const activeStep = visibleSteps.find((s) => s.status === "running") || visibleSteps[visibleSteps.length - 1];
+  const completedCount = visibleSteps.filter((s) => s.status === "done" || s.status === "success").length;
 
   return (
     <div className="mb-2.5 rounded-xl border border-zinc-800/80 bg-zinc-950/50 overflow-hidden text-xs transition-all">
@@ -1734,11 +2022,15 @@ function ThinkingAccordion({
             <div className="flex items-center gap-2 min-w-0">
               <Icon icon={Sparkles} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
               <span className="font-semibold text-zinc-300 font-mono text-[11px]">
-                {elapsedSeconds > 0 ? `Thought for ${elapsedSeconds}s` : "Reasoning & Gauntlet Steps"}
+                {elapsedSeconds > 0
+                  ? `Thought for ${elapsedSeconds}s`
+                  : visibleSteps.length > 0
+                  ? "Execution & Verification"
+                  : "Model Reasoning"}
               </span>
-              {effectiveSteps.length > 0 && (
+              {visibleSteps.length > 0 && (
                 <span className="text-[10px] text-zinc-500 font-mono">
-                  ({completedCount}/{effectiveSteps.length} steps)
+                  ({completedCount}/{visibleSteps.length} {visibleSteps.length === 1 ? "step" : "steps"})
                 </span>
               )}
             </div>
@@ -1755,14 +2047,14 @@ function ThinkingAccordion({
       {/* Expanded Drawer */}
       {isOpen && (
         <div className="p-3 space-y-3 border-t border-zinc-800/60 bg-zinc-950/80">
-          {/* Steps Checklist */}
-          {effectiveSteps.length > 0 && (
+          {/* Actionable Steps Checklist (Tool calls, Syntax checks, Subagents) */}
+          {visibleSteps.length > 0 && (
             <div className="space-y-1.5">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 font-mono mb-1">
                 Execution Steps
               </div>
               <div className="space-y-1 pl-1">
-                {effectiveSteps.map((step, idx) => {
+                {visibleSteps.map((step, idx) => {
                   const isRunning = isLive && step.status === "running";
                   const isSuccess = step.status === "done" || step.status === "success";
                   const isFailed = step.status === "failed";
@@ -1814,13 +2106,13 @@ function ThinkingAccordion({
           )}
 
           {/* Model Thoughts / Streaming Reasoning */}
-          {thinking && (
+          {cleanedThought && (
             <div className="space-y-1">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 font-mono">
                 Model Thoughts
               </div>
               <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 text-[11px] font-mono text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
-                {thinking}
+                {cleanedThought}
                 {isLive && <span className="inline-block w-1.5 h-3 bg-purple-400 ml-1 animate-pulse align-middle" />}
               </div>
             </div>

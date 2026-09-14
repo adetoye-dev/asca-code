@@ -56,19 +56,37 @@ def generate_execution_plan(
     llm_caller: Callable[[str, Optional[str]], Optional[str]],
 ) -> list[str]:
     """Generate a structured milestone checklist before launching the ReAct loop."""
+    default_steps = [
+        "1. Locate relevant components and code landmarks",
+        "2. Read target lines and surrounding context",
+        "3. Apply surgical edits to files on disk",
+        "4. Run syntax verification and compile checks",
+    ]
+
+    req_lower = user_request.lower().strip()
+    # If the user request is a focused/conversational tweak or revision, skip the planner call
+    is_conversational_or_short = (
+        req_lower.startswith(("no", "don't", "stop", "fix", "undo", "remove", "delete", "change", "rename", "update", "just", "replace"))
+        or len(user_request.strip()) < 140
+    )
+    if is_conversational_or_short and not any(kw in req_lower for kw in ("architecture", "microservice", "scaffold", "full-stack", "new project")):
+        return default_steps
+
     planner_sys = (
         "You are an expert lead software architect. Given the user's objective and repository context, "
-        "produce a concise 3-4 step execution plan. Each step must be a single actionable line.\n"
+        "produce a concise 2-3 step execution plan focusing purely on code changes inside the workspace.\n"
+        "CRITICAL RULES:\n"
+        "- Do NOT include git commit, git push, staging, or version control operations in the plan.\n"
+        "- Never propose repo-wide rewrites or repository deletions for specific localized requests.\n"
         "Format strictly as a numbered list:\n"
         "1. Step one\n"
         "2. Step two\n"
-        "3. Step three\n"
         "Do not include conversational text or explanations."
     )
     plan_prompt = (
         f"Repository Architecture:\n{repo_map[:2000]}\n\n"
         f"User Objective: {user_request}\n\n"
-        "Generate a 3-4 step execution plan:"
+        "Generate a 2-3 step execution plan:"
     )
     try:
         raw_plan = llm_caller(plan_prompt, planner_sys)
@@ -77,18 +95,15 @@ def generate_execution_plan(
             for line in raw_plan.splitlines():
                 clean_line = line.strip()
                 if re.match(r"^\d+\.\s+", clean_line):
-                    steps.append(clean_line)
+                    # Filter out any hallucinated git / version control steps
+                    if not any(w in clean_line.lower() for w in ("git", "commit", "push", "stage", "repository-wide")):
+                        steps.append(clean_line)
             if steps:
-                return steps[:4]
+                return steps[:3]
     except Exception as exc:
         logger.debug("Planner generation skipped/failed: %s", exc)
 
-    return [
-        "1. Locate relevant components and code landmarks",
-        "2. Read target lines and surrounding context",
-        "3. Apply surgical edits to files on disk",
-        "4. Run syntax verification and compile checks",
-    ]
+    return default_steps
 
 
 @dataclass
@@ -211,6 +226,13 @@ To use a tool, output a single tool call block using either of these formats:
 
 Format A (XML tag - Recommended):
 <tool_call>
+<invoke name="tool_name">
+<parameter name="arg1">val1</parameter>
+</invoke>
+</tool_call>
+
+Or with JSON inside <tool_call>:
+<tool_call>
 {{"name": "tool_name", "parameters": {{"arg1": "val1"}}}}
 </tool_call>
 
@@ -236,6 +258,14 @@ When instructed to remove, delete, drop, or omit a code element, text, attribute
 - When instructed to remove one item while keeping another that already exists, excise only the designated item without re-adding or duplicating existing elements.
 10. DO NOT CYCLE READ/LOCATE TOOLS:
 Once you have called `read_file` and see the target code in your context, DO NOT call `read_file` or `locate_concept` again. Your immediate next action MUST be to call `edit_file` to execute the modification on disk.
+11. SENSITIVE COMMANDS & USER PERMISSION:
+Commands that alter version control (git commit, git push, git add, git checkout, git reset) or publish packages require interactive user authorization. When you invoke these operations, the IDE will prompt the developer to Approve & Run or Reject the action. If the user declines permission, respect their decision immediately and continue with your analysis or final explanation without re-invoking the command.
+12. HYBRID FOREMAN-TRADESMAN DELEGATION:
+When orchestrating multi-file refactors or complex code generation, you may call `delegate_to_local_worker` with `target_file`, `instruction`, and optional contract `context`. The local tradesman worker executes the surgical edit in an isolated, hardware-safe environment ($0 token cost) and returns the verified edit.
+13. AUTONOMOUS ACTION (NO PASSIVE CONFIRMATION):
+You are an autonomous execution agent with full pre-approval to inspect and edit files in the workspace to fulfill the user's objective.
+NEVER say "Please confirm and I will make the change now", "Let me know if you would like me to proceed", or ask the user for permission to proceed with code edits.
+PROCEED IMMEDIATELY to inspect target files with `read_file` or `locate_concept`, and execute the requested modifications directly on disk using `edit_file`.
 
 Project Root: {project_root}
 {active_file_info}
@@ -261,17 +291,171 @@ def _extract_json_tool_objects(text: str) -> list[dict[str, Any]]:
     return objects
 
 
-def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = None) -> list[tuple[str, dict[str, Any]]]:
-    """Extract all tool calls from various model output formats (SEARCH/REPLACE, JSON codeblocks, XML, ReAct)."""
+def _clean_extracted_path(raw: str) -> str:
+    """Robustly clean file paths extracted from LLM output (strip brackets, markdown, colons)."""
+    if not raw:
+        return ""
+    p = raw.strip()
+    p = re.sub(r"^[#*`\s]+", "", p)
+    p = re.sub(r"[#*`:\s]+$", "", p)
+    if p.startswith("[") and p.endswith("]"):
+        p = p[1:-1].strip()
+    p = p.strip("`'\" \t\n[]:*#")
+    if p.startswith("a/") or p.startswith("b/"):
+        p = p[2:]
+    return p.strip()
+
+
+def _parse_xml_param_value(val_str: str, param_name: str = "") -> Any:
+    """Safely coerce parameter values from XML strings."""
+    if param_name in ("search", "replace", "patch", "content", "code"):
+        val = val_str
+        if val.startswith("\n") and val.endswith("\n") and len(val) > 2:
+            val = val[1:-1]
+        return val
+
+    s = val_str.strip()
+    cdata_match = re.match(r"^<!\[CDATA\[([\s\S]*?)\]\]>$", s)
+    if cdata_match:
+        s = cdata_match.group(1).strip()
+
+    if s.lower() == "true":
+        return True
+    if s.lower() == "false":
+        return False
+    if s.lower() in ("null", "none"):
+        return None
+
+    if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+        try:
+            return json.loads(s)
+        except Exception:
+            pass
+
+    if re.fullmatch(r"-?\d+", s):
+        try:
+            return int(s)
+        except Exception:
+            pass
+    elif re.fullmatch(r"-?\d+\.\d+", s):
+        try:
+            return float(s)
+        except Exception:
+            pass
+
+    return s
+
+
+def _extract_params_from_xml_body(body: str) -> dict[str, Any]:
+    """Extract tool arguments from an XML tool invoke body."""
+    params: dict[str, Any] = {}
+    stripped = body.strip()
+
+    # 1. Embedded JSON candidate
+    json_candidate = stripped
+    if json_candidate.startswith("```"):
+        json_candidate = re.sub(r"^```(?:json)?\s*", "", json_candidate)
+        json_candidate = re.sub(r"\s*```$", "", json_candidate)
+    if json_candidate.startswith("{") and json_candidate.endswith("}"):
+        try:
+            parsed = json.loads(json_candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+    # 2. <parameter name="key">value</parameter> or <arg name="key">value</arg>
+    param_tag_pattern = re.compile(
+        r"<(?:parameter|arg|argument)\s+name=[\"']?([A-Za-z0-9_]+)[\"']?\s*>([\s\S]*?)(?:</(?:parameter|arg|argument)>|$)",
+        re.IGNORECASE,
+    )
+    for m in param_tag_pattern.finditer(body):
+        pname = m.group(1).strip()
+        pval = _parse_xml_param_value(m.group(2), param_name=pname)
+        params[pname] = pval
+
+    if params:
+        return params
+
+    # 3. Scope to <parameters> or <arguments> container if present
+    container_match = re.search(r"<(?:parameters|arguments)>([\s\S]*?)</(?:parameters|arguments)>", body, re.IGNORECASE)
+    search_scope = container_match.group(1) if container_match else body
+
+    # 4. Direct child tags: <key>value</key>
+    child_pattern = re.compile(r"<([A-Za-z0-9_]+)>([\s\S]*?)</\1>", re.IGNORECASE)
+    reserved_tags = {
+        "parameters", "arguments", "invoke", "function_call", "call", "action", "tool_call",
+        "name", "tool_name", "tool", "thought", "thinking"
+    }
+    for m in child_pattern.finditer(search_scope):
+        tag = m.group(1).strip()
+        if tag.lower() not in reserved_tags:
+            params[tag] = _parse_xml_param_value(m.group(2), param_name=tag)
+
+    return params
+
+
+def _parse_xml_invoke_blocks(text: str) -> list[tuple[str, dict[str, Any]]]:
+    """Parse XML tool calls across Anthropic, DeepSeek, Qwen, and Hermes patterns."""
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    # 1. Aider SEARCH/REPLACE blocks
-    for sr_match in re.finditer(
-        r"(?:^|\n)(?:(?:File|path|Target)?:\s*)?([^\n`<>]+?\.[A-Za-z0-9_]+)\s*\n"
-        r"<{5,9}\s*SEARCH\s*\n([\s\S]*?)\n={5,9}\s*\n([\s\S]*?)\n>{5,9}\s*REPLACE",
-        response_text,
-    ):
-        fpath = sr_match.group(1).strip()
+    # Pattern A: <invoke name="...">, <function_call name="...">, <call name="...">, <action name="...">
+    invoke_pattern = re.compile(
+        r"<(?:invoke|function_call|call|action|tool)\s+name=[\"']?([A-Za-z0-9_]+)[\"']?\s*>([\s\S]*?)(?:</(?:invoke|function_call|call|action|tool)>|$)",
+        re.IGNORECASE,
+    )
+    for m in invoke_pattern.finditer(text):
+        tool_name = m.group(1).strip()
+        raw_args = _extract_params_from_xml_body(m.group(2))
+        norm_args = agent_tools.normalize_tool_arguments(tool_name, raw_args)
+        calls.append((tool_name, norm_args))
+
+    # Pattern B: <tool_call name="...">...</tool_call>
+    tool_call_named = re.compile(
+        r"<tool_call\s+name=[\"']?([A-Za-z0-9_]+)[\"']?\s*>([\s\S]*?)(?:</tool_call>|$)",
+        re.IGNORECASE,
+    )
+    for m in tool_call_named.finditer(text):
+        tool_name = m.group(1).strip()
+        raw_args = _extract_params_from_xml_body(m.group(2))
+        norm_args = agent_tools.normalize_tool_arguments(tool_name, raw_args)
+        calls.append((tool_name, norm_args))
+
+    # Pattern C: <tool_call><tool_name>name</tool_name>...</tool_call>
+    child_named = re.compile(
+        r"<(?:tool_call|invoke|function_call)>\s*<(?:tool_name|name|tool)>([A-Za-z0-9_]+)</(?:tool_name|name|tool)>([\s\S]*?)(?:</(?:tool_call|invoke|function_call)>|$)",
+        re.IGNORECASE,
+    )
+    for m in child_named.finditer(text):
+        tool_name = m.group(1).strip()
+        raw_args = _extract_params_from_xml_body(body=m.group(2))
+        norm_args = agent_tools.normalize_tool_arguments(tool_name, raw_args)
+        calls.append((tool_name, norm_args))
+
+    # Pattern D: <tool_call><grep_search><query>...</query></grep_search></tool_call>
+    for tc_match in re.finditer(r"<tool_call>([\s\S]*?)(?:</tool_call>|$)", text, re.IGNORECASE):
+        tc_body = tc_match.group(1).strip()
+        for reg_tool in agent_tools.TOOL_REGISTRY.keys():
+            tool_tag_match = re.search(rf"<{reg_tool}\b[^>]*>([\s\S]*?)(?:</{reg_tool}>|$)", tc_body, re.IGNORECASE)
+            if tool_tag_match:
+                raw_args = _extract_params_from_xml_body(tool_tag_match.group(1))
+                norm_args = agent_tools.normalize_tool_arguments(reg_tool, raw_args)
+                calls.append((reg_tool, norm_args))
+
+    return calls
+
+
+def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = None) -> list[tuple[str, dict[str, Any]]]:
+    """Extract all tool calls from various model output formats (SEARCH/REPLACE, Unified Diffs, JSON codeblocks, XML, ReAct)."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    # 1. Multi-format SEARCH/REPLACE blocks (handles [path], path:, **path**, `path`, File: path, etc.)
+    sr_pattern = re.compile(
+        r"(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+)\]?[:*#`\s]*\n"
+        r"<{5,9}\s*SEARCH\s*\n([\s\S]*?)\n={5,9}\s*\n([\s\S]*?)\n>{5,9}\s*REPLACE"
+    )
+    for sr_match in sr_pattern.finditer(response_text):
+        fpath = _clean_extracted_path(sr_match.group(1))
         search_chunk = sr_match.group(2)
         replace_chunk = sr_match.group(3)
         if fallback_file and (any(fpath.startswith(pfx) for pfx in ("path/to/", "file.", "example.", "target.", "src/path/to/")) or not fpath):
@@ -279,9 +463,31 @@ def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = Non
         args = agent_tools.normalize_tool_arguments("edit_file", {"path": fpath, "search": search_chunk, "replace": replace_chunk})
         calls.append(("edit_file", args))
 
-    # 2. <tool_call> ... </tool_call>
+    # 2. Unified Git Diffs (diff --git a/... b/... or --- a/... +++ b/...)
+    diff_pattern = re.compile(
+        r"(?:^|\n)diff\s+--git\s+[ab]/(\S+)\s+[ab]/(\S+)\n"
+        r"(?:index\s+[0-9a-fA-F.]+\s*\n)?"
+        r"(?:---\s+(?:[ab]/)?(.+?)\n)?"
+        r"(?:\+\+\+\s+(?:[ab]/)?(.+?)\n)?"
+        r"([\s\S]+?)"
+        r"(?=\n\s*(?:diff\s+--git|\[|<{5,9})|\Z)"
+    )
+    for diff_match in diff_pattern.finditer(response_text):
+        fpath = _clean_extracted_path(diff_match.group(2) or diff_match.group(1))
+        diff_body = diff_match.group(5)
+        raw_patch = f"--- a/{fpath}\n+++ b/{fpath}\n{diff_body}"
+        args = agent_tools.normalize_tool_arguments("edit_file", {"path": fpath, "patch": raw_patch})
+        calls.append(("edit_file", args))
+
+    # 3. Native XML Tool Calls & Invokes (<invoke name="...">, <function_call>, <tool_call name="...">)
+    calls.extend(_parse_xml_invoke_blocks(response_text))
+
+    # 4. XML Tool Calls: <tool_call> ... </tool_call> with JSON body
     for xml_match in re.finditer(r"<tool_call>([\s\S]*?)(?:</tool_call>|$)", response_text, re.IGNORECASE):
         content = xml_match.group(1).strip()
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
         try:
             parsed = json.loads(content)
             name = parsed.get("name") or parsed.get("tool")
@@ -292,7 +498,7 @@ def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = Non
         except Exception:
             pass
 
-    # 3. JSON code blocks and inline JSON objects
+    # 5. JSON code blocks and inline JSON objects
     for obj in _extract_json_tool_objects(response_text):
         name = obj.get("tool") or obj.get("name")
         raw_args = obj.get("args") or obj.get("parameters") or {}
@@ -300,7 +506,7 @@ def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = Non
             norm_args = agent_tools.normalize_tool_arguments(str(name), raw_args)
             calls.append((str(name), norm_args))
 
-    # 4. Action: ... Action Input: ...
+    # 6. Action: ... Action Input: ...
     for react_match in re.finditer(r"Action:\s*([A-Za-z0-9_]+)\s*\nAction Input:\s*(\{[\s\S]*?\})", response_text):
         name = react_match.group(1).strip()
         try:
@@ -333,7 +539,7 @@ def is_mutation_request(user_request: str) -> bool:
         "describe", "tell me about", "can you explain", "who is",
     )
     if any(req_lower.startswith(prefix) for prefix in pure_qa_prefixes) and not any(
-        w in req_lower for w in ["and fix", "and change", "and remove", "and update", "and replace"]
+        w in req_lower for w in ["and fix", "and change", "and remove", "and update", "and replace", "and move"]
     ):
         return False
 
@@ -342,29 +548,70 @@ def is_mutation_request(user_request: str) -> bool:
         "add", "insert", "create", "fix", "repair", "refactor", "rename",
         "implement", "hide", "show", "display", "set", "switch", "toggle",
         "adjust", "clean", "extract", "move", "sync", "instead of",
+        "limit", "bound", "restrict", "clamp", "put", "place",
+        "align", "relocate", "reposition", "style", "wire", "hook",
     ]
-    return any(re.search(r"\b" + re.escape(w) + r"\b", req_lower) for w in mutation_keywords)
+    if any(re.search(r"\b" + re.escape(w) + r"\b", req_lower) for w in mutation_keywords):
+        return True
+
+    # Normative and directional phrasing
+    normative_patterns = [
+        r"should\s+be",
+        r"needs?\s+to(?:\s+be)?",
+        r"must\s+be",
+        r"ought\s+to",
+        r"instead\s+of",
+        r"not\s+above",
+        r"under\s+(?:the\s+)?message",
+        r"below\s+(?:the\s+)?message",
+        r"under\s+not\s+above",
+    ]
+    return any(re.search(pat, req_lower) for pat in normative_patterns)
 
 
 def _clean_thought_text(raw_text: str) -> str:
-    """Strip out <tool_call> and code blocks to leave only thinking / explanation text."""
-    cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|$)", "", raw_text, flags=re.IGNORECASE)
+    """Strip out <tool_call>, diff blocks, and SEARCH/REPLACE blocks to leave only thinking / explanation text."""
+    # 1. Strip <think>...</think> blocks (used by DeepSeek / Qwen reasoning models)
+    cleaned = re.sub(r"<think>[\s\S]*?(?:</think>|$)", "", raw_text, flags=re.IGNORECASE)
+    # 2. Strip <tool_call>...</tool_call>
+    cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|$)", "", cleaned, flags=re.IGNORECASE)
+    # 3. Strip loose <invoke>...</invoke>, <function_call>...</function_call>, <call>, <action>, etc.
+    cleaned = re.sub(r"<(?:invoke|function_call|call|action|tool)\b[\s\S]*?(?:</(?:invoke|function_call|call|action|tool)>|$)", "", cleaned, flags=re.IGNORECASE)
+    # 4. Strip loose <parameter> tags
+    cleaned = re.sub(r"<(?:parameter|arg|argument)\b[\s\S]*?(?:</(?:parameter|arg|argument)>|$)", "", cleaned, flags=re.IGNORECASE)
+    # 5. Strip JSON tool codeblocks
     cleaned = re.sub(r"```(?:json)?\s*\{\s*\"(?:tool|name)\"[\s\S]*?\}\s*```", "", cleaned, flags=re.IGNORECASE)
+    # 6. Strip Action: / Action Input:
     cleaned = re.sub(r"Action:\s*[A-Za-z0-9_]+\s*\nAction Input:\s*\{[\s\S]*?\}", "", cleaned)
-    cleaned = re.sub(r"(?:^|\n)(?:(?:File|path|Target)?:\s*)?[^\n`<>]+?\.[A-Za-z0-9_]+\s*\n<{5,9}\s*SEARCH[\s\S]*?>{5,9}\s*REPLACE", "", cleaned)
+    # 7. Strip SEARCH/REPLACE blocks (including bracketed [path], etc.)
+    cleaned = re.sub(
+        r"(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+\]?[:*#`\s]*\n"
+        r"<{5,9}\s*SEARCH[\s\S]*?>{5,9}\s*REPLACE",
+        "",
+        cleaned,
+    )
+    # 8. Strip unified git diff blocks
+    cleaned = re.sub(
+        r"(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$|\Z))",
+        "",
+        cleaned,
+    )
+    # 9. Clean dangling closing tags
+    cleaned = re.sub(r"</(?:tool_call|invoke|function_call|call|action|parameter|arg|argument|think)>", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 
 def run_agent_loop(
     user_request: str,
     project_root: str,
-    llm_caller: Callable[[str, Optional[str]], Optional[str]],
+    llm_caller: Callable[..., Optional[str]],
     active_file: Optional[str] = None,
     reporter: Optional[Callable[[str, str, str], None]] = None,
     chunk_streamer: Optional[Callable[[str], None]] = None,
     max_iterations: int = 8,
     conversation_history: Optional[list[dict[str, str]]] = None,
     initial_context: Optional[dict[str, str]] = None,
+    images: Optional[list[str]] = None,
 ) -> AgentResult:
     """Execute the autonomous ReAct agent loop with direct tools and multi-turn memory."""
     start_time = time.monotonic()
@@ -393,17 +640,20 @@ def run_agent_loop(
 
     # Generate execution plan for the objective
     plan_steps = generate_execution_plan(user_request, project_root, repo_map, llm_caller)
-    plan_summary = " -> ".join([re.sub(r"^\d+\.\s*", "", s) for s in plan_steps[:3]])
-    report("Architect Plan", plan_summary, "done")
 
-    # Prepare initial task prompt, augmenting with any pre-loaded file contexts and plan
+    # Prepare initial task prompt, augmenting with any pre-loaded file contexts, image notice, and plan
     plan_text = "\n".join(plan_steps)
     task_content = f"Task: {user_request}\n\n### ACTIVE EXECUTION PLAN:\n{plan_text}\n"
+    if images:
+        task_content += f"\n[Visual Context: User attached {len(images)} reference image(s)/screenshot(s) to this request]\n"
     if initial_context:
         ctx_lines = ["\n[Pre-loaded Relevant File Contexts]:"]
         for cpath, ctext in list(initial_context.items())[:3]:
+            if cpath.startswith("[Git"):
+                continue
             ctx_lines.append(f"File: {cpath}\n```\n{ctext[:1500]}\n```")
-        task_content += "\n" + "\n".join(ctx_lines)
+        if len(ctx_lines) > 1:
+            task_content += "\n" + "\n".join(ctx_lines)
 
     history.append({"role": "user", "content": task_content})
 
@@ -412,8 +662,6 @@ def run_agent_loop(
     final_answer = ""
     recent_read_path: Optional[str] = None
     executed_read_calls: dict[str, int] = {}
-
-    report("Agent Setup", "Initialized autonomous workspace agent with RepoMap and multi-turn memory", "done")
 
     for round_idx in range(1, max_iterations + 1):
         # Build prompt from conversation history
@@ -426,27 +674,37 @@ def run_agent_loop(
         prompt_parts.append("\n--- ASSISTANT ---\n")
         full_prompt = "".join(prompt_parts)
 
-        report("Model Reasoning", f"Analyzing task & deciding next action (turn {round_idx}/{max_iterations})...", "running")
-
-        # Call LLM
-        response = llm_caller(full_prompt, system_prompt)
+        # Call LLM (forward images on turn 1 if present)
+        round_images = images if (round_idx == 1 and images) else None
+        try:
+            if round_images:
+                response = llm_caller(full_prompt, system_prompt, imgs=round_images)
+            else:
+                response = llm_caller(full_prompt, system_prompt)
+        except TypeError:
+            try:
+                response = llm_caller(full_prompt, system_prompt, round_images)
+            except TypeError:
+                response = llm_caller(full_prompt, system_prompt)
         if not response:
-            report("Model Reasoning", "Provider returned empty response", "failed")
             break
 
         thought_text = _clean_thought_text(response)
         tool_calls = _parse_all_tool_calls(response, fallback_file=recent_read_path)
 
-        # Emit model reasoning and always complete step
+        # Stream clean model thought to reasoning accordion if present
         if thought_text:
-            first_line = thought_text.splitlines()[0][:80]
-            report("Model Reasoning", first_line, "done")
-            stream(thought_text + "\n\n")
-        elif tool_calls:
-            tool_names = ", ".join(t[0] for t in tool_calls)
-            report("Model Reasoning", f"Decided tool actions: {tool_names}", "done")
+            try:
+                sys.stdout.write(f"@@THOUGHT@@{json.dumps(thought_text + '\n\n')}\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
         else:
-            report("Model Reasoning", "Completed reasoning for turn", "done")
+            try:
+                sys.stdout.write(f"@@THOUGHT@@{json.dumps('\n\n')}\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
 
         # Check if model wants to call tools
         if tool_calls:
@@ -472,11 +730,27 @@ def run_agent_loop(
                         target_p = recent_read_path
                         norm_args["path"] = recent_read_path
 
+                TOOL_DISPLAY_NAMES = {
+                    "read_file": "Read File",
+                    "edit_file": "Edit File",
+                    "write_file": "Write File",
+                    "patch": "Edit File",
+                    "replace_file_content": "Edit File",
+                    "modify_file": "Edit File",
+                    "grep_search": "Search Codebase",
+                    "find_files": "Find Files",
+                    "list_dir": "List Directory",
+                    "execute_command": "Run Command",
+                    "locate_concept": "Locate Symbol",
+                    "delegate_to_local_worker": "Delegate to Worker",
+                }
+                display_name = TOOL_DISPLAY_NAMES.get(tool_name, tool_name.replace('_', ' ').title())
+
                 # If this is an edit tool and the file was already confirmed missing in this turn, skip it
                 if tool_name in ("edit_file", "patch", "replace_file_content", "modify_file") and target_p and target_p in missing_paths_in_turn:
                     obs = f"Skipped {tool_name} on '{target_p}': Target file was confirmed not to exist. Please review the directory/landmark guidance above and call edit_file on the correct file."
                     round_observations.append(obs)
-                    report(f"Tool: {tool_name}", f"Skipped (missing: {target_p})", "failed")
+                    report(display_name, f"Skipped (missing: {target_p})", "failed")
                     continue
 
                 # Format human-friendly step detail
@@ -496,7 +770,7 @@ def run_agent_loop(
                 else:
                     arg_summary = str(norm_args)[:60]
 
-                step_name = f"Tool: {tool_name}"
+                step_name = display_name
                 report(step_name, arg_summary, "running")
 
                 # Global duplicate call prevention (prevents alternating ping-pong loops)
@@ -536,8 +810,12 @@ def run_agent_loop(
                 tool_elapsed = round(time.monotonic() - tool_start, 2)
 
                 # Record edited files & run In-Loop Syntax Verification (Reflexion)
-                if tool_name in ("edit_file", "patch", "replace_file_content", "modify_file") and "Success" in observation:
-                    target_p = norm_args.get("path", "")
+                if (
+                    (tool_name in ("edit_file", "patch", "replace_file_content", "modify_file") and "Success" in observation)
+                    or (tool_name in ("write_file", "create_file", "new_file") and "Successfully wrote" in observation)
+                    or (tool_name in ("delegate_to_local_worker", "local_worker", "delegate") and "[SUCCESS]" in observation)
+                ):
+                    target_p = norm_args.get("path") or norm_args.get("target_file") or ""
                     if target_p:
                         edited_files.add(target_p)
                         target_abs = str((Path(project_root) / target_p).resolve())
@@ -615,32 +893,104 @@ def run_agent_loop(
             history.append({"role": "user", "content": capped_obs})
 
         else:
-            # No tool call made -> Check if user requested code mutation but no files were edited
-            if is_mutation_request(user_request) and len(edited_files) == 0 and round_idx < max_iterations:
-                report("Agent Guidance", "No file edits applied yet. Prompting agent to execute edits on disk...", "running")
+            # No tool call made
+            has_unparsed_tool_markup = bool(
+                re.search(r"<(?:tool_call|invoke|function_call|call|action)\b", response, re.IGNORECASE)
+                or re.search(r"<{5,9}\s*SEARCH", response)
+                or re.search(r"Action:\s*[A-Za-z0-9_]+\s*\nAction Input:", response)
+            )
+
+            is_passive_refusal = any(
+                w in response.lower() for w in (
+                    "please confirm", "let me know if you", "confirm and i", "would you like me to",
+                    "shall i proceed", "do you want me to", "if you'd like me to", "before making changes",
+                    "let me know if this sounds good", "would you like me to go ahead",
+                )
+            )
+
+            # If the model attempted an unparseable tool call, give it an opportunity to fix it
+            if has_unparsed_tool_markup and round_idx < max_iterations:
                 history.append({"role": "assistant", "content": response})
                 history.append({
                     "role": "user",
                     "content": (
                         "Observation:\n"
-                        "You explained the changes or steps, but NO files were actually edited on disk!\n"
-                        "As an autonomous coding agent, you must execute the file modifications directly.\n"
-                        "Please call the `edit_file` tool now (with path, search, and replace blocks) "
-                        "to apply the modifications directly to the file on disk."
+                        "Your tool invocation could not be parsed or was incomplete.\n"
+                        "Please call the tool using either:\n"
+                        "<tool_call>\n"
+                        '<invoke name="tool_name">\n'
+                        '<parameter name="arg1">value1</parameter>\n'
+                        '</invoke>\n'
+                        "</tool_call>\n"
+                        "or provide your final answer directly."
+                    ),
+                })
+                continue
+
+            # If user requested a code change or model asks for permission, but no files were edited
+            if (is_mutation_request(user_request) or is_passive_refusal) and len(edited_files) == 0 and round_idx < max_iterations:
+                history.append({"role": "assistant", "content": response})
+                history.append({
+                    "role": "user",
+                    "content": (
+                        "Observation:\n"
+                        "You discussed the changes or asked for confirmation, but NO files were edited on disk!\n"
+                        "As an autonomous coding agent, you have full pre-approval to edit files. Do NOT ask for confirmation.\n"
+                        "Please call the `edit_file` tool now (or `read_file` first to view the exact lines) "
+                        "to apply the modifications directly on disk."
                     ),
                 })
                 continue
             else:
-                final_answer = thought_text or response
-                report("Agent Completed", f"Finished in {round_idx} turn(s). Edited {len(edited_files)} file(s).", "done")
+                cleaned_resp = _clean_thought_text(response)
+                if edited_files:
+                    is_monologue_or_passive = (
+                        not cleaned_resp
+                        or is_passive_refusal
+                        or any(cleaned_resp.lower().startswith(p) for p in ("i will", "let me", "looking at", "i need to", "reading"))
+                        or bool(re.search(r"<\s*/?\s*(?:tool_call|invoke|function_call|parameter)\b", cleaned_resp, re.IGNORECASE))
+                        or len(cleaned_resp.strip()) < 15
+                    )
+                    if is_monologue_or_passive:
+                        file_bullets = "\n".join(f"- `{f}`" for f in sorted(edited_files))
+                        final_answer = (
+                            f"Successfully applied the requested changes to the workspace:\n\n"
+                            f"{file_bullets}\n\n"
+                            f"All modifications were verified and written to disk."
+                        )
+                    else:
+                        final_answer = cleaned_resp
+                else:
+                    # Pure inquiry or read-only answer
+                    if cleaned_resp and not has_unparsed_tool_markup:
+                        final_answer = cleaned_resp
+                    elif not has_unparsed_tool_markup and response.strip():
+                        final_answer = response.strip()
+                    else:
+                        final_answer = cleaned_resp or ""
+
+                if not final_answer:
+                    if steps:
+                        final_answer = f"Completed {len(steps)} steps across {round_idx} turn(s)."
+                    else:
+                        final_answer = "Analysis complete."
+
+                stream(final_answer)
                 break
 
     if not final_answer:
         if edited_files:
-            final_answer = f"Agent successfully modified {len(edited_files)} file(s): {', '.join(sorted(edited_files))}."
+            file_bullets = "\n".join(f"- `{f}`" for f in sorted(edited_files))
+            final_answer = (
+                f"Successfully updated {len(edited_files)} file(s):\n\n"
+                f"{file_bullets}\n\n"
+                f"All requested modifications have been applied and verified on disk."
+            )
         elif steps:
             final_answer = f"Completed {len(steps)} steps across {round_idx} turn(s)."
-        report("Agent Completed", f"Finished in {round_idx} turn(s). Edited {len(edited_files)} file(s).", "done")
+        else:
+            final_answer = "Analysis complete."
+        stream(final_answer)
 
     elapsed_total = round(time.monotonic() - start_time, 2)
     return AgentResult(

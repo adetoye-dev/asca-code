@@ -22,6 +22,9 @@ import {
   saveProviderConfig,
   setDefaultProvider,
   syncOllamaModels,
+  addCustomModelToProvider,
+  curateProviderModels,
+  saveActiveSelectedModel,
 } from "../../services/aiModelManager";
 import {
   checkOllamaStatus,
@@ -61,6 +64,7 @@ export function AiManagementDashboard({
   const [pullSuccessMsg, setPullSuccessMsg] = useState<string | null>(null);
   const [pullErrorMsg, setPullErrorMsg] = useState<string | null>(null);
   const [customModelTag, setCustomModelTag] = useState("");
+  const [customCloudModel, setCustomCloudModel] = useState("");
   const [isDeletingModel, setIsDeletingModel] = useState<string | null>(null);
 
   const activeProvider = providers[selectedId] || providers.ollama;
@@ -193,6 +197,9 @@ export function AiManagementDashboard({
     };
 
     const newMap = saveProviderConfig(updated);
+    if (modelValue && activeProvider.category === "cloud") {
+      saveActiveSelectedModel(activeProvider.id, modelValue);
+    }
     setProviders(newMap);
     onModelSettingsChanged?.();
   };
@@ -200,6 +207,10 @@ export function AiManagementDashboard({
   const handleSetDefault = () => {
     handleSaveProvider();
     const newMap = setDefaultProvider(selectedId);
+    const targetModel = selectedModel || activeProvider.selectedModel;
+    if (targetModel && activeProvider.category === "cloud") {
+      saveActiveSelectedModel(selectedId, targetModel);
+    }
     setProviders(newMap);
     onModelSettingsChanged?.();
   };
@@ -222,18 +233,26 @@ export function AiManagementDashboard({
       if (res.ok) {
         const data = await res.json();
         setTestResult(data);
+        const rawList = data.models && data.models.length > 0 ? data.models : activeProvider.availableModels;
+        const newModels: string[] = curateProviderModels(activeProvider.id, rawList);
+        const currentModel = selectedModel || activeProvider.selectedModel;
+        const resolvedModel = (currentModel && newModels.includes(currentModel))
+          ? currentModel
+          : (newModels[0] || activeProvider.selectedModel);
+
         const updated: AIProviderConfig = {
           ...activeProvider,
           isConnected: !!data.ok,
           latencyMs: data.latencyMs,
-          availableModels: data.models && data.models.length > 0 ? data.models : activeProvider.availableModels,
-          selectedModel: data.models?.[0] || activeProvider.selectedModel,
+          availableModels: newModels,
+          selectedModel: resolvedModel,
         };
         const newMap = saveProviderConfig(updated);
-        setProviders(newMap);
-        if (data.models?.[0]) {
-          setSelectedModel(data.models[0]);
+        if (resolvedModel && activeProvider.category === "cloud") {
+          saveActiveSelectedModel(activeProvider.id, resolvedModel);
         }
+        setProviders(newMap);
+        setSelectedModel(resolvedModel);
       } else {
         setTestResult({ ok: false, message: `Server returned HTTP ${res.status}` });
         const updated: AIProviderConfig = { ...activeProvider, isConnected: false };
@@ -248,6 +267,18 @@ export function AiManagementDashboard({
     } finally {
       setIsTesting(false);
     }
+  };
+
+  const handleAddCustomModel = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = customCloudModel.trim();
+    if (!trimmed) return;
+    const updated = addCustomModelToProvider(activeProvider.id, trimmed);
+    setProviders(updated);
+    setSelectedModel(trimmed);
+    saveActiveSelectedModel(activeProvider.id, trimmed);
+    setCustomCloudModel("");
+    onModelSettingsChanged?.();
   };
 
   const localProviders = Object.values(providers).filter(
@@ -913,21 +944,75 @@ export function AiManagementDashboard({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-300">Active Model</label>
-                      <select
-                        value={selectedModel}
-                        onChange={(e) => {
-                          setSelectedModel(e.target.value);
-                          handleSaveProvider(e.target.value, baseUrlInput);
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-purple-500/60 transition-colors cursor-pointer"
-                      >
-                        {activeProvider.availableModels.map((m) => (
-                          <option key={m} value={m} className="bg-zinc-900 text-zinc-100">
-                            {m}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-zinc-300">Active Model</label>
+                        {activeProvider.category === "cloud" && (
+                          <button
+                            type="button"
+                            disabled={isTesting}
+                            onClick={handleTestConnection}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-purple-300 hover:text-purple-100 bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                            title="Query live provider endpoint with your API key to fetch newest models"
+                          >
+                            <Icon icon={RefreshCw} className={`w-3 h-3 ${isTesting ? "animate-spin text-purple-400" : ""}`} />
+                            <span>{isTesting ? "Fetching Models…" : "Fetch Latest Models"}</span>
+                          </button>
+                        )}
+                      </div>
+                      {(() => {
+                        const curated = curateProviderModels(activeProvider.id, activeProvider.availableModels);
+                        // Ensure selectedModel or any custom model is included if set
+                        const displayModels = (selectedModel && !curated.includes(selectedModel))
+                          ? [selectedModel, ...curated]
+                          : curated;
+                        const modelsToShow = displayModels.length > 0 ? displayModels : activeProvider.availableModels;
+
+                        return (
+                          <select
+                            value={selectedModel}
+                            onChange={(e) => {
+                              setSelectedModel(e.target.value);
+                              handleSaveProvider(e.target.value, baseUrlInput);
+                            }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-purple-500/60 transition-colors cursor-pointer"
+                          >
+                            {modelsToShow.map((m) => (
+                              <option key={m} value={m} className="bg-zinc-900 text-zinc-100">
+                                {m}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+
+                      {/* Custom Model Write-in for Cloud Providers */}
+                      {activeProvider.category === "cloud" && (
+                        <div className="pt-1.5">
+                          <form
+                            onSubmit={handleAddCustomModel}
+                            className="flex items-center gap-2"
+                          >
+                            <input
+                              type="text"
+                              value={customCloudModel}
+                              onChange={(e) => setCustomCloudModel(e.target.value)}
+                              placeholder="Or enter custom model ID (e.g. gpt-5, claude-3-7-sonnet-2026, deepseek-v3)..."
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                            />
+                            <button
+                              type="submit"
+                              disabled={!customCloudModel.trim()}
+                              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-bold text-white transition-colors disabled:opacity-40 shrink-0 shadow-sm"
+                            >
+                              Add Model
+                            </button>
+                          </form>
+                          <p className="text-[10px] text-zinc-500 mt-1">
+                            Type any custom model ID to bypass defaults and use unlisted or fine-tuned model weights.
+                          </p>
+                        </div>
+                      )}
+
                       <p className="text-[11px] text-zinc-500">
                         Powers inline completions, code suggestions, syntax repair, and AI assistant conversations.
                       </p>

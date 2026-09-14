@@ -106,17 +106,6 @@ export const AGENT_TOOLS: AgentToolDefinition[] = [
       required: ["filePath", "startLine", "endLine"],
     },
   },
-  {
-    name: "run_gauntlet",
-    description: "Trigger the autonomous self-healing code generation and verification gauntlet (syntax, oracle tests, sandbox).",
-    parameters: {
-      type: "object",
-      properties: {
-        task: { type: "string", description: "The coding task or change to implement" },
-      },
-      required: ["task"],
-    },
-  },
 ];
 
 /**

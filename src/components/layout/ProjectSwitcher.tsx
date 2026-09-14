@@ -35,24 +35,46 @@ export function ProjectSwitcher({
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load and update recent projects
+  // Load and update recent projects (limited to most recent 3, deduplicated)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-      let list: ProjectMeta[] = raw ? JSON.parse(raw) : [];
+      const list: ProjectMeta[] = raw ? JSON.parse(raw) : [];
 
-      // Ensure active project is at the front, and filter out stale dot paths
-      list = list.filter((p) => {
-        if (activeProject.path !== "." && activeProject.path !== "./") {
-          if (p.path === "." || p.path === "./") return false;
+      const normPath = (p?: string) => {
+        const value = (p || "").trim();
+        if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
+          return value.endsWith("/") || value.endsWith("\\") ? value.slice(0, 3) : value;
         }
-        return p.path !== activeProject.path;
-      });
-      list.unshift(activeProject);
-      if (list.length > 5) list = list.slice(0, 5);
+        return value.replace(/[/\\]+$/, "");
+      };
+      const activeNorm = normPath(activeProject.path);
 
-      localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(list));
-      setRecentProjects(list);
+      // Deduplicate all entries by normalized path, excluding stale dot paths
+      const seen = new Set<string>();
+      const deduped: ProjectMeta[] = [];
+
+      // Ensure active project is always at the front
+      if (activeProject && activeProject.name) {
+        if (activeNorm && activeNorm !== "." && activeNorm !== "./") {
+          seen.add(activeNorm);
+        }
+        deduped.push({ ...activeProject, path: activeNorm || activeProject.path });
+      }
+
+      for (const item of list) {
+        const itemNorm = normPath(item.path);
+        if (!itemNorm || itemNorm === "." || itemNorm === "./") continue;
+        if (seen.has(itemNorm)) continue;
+        seen.add(itemNorm);
+        deduped.push({ ...item, path: itemNorm });
+      }
+
+      const MAX_OPEN_PROJECTS = 3;
+      const limited = deduped.slice(0, MAX_OPEN_PROJECTS);
+
+      localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(limited));
+      setRecentProjects(limited);
     } catch {
       setRecentProjects([activeProject]);
     }

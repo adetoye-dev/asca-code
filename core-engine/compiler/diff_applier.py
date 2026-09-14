@@ -299,7 +299,8 @@ def _find_hunk_offset(
     window: int = 150,
 ) -> Optional[int]:
     """Find the best 1-indexed line number in lines where the hunk's context matches."""
-    expected = [content.rstrip("\r\n") for _, content in hunk.context_lines]
+    normalize = lambda value: value.rstrip(" \t\r\n")
+    expected = [normalize(content) for _, content in hunk.context_lines]
     if not expected:
         return hunk.header.old_start
 
@@ -314,8 +315,8 @@ def _find_hunk_offset(
         if pos < 0 or pos + n_exp > n_lines:
             return False
         if strip_ws:
-            return all(lines[pos + i].strip() == expected[i].strip() for i in range(n_exp))
-        return all(lines[pos + i].rstrip("\r\n") == expected[i] for i in range(n_exp))
+            return all(normalize(lines[pos + i]) == expected[i] for i in range(n_exp))
+        return all(normalize(lines[pos + i]) == expected[i] for i in range(n_exp))
 
     if match_at(hint) or match_at(hint, strip_ws=True):
         return hunk.header.old_start
@@ -387,10 +388,10 @@ def validate_patch(
                 continue
 
             actual = file_lines[idx]
-            expected_stripped = expected_content.rstrip("\n\r")
-            actual_stripped = actual.rstrip("\n\r")
+            expected_stripped = expected_content.rstrip(" \t\n\r")
+            actual_stripped = actual.rstrip(" \t\n\r")
 
-            if expected_stripped != actual_stripped and expected_stripped.strip() != actual_stripped.strip():
+            if expected_stripped != actual_stripped:
                 mismatches.append(
                     f"Line {line_no}: context mismatch\n"
                     f"  expected: {repr(expected_stripped[:120])}\n"

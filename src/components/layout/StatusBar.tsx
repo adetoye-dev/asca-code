@@ -57,7 +57,7 @@ export function StatusBar({
 • Frameworks: ${indexStatus.profile?.frameworks?.join(", ") || "generic"}
 Click to re-index project.`}
           >
-            <Icon icon={Database} className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+            <Icon icon={Database} className="w-3.5 h-3.5 text-muted group-hover:scale-110 transition-transform" />
             <span className="group-hover:underline font-mono text-[11px]">{indexStatus.profile?.indexed_files ?? 0} files synced</span>
           </button>
         ) : (

@@ -25,7 +25,7 @@ export interface ChatMessage {
   thinking?: string;
   steps?: AgentStep[];
   error?: boolean;
-  errorType?: "offline" | "timeout" | "syntax" | "general";
+  errorType?: "offline" | "timeout" | "syntax" | "api" | "general";
   diffPreview?: string;
 }
 

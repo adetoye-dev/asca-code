@@ -93,13 +93,16 @@ export interface UsePipelineReturn {
   streamingAnswer: string;
   streamingThought: string;
   agentSteps: AgentStep[];
+  pendingPermission: { id: string; command: string; description: string } | null;
+  respondToPermission: (id: string, decision: "approved" | "rejected") => Promise<void>;
 
   runPipeline: (
     customPrompt?: string,
     modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
     activeFilePath?: string,
     selectedCode?: string,
-    conversationHistory?: Array<{ role: string; content: string }>
+    conversationHistory?: Array<{ role: string; content: string }>,
+    images?: string[]
   ) => Promise<void>;
   cancelPipeline: () => void;
   clearLog: () => void;
@@ -205,6 +208,25 @@ export function usePipeline(): UsePipelineReturn {
   const [streamingAnswer, setStreamingAnswer] = useState<string>("");
   const [streamingThought, setStreamingThought] = useState<string>("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [pendingPermission, setPendingPermission] = useState<{
+    id: string;
+    command: string;
+    description: string;
+  } | null>(null);
+
+  const respondToPermission = useCallback(async (id: string, decision: "approved" | "rejected") => {
+    try {
+      await fetch("/api/pipeline/permission", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, decision }),
+      });
+    } catch (e) {
+      console.error("Failed to respond to permission:", e);
+    } finally {
+      setPendingPermission(null);
+    }
+  }, []);
 
   // Code Intelligence & Symbol Graph Indexer state
   const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
@@ -641,7 +663,8 @@ export function usePipeline(): UsePipelineReturn {
       modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
       activeFilePath?: string,
       selectedCode?: string,
-      conversationHistory?: Array<{ role: string; content: string }>
+      conversationHistory?: Array<{ role: string; content: string }>,
+      images?: string[]
     ) => {
       const activePrompt = customPrompt ?? prompt;
       const activeAiSettings = modelOverride
@@ -673,6 +696,7 @@ export function usePipeline(): UsePipelineReturn {
       setStreamingAnswer("");
       setStreamingThought("");
       setAgentSteps([]);
+      setPendingPermission(null);
 
       if (isTauriAvailable) {
         try {
@@ -723,6 +747,7 @@ export function usePipeline(): UsePipelineReturn {
               activeFilePath: activeFilePath || undefined,
               selectedCode: selectedCode || undefined,
               conversationHistory: conversationHistory || undefined,
+              images: images && images.length > 0 ? images : undefined,
             }),
           });
 
@@ -774,6 +799,8 @@ export function usePipeline(): UsePipelineReturn {
                     }
                     return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...parsed }];
                   });
+                } else if (eventName === "permission_request") {
+                  setPendingPermission(parsed);
                 } else if (eventName === "output") {
                   setActivityLog((prev) => [...prev, parsed]);
 
@@ -786,6 +813,7 @@ export function usePipeline(): UsePipelineReturn {
                     if (writtenPath) setTouchedPaths((prev) => prev.includes(writtenPath) ? prev : [...prev, writtenPath]);
                   }
                 } else if (eventName === "complete") {
+                  setPendingPermission(null);
                   setStatus(parsed.success ? "success" : "failed");
                   if (parsed.parsed_result) {
                     setOrchestrationResult(parsed.parsed_result);
@@ -811,7 +839,7 @@ export function usePipeline(): UsePipelineReturn {
       }
       pipelineAbortRef.current = null;
     },
-    [prompt, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
+    [prompt, activeProject.path, aiSettings, sliders, isTauriAvailable, refreshProjectFiles]
   );
 
   const cancelPipeline = useCallback(async () => {
@@ -823,6 +851,7 @@ export function usePipeline(): UsePipelineReturn {
         await invoke("cancel_generation_pipeline");
       } catch {}
     }
+    setPendingPermission(null);
     setStatus("idle");
   }, [isTauriAvailable]);
 
@@ -879,6 +908,8 @@ export function usePipeline(): UsePipelineReturn {
     streamingAnswer,
     streamingThought,
     agentSteps,
+    pendingPermission,
+    respondToPermission,
   };
 }
 

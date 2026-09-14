@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from scale_detector import detect_project_scale, ScaleTier  # noqa: E402
+from scale_detector import detect_project_scale, ProjectScaleProfile, ScaleTier  # noqa: E402
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 
@@ -261,10 +261,13 @@ def map_sliders_to_constraints(sliders: NormalizedSliders) -> InjectedConstraint
     return constraints
 
 
-def derive_industry_standards_constraints(project_root_str: str = ".") -> InjectedConstraints:
+def derive_industry_standards_constraints(
+    project_root_str: str,
+    profile: Optional[ProjectScaleProfile] = None,
+) -> InjectedConstraints:
     """Derive engineering constraints based on detected scale and industry standards."""
     try:
-        profile = detect_project_scale(project_root_str)
+        profile = profile or detect_project_scale(project_root_str)
         tier = profile.tier
     except Exception:
         tier = ScaleTier.STANDARD
@@ -289,11 +292,17 @@ def derive_industry_standards_constraints(project_root_str: str = ".") -> Inject
     return InjectedConstraints(scale_constraints=constraints)
 
 
-def inject_constraints(raw_payload: Optional[dict] = None, project_root: str = ".") -> InjectedConstraints:
+def inject_constraints(
+    raw_payload: Optional[dict] = None,
+    project_root: Optional[str] = None,
+    profile: Optional[ProjectScaleProfile] = None,
+) -> InjectedConstraints:
     """Accept optional payload dict and return autonomous industry standard constraints."""
-    if isinstance(raw_payload, dict) and "project_root" in raw_payload:
+    if project_root is None and isinstance(raw_payload, dict) and raw_payload.get("project_root"):
         project_root = raw_payload["project_root"]
-    return derive_industry_standards_constraints(project_root)
+    if not project_root:
+        raise ValueError("project_root is required to derive project constraints")
+    return derive_industry_standards_constraints(project_root, profile)
 
 
 # ── Prompt Assembly ──────────────────────────────────────────────────────────
@@ -305,6 +314,7 @@ def format_unified_prompt(
     context_card: Optional[str] = None,
     language: str = "python",
     file_contexts: Optional[dict[str, str]] = None,
+    project_root: Optional[str] = None,
 ) -> str:
     """Build the complete LLM prompt combining all components.
 
@@ -335,13 +345,20 @@ def format_unified_prompt(
     sections.append(f"## Target Language\n{language}")
 
     # 3. Architectural constraints from sliders
-    constraints = inject_constraints(slider_payload)
+    if not project_root:
+        raise ValueError("project_root is required to format a project prompt")
+    try:
+        profile = detect_project_scale(project_root)
+    except Exception as exc:
+        logger.warning("Could not detect project scale for %s: %s", project_root, exc)
+        profile = None
+    constraints = inject_constraints(slider_payload, project_root, profile)
     constraint_block = constraints.to_prompt_block()
     if constraint_block:
         sections.append(constraint_block)
 
     # 4. Performance thresholds (derived from slider scale)
-    thresholds = _derive_threshold_sentences(slider_payload)
+    thresholds = _derive_threshold_sentences(slider_payload, profile)
     if thresholds:
         sections.append(
             "## Performance Targets\n" + "\n".join(f"- {t}" for t in thresholds)
@@ -383,12 +400,24 @@ def format_unified_prompt(
     return prompt
 
 
-def _derive_threshold_sentences(slider_payload: dict) -> list[str]:
+def _derive_threshold_sentences(
+    slider_payload: dict,
+    profile: Optional[ProjectScaleProfile] = None,
+) -> list[str]:
     """Derive concrete performance threshold sentences from slider values."""
     normalized = SliderPayload(
         budget_vs_scale=slider_payload.get("budget_vs_scale", "medium"),
         speed_vs_precision=slider_payload.get("speed_vs_precision", "medium"),
     ).normalize()
+    if profile is not None:
+        thresholds = [
+            f"Minimum throughput: {profile.min_requests_per_second:.0f} requests/second",
+            f"Maximum error rate: {profile.max_error_rate:.2%}",
+            f"Maximum average latency: {profile.max_avg_latency_ms:.0f}ms",
+            f"Maximum p99 latency: {profile.max_p99_latency_ms:.0f}ms",
+        ]
+        return thresholds
+
     scale = normalized.scale.value
     speed = normalized.precision.value
     thresholds: list[str] = []
@@ -457,7 +486,7 @@ def main() -> int:
     }
 
     if args.json_output:
-        constraints = inject_constraints(payload)
+        constraints = inject_constraints(payload, project_root=".")
         output = {
             "sliders": payload,
             "constraint_count": len(constraints.all_constraints),
@@ -472,6 +501,7 @@ def main() -> int:
             slider_payload=payload,
             context_card=args.context_card,
             language=args.language,
+            project_root=".",
         )
         print(prompt)
 

@@ -480,14 +480,14 @@ LINTER_REGISTRY: dict[str, dict] = {
 # ── Subprocess Execution ────────────────────────────────────────────────────
 
 
-def _resolve_binary(name: str) -> Optional[str]:
+def _resolve_binary(name: str, cwd: Optional[str] = None) -> Optional[str]:
     """Check if a binary is available on PATH or local node_modules/.bin."""
     found = shutil.which(name)
     if found:
         return found
     try:
-        cwd = Path.cwd().resolve()
-        for candidate in [cwd, *cwd.parents]:
+        search_root = Path(cwd or Path.cwd()).resolve()
+        for candidate in [search_root, *search_root.parents]:
             local_bin = candidate / "node_modules" / ".bin" / name
             if local_bin.is_file() and os.access(local_bin, os.X_OK):
                 return str(local_bin)
@@ -512,7 +512,7 @@ def _run_linter(
             error_detail=f"Unknown linter: {linter_name}",
         )
 
-    binary_path = _resolve_binary(config["binary"])
+    binary_path = _resolve_binary(config["binary"], cwd)
     if not binary_path:
         return LinterResult(
             linter=linter_name,
@@ -840,6 +840,8 @@ def format_context_card(
                 pass
         if "ide_staging_" in file_display:
             parts = file_display.split("ide_staging_")
+            normalized = file_display.replace("\\", "/")
+            parts = normalized.split("ide_staging_", 1)
             if len(parts) > 1 and "/" in parts[1]:
                 file_display = parts[1].split("/", 1)[1]
 

@@ -14,7 +14,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { exec, execFile, execFileSync, spawn } from "child_process";
+import { exec, execFile, execFileSync, spawn, type ChildProcess } from "child_process";
 import { createRequire } from "module";
 
 const _bridgeRequire = createRequire(import.meta.url);
@@ -238,10 +238,12 @@ function resolveProjectPath(projectRoot: string, targetPath: string): string {
 
 // ── Active Project Index & Symbol Graph Cache ──────────────────────────────
 let activeProjectIndex: any = null;
-const activeProjectGraph = new ProjectDependencyGraph();
+let activeProjectGraph = new ProjectDependencyGraph();
+let activeGraphRoot = "";
 let activeProjectWatcher: fs.FSWatcher | null = null;
 let activeWatchedPath: string = "";
-let activeWatchDebounceTimer: NodeJS.Timeout | null = null;
+const activeWatchTimers = new Map<string, NodeJS.Timeout>();
+let activeProjectGeneration = 0;
 
 function setupProjectWatcher(projectRoot: string): void {
   if (activeWatchedPath === projectRoot && activeProjectWatcher) return;
@@ -253,7 +255,9 @@ function setupProjectWatcher(projectRoot: string): void {
 
   activeWatchedPath = projectRoot;
   try {
+    const watcherGeneration = activeProjectGeneration;
     activeProjectWatcher = fs.watch(projectRoot, { recursive: true }, (_eventType, filename) => {
+      if (watcherGeneration !== activeProjectGeneration || activeWatchedPath !== projectRoot) return;
       if (!filename) return;
       const cleanName = filename.toString();
       if (
@@ -270,10 +274,25 @@ function setupProjectWatcher(projectRoot: string): void {
       const ext = path.extname(cleanName).toLowerCase();
       if (![".py", ".ts", ".tsx", ".js", ".jsx"].includes(ext)) return;
 
-      if (activeWatchDebounceTimer) clearTimeout(activeWatchDebounceTimer);
-      activeWatchDebounceTimer = setTimeout(() => {
+      const previousTimer = activeWatchTimers.get(cleanName);
+      if (previousTimer) clearTimeout(previousTimer);
+      activeWatchTimers.set(cleanName, setTimeout(() => {
         incrementalUpdateFile(projectRoot, cleanName);
-      }, 500);
+        activeWatchTimers.delete(cleanName);
+      }, 500));
+    });
+    // A watcher that emits 'error' without a handler throws an unhandled
+    // exception and kills the whole dev server. Degrade gracefully instead.
+    activeProjectWatcher.on("error", (watchErr: any) => {
+      console.warn(
+        "[indexer] Project file watcher error (live re-indexing disabled):",
+        watchErr?.message || watchErr
+      );
+      try {
+        activeProjectWatcher?.close();
+      } catch {}
+      activeProjectWatcher = null;
+      activeWatchedPath = "";
     });
     console.log(`[indexer] Watching project root for file changes: ${projectRoot}`);
   } catch (err: any) {
@@ -283,13 +302,14 @@ function setupProjectWatcher(projectRoot: string): void {
 
 function incrementalUpdateFile(projectRoot: string, relativePath: string): void {
   const root = resolveProjectRoot(projectRoot);
+  const requestGeneration = activeProjectGeneration;
   const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
   execFile(
     "python3",
     [indexerScript, "--project-root", root, "--file", relativePath, "--json"],
     { timeout: 15000 },
     (error) => {
-      if (!error) {
+      if (!error && requestGeneration === activeProjectGeneration && activeWatchedPath === root) {
         try {
           const indexPath = path.join(root, ".acsa", "index.json");
           if (fs.existsSync(indexPath)) {
@@ -304,6 +324,19 @@ function incrementalUpdateFile(projectRoot: string, relativePath: string): void 
 
 async function syncProjectIndex(projectRoot: string): Promise<any> {
   const root = resolveProjectRoot(projectRoot);
+  if (activeGraphRoot !== root) {
+    activeProjectGeneration += 1;
+    activeProjectIndex = null;
+    for (const timer of activeWatchTimers.values()) clearTimeout(timer);
+    activeWatchTimers.clear();
+    if (activeProjectWatcher) {
+      try { activeProjectWatcher.close(); } catch {}
+      activeProjectWatcher = null;
+    }
+    activeWatchedPath = "";
+    activeProjectGraph = new ProjectDependencyGraph();
+    activeGraphRoot = root;
+  }
   const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
 
   return new Promise((resolve) => {
@@ -442,11 +475,12 @@ export function realFilesystemPlugin(): Plugin {
   return {
     name: "vite-plugin-real-filesystem",
     configureServer(server: ViteDevServer) {
+      let activePipelineProc: ChildProcess | null = null;
       // Watch public/logos for live updates and notify client
       const logosDir = path.join(process.cwd(), "public", "logos");
       if (fs.existsSync(logosDir)) {
         try {
-          fs.watch(logosDir, { recursive: true }, (_eventType, filename) => {
+          const logosWatcher = fs.watch(logosDir, { recursive: true }, (_eventType, filename) => {
             if (filename && filename.endsWith(".svg")) {
               server.ws.send({
                 type: "custom",
@@ -454,6 +488,15 @@ export function realFilesystemPlugin(): Plugin {
                 data: { file: filename },
               });
             }
+          });
+          logosWatcher.on("error", (watchErr: any) => {
+            console.warn(
+              "[logos] Watcher error (live logo updates disabled):",
+              watchErr?.message || watchErr
+            );
+            try {
+              logosWatcher.close();
+            } catch {}
           });
         } catch {}
       }
@@ -581,6 +624,13 @@ export function realFilesystemPlugin(): Plugin {
 
             terminalProc.stderr?.on("data", (chunk: Buffer) => {
               broadcastTerminalData(chunk.toString("utf8"));
+            });
+
+            terminalProc.on("error", (procErr: any) => {
+              broadcastTerminalData(
+                `\r\n\x1b[31m[Failed to start shell: ${procErr?.message || procErr}]\x1b[0m\r\n`
+              );
+              terminalProc = null;
             });
 
             terminalProc.on("close", (code: number | null) => {
@@ -2277,11 +2327,218 @@ export function realFilesystemPlugin(): Plugin {
                 res.end(JSON.stringify({ ok: true, latencyMs: 2, message: "Deterministic AST compiler ready" }));
                 return;
               } else {
-                // Cloud provider ping test
-                const latency = Math.floor(Math.random() * 35) + 55;
-                const hasKey = !!(apiKey && apiKey.trim().length > 3);
-                res.end(JSON.stringify({ ok: hasKey, latencyMs: latency, message: hasKey ? "API Key verified & endpoint reachable" : "API Key required" }));
-                return;
+                // ── Live Cloud Provider Model Fetching ───────────────────────
+                const cleanKey = (apiKey || "").trim();
+                if (!cleanKey || cleanKey.length < 3) {
+                  res.end(JSON.stringify({ ok: false, latencyMs: 0, error: "API Key is required" }));
+                  return;
+                }
+
+                let modelsUrl = "";
+                const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+                if (provider === "openai") {
+                  modelsUrl = `${(baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "anthropic") {
+                  modelsUrl = `${(baseUrl || "https://api.anthropic.com/v1").replace(/\/+$/, "")}/models`;
+                  headers["x-api-key"] = cleanKey;
+                  headers["anthropic-version"] = "2023-06-01";
+                } else if (provider === "google") {
+                  const base = (baseUrl || "https://generativelanguage.googleapis.com").replace(/\/+$/, "");
+                  modelsUrl = `${base}/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
+                } else if (provider === "openrouter") {
+                  modelsUrl = `${(baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "groq") {
+                  modelsUrl = `${(baseUrl || "https://api.groq.com/openai/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "deepseek") {
+                  modelsUrl = `${(baseUrl || "https://api.deepseek.com").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "mistral") {
+                  modelsUrl = `${(baseUrl || "https://api.mistral.ai/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "xai") {
+                  modelsUrl = `${(baseUrl || "https://api.x.ai/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "cohere") {
+                  modelsUrl = `${(baseUrl || "https://api.cohere.ai/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "together") {
+                  modelsUrl = `${(baseUrl || "https://api.together.xyz/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "moonshot") {
+                  modelsUrl = `${(baseUrl || "https://api.moonshot.cn/v1").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else if (provider === "perplexity") {
+                  modelsUrl = `${(baseUrl || "https://api.perplexity.ai").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                } else {
+                  // Generic OpenAI-compatible endpoint
+                  modelsUrl = `${(baseUrl || "").replace(/\/+$/, "")}/models`;
+                  headers["Authorization"] = `Bearer ${cleanKey}`;
+                }
+
+                // Blocklist non-coding modalities, internal utilities, media, and deprecated models
+                const NON_CODE_OR_UTILITY_TERMS = [
+                  "embed",
+                  "whisper",
+                  "transcribe",
+                  "tts",
+                  "audio",
+                  "image",
+                  "dall-e",
+                  "moderation",
+                  "realtime",
+                  "guard",
+                  "search",
+                  "sora",
+                  "video",
+                  "babbage",
+                  "tts",
+                  "audio",
+                  "voice",
+                  "dall-e",
+                  "moderation",
+                  "realtime",
+                  "guard",
+                  "sora",
+                  "video",
+                  "babbage",
+                  "davinci",
+                  "ft:",
+                  "flux",
+                  "midjourney",
+                ];
+
+                const isCodingChatModel = (id: string): boolean => {
+                  if (!id || typeof id !== "string") return false;
+                  const l = id.toLowerCase().trim();
+                  // 1. Block non-code utilities, speech, media generation, embeddings, and moderation guards
+                  if (NON_CODE_OR_UTILITY_TERMS.some((term) => l.includes(term))) return false;
+                  // 2. Block obsolete / retired legacy models
+                  if (l.startsWith("gpt-3.5")) return false;
+                  if (l === "gpt-4" || l.startsWith("gpt-4-0") || l === "gpt-4-32k") return false;
+                  if (l.startsWith("gpt-4.1")) return false;
+                  if (l.includes("o1-mini") || l.includes("o3-mini")) return false;
+                  if (l.startsWith("claude-2") || l.startsWith("claude-1") || l.includes("instant")) return false;
+                  if (l.includes("bison") || l.includes("palm") || l.includes("aqa") || l.includes("imagen")) return false;
+                  if (l === "mistral-tiny" || l.includes("embed")) return false;
+                  // 3. Block dated snapshot aliases (e.g. gpt-4o-2024-08-06, o1-2024-12-17, o3-mini-2025-01-31, gpt-4-0613)
+                  if (/-\d{4}-\d{2}-\d{2}$/.test(l) || /-\d{8}$/.test(l) || /-\d{6}$/.test(l) || /-\d{4}$/.test(l)) {
+                    return false;
+                  }
+                  return true;
+                };
+
+                const scoreModelForCoding = (modelName: string): number => {
+                  if (!modelName || typeof modelName !== "string") return 0;
+                  const m = modelName.toLowerCase();
+                  let score = 0;
+                  if (m.includes("codex") || m.includes("coder") || m.includes("code") || m.includes("dev")) score += 100;
+                  if (m.includes("reason") || m.includes("thinking") || /^o\d/i.test(m) || m.includes("-r1")) score += 90;
+                  if (m.includes("sonnet") || m.includes("pro") || m.includes("large") || m.includes("ultra") || m.includes("astra")) score += 80;
+                  else if (m.includes("plus") || m.includes("turbo") || m.includes("max")) score += 70;
+                  else if (m.includes("flash") || m.includes("haiku") || m.includes("mini") || m.includes("small") || m.includes("lite")) score += 65;
+
+                  const vMatch = m.match(/(?:v|gpt-|claude-|gemini-)?(\d+(?:\.\d+)?)/);
+                  if (vMatch && vMatch[1]) {
+                    const v = parseFloat(vMatch[1]);
+                    if (!isNaN(v) && v < 20) score += v * 5;
+                  }
+                  if (/-\d{4}-\d{2}-\d{2}$/.test(m) || /-\d{8}$/.test(m) || /-\d{6}$/.test(m) || /-\d{4}$/.test(m)) score -= 30;
+                  return score;
+                };
+
+                const curateProviderModels = (_prov: string, rawModels: string[]): string[] => {
+                  if (!Array.isArray(rawModels)) return [];
+                  const valid = Array.from(new Set(rawModels.filter(Boolean).filter(isCodingChatModel)));
+                  if (valid.length === 0) {
+                    return rawModels
+                      .filter(Boolean)
+                      .filter((m) => !NON_CODE_OR_UTILITY_TERMS.some((term) => m.toLowerCase().includes(term)))
+                      .slice(0, 10);
+                  }
+                  const scored = valid.map((m) => ({ model: m, score: scoreModelForCoding(m) }));
+                  scored.sort((a, b) => b.score - a.score);
+                  return scored.slice(0, 12).map((s) => s.model);
+                };
+
+                const fetchStart = Date.now();
+                try {
+                  const resp = await fetch(modelsUrl, {
+                    headers,
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  const latency = Date.now() - fetchStart;
+
+                  if (!resp.ok) {
+                    const errText = await resp.text().catch(() => "");
+                    let errMsg = `Provider returned HTTP ${resp.status}`;
+                    try {
+                      const jsonErr = JSON.parse(errText);
+                      errMsg = jsonErr?.error?.message || jsonErr?.message || errMsg;
+                    } catch {}
+                    res.end(JSON.stringify({
+                      ok: false,
+                      latencyMs: latency,
+                      error: errMsg,
+                    }));
+                    return;
+                  }
+
+                  const rawData = (await resp.json()) as any;
+                  let fetchedModels: string[] = [];
+
+                  if (provider === "google") {
+                    const items = Array.isArray(rawData.models) ? rawData.models : [];
+                    fetchedModels = items
+                      .filter((m: any) => {
+                        const methods = m.supportedGenerationMethods || [];
+                        return methods.includes("generateContent") && isCodingChatModel(m.name || "");
+                      })
+                      .map((m: any) => (m.name || "").replace(/^models\//, ""))
+                      .filter(Boolean);
+                  } else {
+                    const items = Array.isArray(rawData.data) ? rawData.data : Array.isArray(rawData.models) ? rawData.models : [];
+                    // Sort chronologically descending if 'created' timestamp exists
+                    items.sort((a: any, b: any) => (b.created || 0) - (a.created || 0));
+
+                    let rawFiltered = items
+                      .map((m: any) => (typeof m === "string" ? m : m?.id || m?.name || ""))
+                      .filter((id: string) => isCodingChatModel(id));
+
+                    // Fallback in case a provider exclusively serves dated names
+                    if (rawFiltered.length === 0) {
+                      rawFiltered = items
+                        .map((m: any) => (typeof m === "string" ? m : m?.id || m?.name || ""))
+                        .filter((id: string) => !NON_CODE_OR_UTILITY_TERMS.some((term) => id.toLowerCase().includes(term)));
+                    }
+
+                    fetchedModels = rawFiltered;
+                  }
+
+                  fetchedModels = curateProviderModels(provider, fetchedModels);
+
+                  res.end(JSON.stringify({
+                    ok: true,
+                    latencyMs: latency,
+                    models: fetchedModels,
+                    message: fetchedModels.length > 0
+                      ? `Verified (${latency}ms) — Loaded ${fetchedModels.length} models directly from ${provider}`
+                      : `Verified (${latency}ms) — API Key valid`,
+                  }));
+                  return;
+                } catch (fetchErr: any) {
+                  const latency = Date.now() - fetchStart;
+                  res.end(JSON.stringify({
+                    ok: false,
+                    latencyMs: latency,
+                    error: `Connection error: ${fetchErr?.message || String(fetchErr)}`,
+                  }));
+                  return;
+                }
               }
             } catch (err: any) {
               res.end(JSON.stringify({ ok: false, error: err.message }));
@@ -2309,6 +2566,7 @@ export function realFilesystemPlugin(): Plugin {
               const userPrompt = `Context before:\n${(surroundingPrefix || "").slice(-600)}\n\nCode to edit:\n${selectedCode}\n\nContext after:\n${(surroundingSuffix || "").slice(0, 600)}\n\nInstruction: ${instruction}\n\nEmit updated code:`;
 
               let replacement = "";
+              const requestSignal = AbortSignal.timeout(30000);
 
               if (provider === "ollama") {
                 const url = (baseUrl || "http://127.0.0.1:11434") + "/api/generate";
@@ -2321,12 +2579,14 @@ export function realFilesystemPlugin(): Plugin {
                     stream: false,
                     options: { temperature: 0.2, num_predict: 1024 },
                   }),
+                  signal: requestSignal,
                 });
-                if (ollamaRes.ok) {
-                  const data = (await ollamaRes.json()) as any;
-                  replacement = (data.response || "").trim();
-                }
-              } else if (provider === "anthropic" && apiKey) {
+                if (!ollamaRes.ok) throw new Error(`Ollama request failed (${ollamaRes.status})`);
+                const data = (await ollamaRes.json()) as any;
+                replacement = (data.response || "").trim();
+              } else if (provider === "anthropic" && !apiKey.trim()) {
+                throw new Error("An API key is required for the Anthropic provider.");
+              } else if (provider === "anthropic") {
                 const url = (baseUrl || "https://api.anthropic.com/v1") + "/messages";
                 const clRes = await fetch(url, {
                   method: "POST",
@@ -2341,11 +2601,11 @@ export function realFilesystemPlugin(): Plugin {
                     system: systemPrompt,
                     max_tokens: 2048,
                   }),
+                  signal: requestSignal,
                 });
-                if (clRes.ok) {
-                  const data = (await clRes.json()) as any;
-                  replacement = (data.content?.[0]?.text || "").trim();
-                }
+                if (!clRes.ok) throw new Error(`Anthropic request failed (${clRes.status})`);
+                const data = (await clRes.json()) as any;
+                replacement = (data.content?.[0]?.text || "").trim();
               } else {
                 const defaultEndpoints: Record<string, string> = {
                   openai: "https://api.openai.com/v1",
@@ -2374,11 +2634,11 @@ export function realFilesystemPlugin(): Plugin {
                     ],
                     temperature: 0.2,
                   }),
+                  signal: requestSignal,
                 });
-                if (aiRes.ok) {
-                  const data = (await aiRes.json()) as any;
-                  replacement = (data.choices?.[0]?.message?.content || "").trim();
-                }
+                if (!aiRes.ok) throw new Error(`AI provider request failed (${aiRes.status})`);
+                const data = (await aiRes.json()) as any;
+                replacement = (data.choices?.[0]?.message?.content || "").trim();
               }
 
               if (replacement.startsWith("```")) {
@@ -2386,6 +2646,7 @@ export function realFilesystemPlugin(): Plugin {
               }
 
               res.setHeader("Content-Type", "application/json");
+              if (!replacement) throw new Error("The provider returned an empty replacement.");
               res.end(JSON.stringify({ ok: true, replacement }));
               return;
             } catch (err: any) {
@@ -2487,16 +2748,6 @@ export function realFilesystemPlugin(): Plugin {
               ...safeMessages.map((m: any) => ({ role: m.role, content: m.content })),
             ];
 
-            // Attach multimodal images if provided
-            if (Array.isArray(images) && images.length > 0) {
-              const lastUser = [...fullMessages].reverse().find((m) => m.role === "user");
-              if (lastUser) {
-                (lastUser as any).images = images.map((img: string) =>
-                  img.replace(/^data:image\/[a-z]+;base64,/, "")
-                );
-              }
-            }
-
             // 1. Ollama Provider
             if (provider === "ollama") {
               const url = baseUrl || "http://127.0.0.1:11434";
@@ -2527,10 +2778,18 @@ export function realFilesystemPlugin(): Plugin {
                 }
               } catch {}
 
-              if (!targetModel) targetModel = "qwen2.5-coder:7b";
+              let lastUserWithImages: any = null;
+              if (Array.isArray(images) && images.length > 0) {
+                lastUserWithImages = [...fullMessages].reverse().find((m) => m.role === "user");
+                if (lastUserWithImages) {
+                  lastUserWithImages.images = images.map((img: string) =>
+                    img.replace(/^data:image\/[a-z]+;base64,/, "")
+                  );
+                }
+              }
 
               try {
-                const ollamaRes = await fetch(`${url}/api/chat`, {
+                let ollamaRes = await fetch(`${url}/api/chat`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -2539,6 +2798,27 @@ export function realFilesystemPlugin(): Plugin {
                     stream: true,
                   }),
                 });
+
+                // Self-healing fallback: If local model returned error because it does not support images, retry text-only
+                if (!ollamaRes.ok && lastUserWithImages && lastUserWithImages.images) {
+                  const errTxt = await ollamaRes.text().catch(() => "");
+                  if (/image|vision|multimodal|projector/i.test(errTxt) || ollamaRes.status === 400) {
+                    delete lastUserWithImages.images;
+                    lastUserWithImages.content = (lastUserWithImages.content || "") + `\n\n[Notice: ${images.length} image(s) attached by user were omitted because local model "${targetModel}" does not support multimodal vision. Pull a vision model (e.g. "llama3.2-vision" or "minicpm-v") to inspect images.]`;
+                    ollamaRes = await fetch(`${url}/api/chat`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        model: targetModel,
+                        messages: fullMessages,
+                        stream: true,
+                      }),
+                    });
+                  } else {
+                    sendError(`Ollama service returned HTTP ${ollamaRes.status}: ${errTxt || ollamaRes.statusText}. Is the model "${targetModel}" pulled? You can download models in the AI Management Dashboard.`);
+                    return;
+                  }
+                }
 
                 if (!ollamaRes.ok) {
                   const txt = await ollamaRes.text().catch(() => "");
@@ -2596,10 +2876,46 @@ export function realFilesystemPlugin(): Plugin {
               try {
                 const claudeMessages = fullMessages
                   .filter((m: any) => m.role !== "system")
-                  .map((m: any) => ({ role: m.role, content: m.content }));
+                  .map((m: any, idx: number, arr: any[]) => {
+                    const isLastUser = m.role === "user" && idx === arr.map((x) => x.role).lastIndexOf("user");
+                    if (isLastUser && Array.isArray(images) && images.length > 0) {
+                      const contentBlocks: any[] = [];
+                      for (const img of images) {
+                        let mediaType = "image/png";
+                        let b64Data = img;
+                        if (img.startsWith("data:") && img.includes(";base64,")) {
+                          const match = img.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+                          if (match) {
+                            mediaType = match[1];
+                            b64Data = match[2];
+                          } else {
+                            const parts = img.split(";base64,");
+                            mediaType = parts[0].replace("data:", "");
+                            b64Data = parts[1];
+                          }
+                        }
+                        contentBlocks.push({
+                          type: "image",
+                          source: {
+                            type: "base64",
+                            media_type: mediaType,
+                            data: b64Data.trim(),
+                          },
+                        });
+                      }
+                      if (m.content) {
+                        contentBlocks.push({
+                          type: "text",
+                          text: m.content,
+                        });
+                      }
+                      return { role: m.role, content: contentBlocks };
+                    }
+                    return { role: m.role, content: m.content };
+                  });
                 const systemPrompt = fullMessages.find((m: any) => m.role === "system")?.content || "";
 
-                const aiRes = await fetch(`${url}/messages`, {
+                let aiRes = await fetch(`${url}/messages`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -2614,6 +2930,40 @@ export function realFilesystemPlugin(): Plugin {
                     stream: true,
                   }),
                 });
+
+                if (!aiRes.ok && Array.isArray(images) && images.length > 0) {
+                  const txt = await aiRes.text().catch(() => "");
+                  if (/image|vision|multimodal|media_type/i.test(txt) || aiRes.status === 400) {
+                    const fallbackMessages = fullMessages
+                      .filter((m: any) => m.role !== "system")
+                      .map((m: any, idx: number, arr: any[]) => {
+                        const isLastUser = m.role === "user" && idx === arr.map((x) => x.role).lastIndexOf("user");
+                        if (isLastUser) {
+                          const notice = `\n\n[Notice: ${images.length} image(s) attached by user were omitted because "${model || provider}" does not support multimodal vision. Switch to a vision-capable model to inspect images.]`;
+                          return { role: m.role, content: (m.content || "") + notice };
+                        }
+                        return { role: m.role, content: m.content };
+                      });
+                    aiRes = await fetch(`${url}/messages`, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "x-api-key": apiKey.trim(),
+                        "anthropic-version": "2023-06-01",
+                      },
+                      body: JSON.stringify({
+                        model: model || "claude-3-5-sonnet-20241022",
+                        messages: fallbackMessages,
+                        ...(systemPrompt ? { system: systemPrompt } : {}),
+                        max_tokens: 4096,
+                        stream: true,
+                      }),
+                    });
+                  } else {
+                    sendError(`Anthropic API error (${aiRes.status}): ${txt}`);
+                    return;
+                  }
+                }
 
                 if (!aiRes.ok) {
                   const txt = await aiRes.text().catch(() => "");
@@ -2683,7 +3033,29 @@ export function realFilesystemPlugin(): Plugin {
               }
 
               try {
-                const aiRes = await fetch(`${url}/chat/completions`, {
+                let formattedMessages = fullMessages;
+                if (Array.isArray(images) && images.length > 0) {
+                  const lastUserIdx = fullMessages.map((m) => m.role).lastIndexOf("user");
+                  if (lastUserIdx !== -1) {
+                    formattedMessages = fullMessages.map((m, idx) => {
+                      if (idx !== lastUserIdx) return m;
+                      const contentParts: any[] = [];
+                      if (m.content) {
+                        contentParts.push({ type: "text", text: m.content });
+                      }
+                      for (const img of images) {
+                        const url = img.startsWith("data:") ? img : `data:image/png;base64,${img}`;
+                        contentParts.push({
+                          type: "image_url",
+                          image_url: { url },
+                        });
+                      }
+                      return { ...m, content: contentParts };
+                    });
+                  }
+                }
+
+                let aiRes = await fetch(`${url}/chat/completions`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -2691,15 +3063,68 @@ export function realFilesystemPlugin(): Plugin {
                   },
                   body: JSON.stringify({
                     model: model || (provider === "google" ? "gemini-1.5-flash" : "gpt-4o"),
-                    messages: fullMessages,
+                    messages: formattedMessages,
                     stream: true,
                   }),
                 });
 
+                // Self-healing fallback: If endpoint returns 400 rejecting multimodal content, retry text-only
+                if (!aiRes.ok && Array.isArray(images) && images.length > 0) {
+                  const txt = await aiRes.text().catch(() => "");
+                  if (/image|vision|multimodal|unsupported.*modal|unsupported_parameter/i.test(txt) || aiRes.status === 400) {
+                    const lastUserIdx = fullMessages.map((m) => m.role).lastIndexOf("user");
+                    const fallbackMessages = fullMessages.map((m, idx) => {
+                      if (idx !== lastUserIdx) return m;
+                      const omittedNotice = `\n\n[Notice: ${images.length} image(s) attached by user were omitted because "${model || provider}" does not support multimodal vision. Switch to a vision-capable model to inspect images.]`;
+                      return { ...m, content: (m.content || "") + omittedNotice };
+                    });
+                    aiRes = await fetch(`${url}/chat/completions`, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${apiKey.trim()}`,
+                      },
+                      body: JSON.stringify({
+                        model: model || (provider === "google" ? "gemini-1.5-flash" : "gpt-4o"),
+                        messages: fallbackMessages,
+                        stream: true,
+                      }),
+                    });
+                  } else {
+                    sendError(`${provider} API error (${aiRes.status}): ${txt}`);
+                    return;
+                  }
+                }
+
                 if (!aiRes.ok) {
                   const txt = await aiRes.text().catch(() => "");
-                  sendError(`${provider} API error (${aiRes.status}): ${txt}`);
-                  return;
+                  if (/responses endpoint|v1\/responses/i.test(txt)) {
+                    // Self-healing fallback: Route to /v1/responses endpoint for models like gpt-5.3-codex
+                    const responsesUrl = `${url.replace(/\/chat\/completions$/, "").replace(/\/+$/, "")}/responses`;
+                    const sysMsg = fullMessages.find((m) => m.role === "system")?.content || "";
+                    const conversation = fullMessages.filter((m) => m.role !== "system");
+                    aiRes = await fetch(responsesUrl, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${apiKey.trim()}`,
+                      },
+                      body: JSON.stringify({
+                        model: model || "gpt-4o",
+                        instructions: sysMsg || undefined,
+                        input: conversation.map((m) => ({
+                          role: m.role,
+                          content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+                        })),
+                        stream: true,
+                      }),
+                    });
+                  }
+                  if (!aiRes.ok) {
+                    const finalErr = await aiRes.text().catch(() => txt);
+                    sendError(`${provider} API error (${aiRes.status}): ${finalErr || txt}`);
+                    return;
+                  }
                 }
 
                 if (!aiRes.body) {
@@ -2728,7 +3153,11 @@ export function realFilesystemPlugin(): Plugin {
                     }
                     try {
                       const data = JSON.parse(payload);
-                      const delta = data.choices?.[0]?.delta?.content;
+                      const delta =
+                        data.choices?.[0]?.delta?.content ||
+                        (typeof data.delta === "string" ? data.delta : data.delta?.text || data.delta?.content) ||
+                        (data.type === "response.text.delta" ? data.delta : undefined) ||
+                        data.text;
                       if (delta) sendDelta(delta);
                     } catch {}
                   }
@@ -2919,6 +3348,9 @@ export function realFilesystemPlugin(): Plugin {
               sendProgress(5, "Connecting to ollama.com...");
               const tmpZip = path.join(os.tmpdir(), "Ollama-darwin.zip");
               const curlProc = spawn("curl", ["-#", "-L", "-o", tmpZip, "https://ollama.com/download/Ollama-darwin.zip"]);
+              curlProc.on("error", (procErr: any) => {
+                sendProgress(0, `Failed to run curl: ${procErr?.message || procErr}`);
+              });
               curlProc.stderr.on("data", (d: Buffer) => {
                 const str = d.toString();
                 const m = str.match(/(\d+(?:\.\d+)?)%/);
@@ -2953,6 +3385,9 @@ export function realFilesystemPlugin(): Plugin {
             // Linux fallback
             sendProgress(10, "Running Linux installer...");
             const installProc = spawn("bash", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"]);
+            installProc.on("error", (procErr: any) => {
+              sendProgress(0, `Failed to run installer: ${procErr?.message || procErr}`);
+            });
             installProc.stdout.on("data", (d: Buffer) => {
               const text = d.toString();
               const m = text.match(/(\d+(?:\.\d+)?)%/);
@@ -3083,6 +3518,9 @@ export function realFilesystemPlugin(): Plugin {
               const pullProc = spawn(bin, ["pull", model], {
                 env: { ...process.env, HOME: os.homedir() },
               });
+              pullProc.on("error", (procErr: any) => {
+                sendProgress(0, `Failed to run ollama pull: ${procErr?.message || procErr}`);
+              });
               let lastPercent = 0;
               let lastSentTime = 0;
 
@@ -3190,6 +3628,9 @@ export function realFilesystemPlugin(): Plugin {
                 stdio: "ignore",
                 env: { ...process.env, HOME: os.homedir() },
               });
+              serveProc.on("error", (procErr: any) => {
+                console.warn("[ollama] Failed to start server process:", procErr?.message || procErr);
+              });
               serveProc.unref();
 
               // Wait up to 6s for port to become available
@@ -3208,8 +3649,36 @@ export function realFilesystemPlugin(): Plugin {
             return;
           }
 
+          // ── POST /api/pipeline/permission (Handle interactive user approval/rejection) ──
+          if (pathname === "/api/pipeline/permission" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const { id, decision, feedback } = body;
+              if (activePipelineProc && activePipelineProc.exitCode === null && activePipelineProc.stdin?.writable) {
+                activePipelineProc.stdin.write(JSON.stringify({ id, decision, feedback }) + "\n");
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: true, id, decision }));
+              } else {
+                res.statusCode = 404;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: false, error: "No active pipeline process awaiting permission" }));
+              }
+            } catch (err: any) {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+            }
+            return;
+          }
+
           // ── POST /api/pipeline/run (Real Server-Sent Events child process) ──
           if (pathname === "/api/pipeline/run" && req.method === "POST") {
+            if (activePipelineProc && activePipelineProc.exitCode === null) {
+              res.statusCode = 409;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, error: "A pipeline is already running." }));
+              return;
+            }
             const body = await parseJsonBody(req);
             const {
               prompt,
@@ -3222,6 +3691,7 @@ export function realFilesystemPlugin(): Plugin {
               baseUrl = "",
               activeFilePath = "",
               conversationHistory = [],
+              images = [],
             } = body;
 
             res.setHeader("Content-Type", "text/event-stream");
@@ -3264,6 +3734,17 @@ export function realFilesystemPlugin(): Plugin {
               }
             }
 
+            let tempImagesFile = "";
+            if (Array.isArray(images) && images.length > 0) {
+              try {
+                tempImagesFile = path.join(os.tmpdir(), `acsa_images_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`);
+                fs.writeFileSync(tempImagesFile, JSON.stringify(images), "utf-8");
+                args.push("--images-file", tempImagesFile);
+              } catch (e) {
+                console.warn("[Bridge] Failed to write temporary images file:", e);
+              }
+            }
+
             const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
               ollama: "http://127.0.0.1:11434",
               llamacpp: "http://127.0.0.1:8080",
@@ -3300,11 +3781,23 @@ export function realFilesystemPlugin(): Plugin {
               },
             });
 
+            activePipelineProc = pyProc;
+
             const killChild = () => {
               if (pyProc.exitCode === null) pyProc.kill("SIGTERM");
+              if (activePipelineProc === pyProc) activePipelineProc = null;
+              if (tempHistoryFile && fs.existsSync(tempHistoryFile)) {
+                try { fs.unlinkSync(tempHistoryFile); } catch {}
+              }
+              if (tempImagesFile && fs.existsSync(tempImagesFile)) {
+                try { fs.unlinkSync(tempImagesFile); } catch {}
+              }
             };
             req.on("close", killChild);
-            pyProc.on("close", () => req.off("close", killChild));
+            pyProc.on("close", () => {
+              if (activePipelineProc === pyProc) activePipelineProc = null;
+              req.off("close", killChild);
+            });
 
             let lineNum = 2;
             let stdoutBuffer = "";
@@ -3345,9 +3838,17 @@ export function realFilesystemPlugin(): Plugin {
                   try {
                     const thought = JSON.parse(line.slice("@@THOUGHT@@".length));
                     sendEvent("thought", { text: thought });
+                  } catch {}
+                  continue;
+                }
+
+                if (line.startsWith("@@PERMISSION_REQUEST@@")) {
+                  try {
+                    const permData = JSON.parse(line.slice("@@PERMISSION_REQUEST@@".length));
+                    sendEvent("permission_request", permData);
                     sendEvent("output", {
                       line_number: lineNum++,
-                      content: `[Thinking] ${thought}`,
+                      content: `[Action Approval Required] ${permData.command || ""}`,
                       stream: "stdout",
                     });
                   } catch {}
@@ -3376,8 +3877,23 @@ export function realFilesystemPlugin(): Plugin {
             });
 
             pyProc.on("close", (code) => {
+              const residual = stdoutLineBuffer.trim();
+              if (residual) {
+                if (residual.startsWith("@@CHUNK@@")) {
+                  try { sendEvent("chunk", { text: JSON.parse(residual.slice("@@CHUNK@@".length)) }); } catch {}
+                } else if (residual.startsWith("@@STEP@@")) {
+                  try { sendEvent("step", JSON.parse(residual.slice("@@STEP@@".length))); } catch {}
+                } else if (residual.startsWith("@@THOUGHT@@")) {
+                  try { sendEvent("thought", { text: JSON.parse(residual.slice("@@THOUGHT@@".length)) }); } catch {}
+                } else {
+                  sendEvent("output", { line_number: lineNum++, content: residual, stream: "stdout" });
+                }
+              }
               if (tempHistoryFile && fs.existsSync(tempHistoryFile)) {
                 try { fs.unlinkSync(tempHistoryFile); } catch {}
+              }
+              if (tempImagesFile && fs.existsSync(tempImagesFile)) {
+                try { fs.unlinkSync(tempImagesFile); } catch {}
               }
 
               sendEvent("output", {

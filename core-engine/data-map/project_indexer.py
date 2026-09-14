@@ -747,7 +747,7 @@ def update_file_incremental(project_root_str: str, relative_path: str) -> Option
     existing_index["total_symbols"] = total_symbols
     existing_index["symbols"] = symbols_map
     existing_index["profile"] = detect_project_profile(project_root, file_indices)
-    existing_index["landmarks"] = extract_architectural_landmarks(project_root, file_indices)
+    existing_index["landmarks"] = existing_index.get("landmarks", {})
     existing_index["architecture"] = {
         "archetype": existing_index["profile"].get("archetype", "Generic Software Project"),
         "mode": existing_index["profile"].get("mode", "brownfield"),

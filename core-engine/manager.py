@@ -52,7 +52,7 @@ for _p in (_ENGINE_DIR, _GAUNTLET_DIR, _COMPILER_DIR, _DATAMAP_DIR):
 from scale_detector import detect_project_scale  # noqa: E402
 from skills import skill_loader  # noqa: E402
 from subagents import SwarmCoordinator  # noqa: E402
-from agent_loop import run_agent_loop, AgentResult  # noqa: E402
+from agent_loop import run_agent_loop, AgentResult, is_mutation_request, _clean_thought_text  # noqa: E402
 import agent_tools  # noqa: E402
 from syntax_guard import (  # noqa: E402
     Diagnostic,
@@ -256,7 +256,6 @@ def derive_thresholds(config: ProjectConfig) -> PerformanceThresholds:
         base.max_error_rate = scale_prof.max_error_rate
         base.max_peak_cpu_percent = scale_prof.max_peak_cpu_percent
         base.max_peak_memory_mb = scale_prof.max_peak_memory_mb
-        emit_step("Scale Detection", f"Analyzed workspace scale ({scale_prof.file_count} files, {scale_prof.total_loc} LOC)", "done")
     except Exception as exc:
         logger.warning("Auto scale detection fallback: %s", exc)
 
@@ -293,6 +292,47 @@ def emit_chunk(token: str) -> None:
         pass
 
 
+def request_user_permission(command: str, description: str = "", timeout: float = 120.0) -> bool:
+    """Emit an @@PERMISSION_REQUEST@@ event and await user approval via stdin."""
+    import select
+    req_id = f"perm_{int(time.time() * 1000)}"
+    payload = {
+        "id": req_id,
+        "command": command,
+        "description": description or f"The agent is requesting authorization to execute: `{command}`",
+    }
+    try:
+        sys.stdout.write(f"@@PERMISSION_REQUEST@@{json.dumps(payload)}\n")
+        sys.stdout.flush()
+    except Exception as exc:
+        logger.warning("Failed to emit @@PERMISSION_REQUEST@@: %s", exc)
+        return False
+
+    emit_step("Action Approval", f"Awaiting user approval for `{command[:40]}`...", "running")
+
+    # Read response from stdin using select.select
+    try:
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+        if rlist:
+            line = sys.stdin.readline().strip()
+            if line:
+                data = json.loads(line)
+                decision = data.get("decision", "").lower()
+                is_approved = decision in ("approved", "allow", "yes", "true")
+                if is_approved:
+                    emit_step("Action Approval", f"User approved `{command[:40]}`", "done")
+                    return True
+                else:
+                    emit_step("Action Approval", f"User rejected `{command[:40]}`", "failed")
+                    return False
+        emit_step("Action Approval", f"Approval timed out for `{command[:40]}`", "failed")
+        return False
+    except Exception as exc:
+        logger.warning("Error awaiting user permission: %s", exc)
+        emit_step("Action Approval", f"Permission error: {exc}", "failed")
+        return False
+
+
 # ── LLM Sidecar Client ──────────────────────────────────────────────────────
 
 
@@ -309,6 +349,9 @@ def _call_llm(
     max_tokens: int = 2048,
     system_instruction: Optional[str] = None,
     stream: bool = True,
+    images: Optional[list[str]] = None,
+    stream_target: str = "chunk",  # "chunk" | "thought" | "none"
+    token_callback: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """Send a completion request to the chosen LLM provider (Ollama, OpenAI API, local).
 
@@ -317,6 +360,18 @@ def _call_llm(
     """
     global _last_llm_error
     _last_llm_error = ""
+
+    def emit_token(token: str) -> None:
+        if not stream or not token:
+            return
+        if token_callback is not None:
+            token_callback(token)
+        elif stream_target == "thought":
+            emit_thought(token)
+        elif stream_target == "none":
+            pass
+        else:
+            emit_chunk(token)
 
     provider = config.llm_provider if config else "local"
 
@@ -394,9 +449,19 @@ def _call_llm(
             "Do not emit conversational chit-chat."
         )
 
+        user_msg: dict[str, Any] = {"role": "user", "content": prompt}
+        if images:
+            clean_images = []
+            for img in images:
+                if "," in img:
+                    clean_images.append(img.split(",", 1)[-1].strip())
+                else:
+                    clean_images.append(img.strip())
+            user_msg["images"] = clean_images
+
         messages = [
             {"role": "system", "content": sys_msg},
-            {"role": "user", "content": prompt},
+            user_msg,
         ]
 
         # Try native Ollama /api/chat first with streaming
@@ -429,7 +494,7 @@ def _call_llm(
                         token = msg.get("content", "")
                         if token:
                             full_tokens.append(token)
-                            emit_chunk(token)
+                            emit_token(token)
                         if data.get("done", False):
                             break
                     except json.JSONDecodeError:
@@ -438,6 +503,50 @@ def _call_llm(
             logger.info("Ollama /api/chat responded in %.0fms (model=%s)", elapsed, target_model)
             if full_tokens:
                 return "".join(full_tokens)
+        except urllib.error.HTTPError as http_exc:
+            err_body = ""
+            try:
+                err_body = http_exc.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            # Self-healing fallback: If local model rejects image input, retry text-only
+            if (http_exc.code == 400 or "image" in err_body.lower()) and images and "images" in user_msg:
+                logger.info("Ollama model '%s' rejected images (%s); retrying text-only", target_model, err_body)
+                del user_msg["images"]
+                user_msg["content"] += f"\n\n[Notice: {len(images)} image(s) attached by user were omitted because local model '{target_model}' does not support multimodal vision.]"
+                fallback_payload = json.dumps({
+                    "model": target_model,
+                    "messages": messages,
+                    "stream": stream,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
+                }).encode("utf-8")
+                try:
+                    retry_req = urllib.request.Request(chat_url, data=fallback_payload, headers=headers, method="POST")
+                    fallback_tokens: list[str] = []
+                    with local_opener.open(retry_req, timeout=timeout) as resp:
+                        for line_bytes in resp:
+                            line_str = line_bytes.decode("utf-8").strip()
+                            if not line_str:
+                                continue
+                            try:
+                                data = json.loads(line_str)
+                                msg = data.get("message", {})
+                                token = msg.get("content", "")
+                                if token:
+                                    fallback_tokens.append(token)
+                                    emit_token(token)
+                                if data.get("done", False):
+                                    break
+                            except json.JSONDecodeError:
+                                continue
+                    if fallback_tokens:
+                        return "".join(fallback_tokens)
+                except Exception as retry_exc:
+                    logger.warning("Ollama text-only retry failed: %s", retry_exc)
+            logger.warning("Ollama /api/chat attempt failed (HTTP %s): %s; trying /v1/chat/completions", http_exc.code, err_body)
         except Exception as exc:
             err_str = str(exc)
             if "timed out" in err_str.lower() or "timeout" in err_str.lower():
@@ -474,7 +583,7 @@ def _call_llm(
                             token = delta.get("content", "")
                             if token:
                                 full_tokens.append(token)
-                                emit_chunk(token)
+                                emit_token(token)
                     except json.JSONDecodeError:
                         continue
             elapsed = (time.monotonic() - start) * 1000
@@ -528,9 +637,30 @@ def _call_llm(
             "Do not emit conversational chit-chat."
         )
 
+        if images:
+            content_blocks: list[dict[str, Any]] = []
+            for img in images:
+                media_type = "image/png"
+                data = img
+                if img.startswith("data:") and ";base64," in img:
+                    hdr, data = img.split(";base64,", 1)
+                    media_type = hdr.replace("data:", "")
+                content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data.strip(),
+                    },
+                })
+            content_blocks.append({"type": "text", "text": prompt})
+            anthropic_messages = [{"role": "user", "content": content_blocks}]
+        else:
+            anthropic_messages = [{"role": "user", "content": prompt}]
+
         payload = json.dumps({
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": anthropic_messages,
             "system": sys_msg,
             "max_tokens": max_tokens,
             "stream": stream,
@@ -552,7 +682,7 @@ def _call_llm(
                             tok = data.get("delta", {}).get("text", "")
                             if tok:
                                 full_tokens.append(tok)
-                                emit_chunk(tok)
+                                emit_token(tok)
                         elif data.get("type") == "message_stop":
                             break
                     except json.JSONDecodeError:
@@ -606,6 +736,18 @@ def _call_llm(
         endpoint_url = f"http://{h}:{p}/v1/chat/completions"
         model_name = config.llm_model if (config and config.llm_model) else "local"
 
+    if images:
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for img in images:
+            url_str = img if img.startswith("data:") else f"data:image/png;base64,{img}"
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": url_str},
+            })
+        openai_user_msg: dict[str, Any] = {"role": "user", "content": content_parts}
+    else:
+        openai_user_msg = {"role": "user", "content": prompt}
+
     payload = json.dumps({
         "model": model_name,
         "messages": [
@@ -629,7 +771,7 @@ def _call_llm(
                     "Do not emit conversational chit-chat."
                 ),
             },
-            {"role": "user", "content": prompt},
+            openai_user_msg,
         ],
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -658,12 +800,180 @@ def _call_llm(
                         token = delta.get("content", "")
                         if token:
                             full_tokens.append(token)
-                            emit_chunk(token)
+                            emit_token(token)
                 except json.JSONDecodeError:
                     continue
         elapsed = (time.monotonic() - start) * 1000
         logger.info("LLM response received from %s in %.0fms", endpoint_url, elapsed)
         return "".join(full_tokens) if full_tokens else None
+    except urllib.error.HTTPError as http_exc:
+        err_body = ""
+        try:
+            err_body = http_exc.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        # Self-healing fallback: If endpoint returned 400 rejecting multimodal content, retry text-only
+        if (http_exc.code == 400 or "image" in err_body.lower()) and images:
+            logger.info("Model '%s' rejected multimodal input (%s); retrying text-only", model_name, err_body)
+            omitted_note = f"\n\n[Notice: {len(images)} image(s) attached by user were omitted because model '{model_name}' does not support multimodal vision.]"
+            fallback_payload = json.dumps({
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_instruction or (
+                            "You are a precise autonomous code generation engine. "
+                            "Emit your code edits using SEARCH/REPLACE blocks (preferred) or valid unified diffs.\n\n"
+                            "SEARCH/REPLACE format example:\n"
+                            "[relative/file/path.ext]\n"
+                            "<<<<<<< SEARCH\n"
+                            "// exact existing code snippet to match\n"
+                            "=======\n"
+                            "// replacement code (or empty if deleting)\n"
+                            ">>>>>>> REPLACE\n\n"
+                            "IMPORTANT: Always use the exact relative workspace file path from the project context. "
+                            "Never emit placeholder paths like 'path/to/file.ts'.\n"
+                            "Make the smallest possible edit. Never rewrite an entire file "
+                            "when a focused hunk is sufficient, and never invent files or paths "
+                            "not present in the provided context. "
+                            "Do not emit conversational chit-chat."
+                        ),
+                    },
+                    {"role": "user", "content": prompt + omitted_note},
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }).encode("utf-8")
+            try:
+                fallback_req = urllib.request.Request(endpoint_url, data=fallback_payload, headers=headers, method="POST")
+                full_tokens = []
+                with opener.open(fallback_req, timeout=timeout) as resp:
+                    for line_bytes in resp:
+                        line_str = line_bytes.decode("utf-8").strip()
+                        if not line_str or line_str == "data: [DONE]":
+                            continue
+                        if line_str.startswith("data: "):
+                            line_str = line_str[6:].strip()
+                        try:
+                            data = json.loads(line_str)
+                            choices = data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                token = delta.get("content", "")
+                                if token:
+                                    full_tokens.append(token)
+                                    emit_token(token)
+                        except json.JSONDecodeError:
+                            continue
+                if full_tokens:
+                    return "".join(full_tokens)
+            except Exception as retry_exc:
+                logger.error("Text-only fallback request failed: %s", retry_exc)
+
+        # Self-healing fallback: If OpenAI model requires the new /v1/responses endpoint (e.g. gpt-5.3-codex)
+        err_low = err_body.lower()
+        if ("v1/responses" in err_low or "responses endpoint" in err_low or "/responses" in err_low) and "chat/completions" in endpoint_url:
+            responses_url = endpoint_url.replace("/chat/completions", "/responses")
+            logger.info("Model '%s' requires OpenAI Responses API; automatically routing to %s", model_name, responses_url)
+            responses_input = prompt
+            if images:
+                responses_input = [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}]
+                for img in images:
+                    url_str = img if img.startswith("data:") else f"data:image/png;base64,{img}"
+                    responses_input[0]["content"].append({
+                        "type": "image_url",
+                        "image_url": {"url": url_str},
+                    })
+
+            responses_instructions = system_instruction or (
+                "You are a precise autonomous code generation engine. "
+                "Emit your code edits using SEARCH/REPLACE blocks (preferred) or valid unified diffs.\n\n"
+                "SEARCH/REPLACE format example:\n"
+                "[relative/file/path.ext]\n"
+                "<<<<<<< SEARCH\n"
+                "// exact existing code snippet to match\n"
+                "=======\n"
+                "// replacement code (or empty if deleting)\n"
+                ">>>>>>> REPLACE\n\n"
+                "IMPORTANT: Always use the exact relative workspace file path from the project context. "
+                "Never emit placeholder paths like 'path/to/file.ts'.\n"
+                "Make the smallest possible edit. Never rewrite an entire file "
+                "when a focused hunk is sufficient, and never invent files or paths "
+                "not present in the provided context. "
+                "Do not emit conversational chit-chat."
+            )
+
+            # Try streaming first
+            try:
+                resp_payload = json.dumps({
+                    "model": model_name,
+                    "instructions": responses_instructions,
+                    "input": responses_input,
+                    "stream": stream,
+                }).encode("utf-8")
+                resp_req = urllib.request.Request(responses_url, data=resp_payload, headers=headers, method="POST")
+                full_tokens = []
+                with opener.open(resp_req, timeout=timeout) as resp:
+                    for line_bytes in resp:
+                        line_str = line_bytes.decode("utf-8").strip()
+                        if not line_str or line_str == "data: [DONE]":
+                            continue
+                        if line_str.startswith("data: "):
+                            line_str = line_str[6:].strip()
+                        try:
+                            data = json.loads(line_str)
+                            token = ""
+                            if isinstance(data.get("delta"), str):
+                                token = data["delta"]
+                            elif isinstance(data.get("delta"), dict):
+                                token = data["delta"].get("text", "") or data["delta"].get("content", "")
+                            elif "choices" in data:
+                                token = data["choices"][0].get("delta", {}).get("content", "")
+                            elif "text" in data:
+                                token = data["text"]
+                            if token:
+                                full_tokens.append(token)
+                                emit_token(token)
+                        except json.JSONDecodeError:
+                            continue
+                if full_tokens:
+                    return "".join(full_tokens)
+            except Exception as stream_err:
+                logger.debug("Streaming /v1/responses failed (%s), attempting non-streaming", stream_err)
+
+            # Fallback to non-streaming /v1/responses
+            try:
+                non_stream_payload = json.dumps({
+                    "model": model_name,
+                    "instructions": responses_instructions,
+                    "input": responses_input,
+                    "stream": False,
+                }).encode("utf-8")
+                non_stream_req = urllib.request.Request(responses_url, data=non_stream_payload, headers=headers, method="POST")
+                with opener.open(non_stream_req, timeout=timeout) as non_stream_resp:
+                    res_json = json.loads(non_stream_resp.read().decode("utf-8"))
+                    output_text = ""
+                    if "output_text" in res_json and res_json["output_text"]:
+                        output_text = res_json["output_text"]
+                    elif "output" in res_json and isinstance(res_json["output"], list):
+                        for item in res_json["output"]:
+                            for part in item.get("content", []):
+                                if isinstance(part, dict) and "text" in part:
+                                    output_text += part["text"]
+                                elif isinstance(part, str):
+                                    output_text += part
+                    elif "choices" in res_json:
+                        output_text = res_json["choices"][0].get("message", {}).get("content", "")
+                    if output_text:
+                        emit_token(output_text)
+                        return output_text
+            except Exception as retry_exc:
+                logger.error("Responses API fallback request failed: %s", retry_exc)
+
+        _last_llm_error = f"LLM request to '{endpoint_url}' failed (HTTP {http_exc.code}): {err_body or http_exc.reason}"
+        logger.error("%s", _last_llm_error)
+        return None
     except Exception as exc:
         err_str = str(exc)
         if "timed out" in err_str.lower() or "timeout" in err_str.lower():
@@ -724,6 +1034,21 @@ def _apply_search_replace(content: str, search_block: str, replace_block: str) -
     return content, False
 
 
+def _clean_extracted_path(raw: str) -> str:
+    """Robustly clean file paths extracted from LLM output (strip brackets, markdown, colons)."""
+    if not raw:
+        return ""
+    p = raw.strip()
+    p = re.sub(r"^[#*`\s]+", "", p)
+    p = re.sub(r"[#*`:\s]+$", "", p)
+    if p.startswith("[") and p.endswith("]"):
+        p = p[1:-1].strip()
+    p = p.strip("`'\" \t\n[]:*#")
+    if p.startswith("a/") or p.startswith("b/"):
+        p = p[2:]
+    return p.strip()
+
+
 def _parse_search_replace_blocks(raw_response: str, project_root: str) -> list[DiffPatch]:
     """Parse SEARCH/REPLACE blocks (Aider / Claude Code industry standard).
 
@@ -736,10 +1061,10 @@ def _parse_search_replace_blocks(raw_response: str, project_root: str) -> list[D
     >>>>>>> REPLACE
     """
     pattern = re.compile(
-        r"(?:(?:^|\n)([^\n`#<>]+?\.[a-zA-Z0-9]+)\s*\n)?"
-        r"<<<<<<<\s*SEARCH\s*\n"
-        r"(.*?)\n=======\s*\n"
-        r"(.*?)\n>>>>>>>\s*REPLACE",
+        r"(?:(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+)\]?[:*#`\s]*\n)?"
+        r"<{5,9}\s*SEARCH\s*\n"
+        r"(.*?)\n={5,9}\s*\n"
+        r"(.*?)\n>{5,9}\s*REPLACE",
         re.DOTALL,
     )
 
@@ -762,7 +1087,7 @@ def _parse_search_replace_blocks(raw_response: str, project_root: str) -> list[D
 
         target_path = None
         if fpath_hint:
-            clean_hint = re.sub(r"^[\s#/*`-]+", "", fpath_hint).strip("`'\"*: \t\r\n")
+            clean_hint = _clean_extracted_path(fpath_hint)
             cand = (root / clean_hint).resolve()
             if cand.is_relative_to(root) and cand.exists() and cand.is_file():
                 target_path = str(cand)
@@ -1165,7 +1490,7 @@ def build_initial_prompt(
     )
 
     # Architectural constraints derived from slider presets
-    constraints = inject_constraints(config.sliders.to_dict())
+    constraints = inject_constraints(config.sliders.to_dict(), project_root=config.project_root)
     constraint_block = constraints.to_prompt_block()
     if constraint_block:
         sections.append(constraint_block)
@@ -1364,9 +1689,13 @@ def collect_project_context(
 
         candidates.append((score, relative, content, best_window_idx))
 
-    # Automatically include real Git diff/status if user asks about recent changes/modifications
-    if any(k in lower_req for k in ("recent", "change", "diff", "modified", "status", "commit", "summary", "summarize")):
-        emit_step("Git Intelligence", "Inspecting modified files, git status, and recent diff", "running")
+    # Automatically include real Git diff/status only if user specifically asks about git diff/status/commits
+    git_inquiry_phrases = (
+        "git diff", "git status", "git log", "git commit", "recent commits",
+        "recent changes", "codebase changes", "what changed", "commit history",
+        "diff stats", "git changes", "working tree status"
+    )
+    if any(phrase in lower_req for phrase in git_inquiry_phrases):
         try:
             import subprocess
             res_stat = subprocess.run(
@@ -1412,7 +1741,6 @@ def collect_project_context(
             log_text = res_log.stdout.strip()
             if log_text:
                 contexts["[Recent Git Commits]"] = log_text[:3000]
-            emit_step("Git Intelligence", f"Context gathered from {len(contexts)} sources", "done")
         except Exception as exc:
             logger.debug("Git context collection skipped: %s", exc)
 
@@ -1798,63 +2126,36 @@ def classify_intent(user_request: str) -> str:
     """Classify user request as 'inquiry' (read-only analysis/summary/explanation) or 'mutation' (code change)."""
     text = user_request.strip().lower()
 
-    # Clear inquiry starters (summaries, explanations, questions, reviews)
-    inquiry_starters = (
-        "summarize",
-        "summary",
-        "explain",
-        "describe",
-        "overview",
+    # Explicit git status / diff inquiry phrases are read-only even when they contain generic action words.
+    git_inquiry_patterns = (
+        r"\b(?:show|display|view|list|check|what(?:'s| is)?)\b.*\bgit\s+(?:diff|status|log)\b",
+        r"\b(?:recent commits|recent changes in git|commit history)\b",
+    )
+    if any(re.search(pattern, text) for pattern in git_inquiry_patterns):
+        return "inquiry"
+
+    # Any request with mutation directives or normative expectations is strictly a mutation.
+    if is_mutation_request(user_request):
+        return "mutation"
+
+    # 3. Pure read-only QA starters
+    pure_qa_starters = (
         "what is",
         "what are",
         "what does",
-        "what did",
         "where is",
         "where are",
         "how does",
-        "how do",
-        "how to",
         "why is",
         "why does",
         "can you explain",
         "could you explain",
         "tell me about",
-        "list all",
-        "show me",
-        "walk me through",
     )
-    if any(text.startswith(starter) for starter in inquiry_starters):
+    if any(text.startswith(starter) for starter in pure_qa_starters):
         return "inquiry"
 
-    if any(phrase in text for phrase in (
-        "recent changes",
-        "recent codebase changes",
-        "recent commits",
-        "codebase changes",
-        "what changed",
-        "git diff",
-        "git status",
-        "explain this",
-        "explain the",
-        "architecture overview",
-    )):
-        return "inquiry"
-
-    mutation_keywords = (
-        "fix", "repair", "implement", "add", "create", "update", "modify",
-        "change", "patch", "remove", "delete", "replace", "refactor", "optimize",
-        "rewrite", "rework", "rebuild", "convert", "generate code"
-    )
-    words = re.findall(r"\b[a-z]+\b", text)
-    if words and words[0] in mutation_keywords:
-        return "mutation"
-
-    if text.endswith("?") and not any(k in words for k in ("fix", "refactor", "implement", "create")):
-        return "inquiry"
-
-    if any(k in words for k in ("review", "audit", "analyze", "inspect")) and not any(k in words for k in ("fix", "patch", "modify", "update")):
-        return "inquiry"
-
+    # 4. Default: In an autonomous coding agent, route requests to the agent loop
     return "mutation"
 
 
@@ -1869,6 +2170,7 @@ def orchestrate(
     skip_performance: bool = False,
     dry_run: bool = False,
     conversation_history: Optional[list[dict[str, str]]] = None,
+    images: Optional[list[str]] = None,
 ) -> OrchestrationResult:
     """Execute the full self-healing orchestration pipeline.
 
@@ -1903,6 +2205,7 @@ def orchestrate(
     OrchestrationResult
     """
     pipeline_start = time.monotonic()
+    file_contexts = {} if file_contexts is None else file_contexts
     thresholds = derive_thresholds(config)
     rounds: list[CorrectionRound] = []
     current_patches: list[DiffPatch] = []
@@ -1947,7 +2250,6 @@ def orchestrate(
 
             agent_res = blackboard.shared_context.get("agent_result")
             if agent_res and (agent_res.edited_files or agent_res.answer):
-                emit_step("Verification", f"Swarm workflow complete ({agent_res.total_rounds} turns, {agent_res.elapsed_s}s)", "done")
                 return OrchestrationResult(
                     outcome=LoopOutcome.SUCCESS,
                     total_rounds=agent_res.total_rounds,
@@ -1963,37 +2265,28 @@ def orchestrate(
     # ── Intent Classification (Inquiry vs Mutation) ──
     intent = classify_intent(user_request)
     logger.info("Classified request intent: %s", intent)
-    emit_step("Intent Analysis", f"Classified request as {intent.upper()}", "done")
 
     if intent == "inquiry":
         inquiry_sys = (
             "You are an expert software engineer and code intelligence assistant. "
-            "Provide a thorough, precise, well-structured markdown response to the user's inquiry, "
-            "grounded strictly in the provided project context, git status, git diff, and source files. "
-            "Use clear headings, bullet points, and code references where appropriate."
+            "Provide a direct, thorough, and well-structured response to the user's inquiry, "
+            "grounded strictly in the provided codebase context and source files."
         )
 
-        prompt_parts = [
-            "### Project Changes & Repository Context\n",
-        ]
+        prompt_parts = []
         if file_contexts:
+            prompt_parts.append("### Project Context & Source Files\n")
             for path, content in file_contexts.items():
                 prompt_parts.append(f"\n#### {path}\n```\n{content[:4000]}\n```\n")
-        else:
-            prompt_parts.append("(No specific file contexts loaded)")
 
         prompt_parts.append(
-            "\n### Instruction\n"
-            f"The user has requested:\n> {user_request}\n\n"
-            "Based strictly on the git diff, git status, commits, and project context provided above, "
-            "write a comprehensive, structured markdown response answering the user's request. "
-            "Group by component, explain what was added/changed, and highlight key features. "
-            "Do not ask clarifying questions or defer; provide the structured markdown analysis directly now."
+            "\n### User Request\n"
+            f"> {user_request}\n\n"
+            "Please answer the user's specific request directly and concisely based on the codebase context provided above."
         )
         inquiry_prompt = "\n".join(prompt_parts)
 
         logger.info("Executing analytical inquiry path...")
-        emit_step("Model Reasoning", f"Generating response with {config.llm_model or 'qwen2.5-coder'}", "running")
         llm_start = time.monotonic()
         if config.llm_provider == "deterministic":
             raw_response = (
@@ -2015,6 +2308,7 @@ def orchestrate(
                 port=config.llm_port,
                 system_instruction=inquiry_sys,
                 max_tokens=3000,
+                images=images,
             )
         llm_elapsed = (time.monotonic() - llm_start) * 1000
 
@@ -2023,7 +2317,6 @@ def orchestrate(
             is_timeout = "timed out" in err_msg.lower() or "timeout" in err_msg.lower()
             outcome = LoopOutcome.TIMEOUT if is_timeout else LoopOutcome.LLM_UNREACHABLE
             logger.error("Inquiry LLM call failed: %s", err_msg)
-            emit_step("Model Reasoning", f"Model request failed: {err_msg}", "failed")
             return OrchestrationResult(
                 outcome=outcome,
                 total_rounds=1,
@@ -2034,16 +2327,57 @@ def orchestrate(
             )
 
         logger.info("Analytical inquiry completed in %.0fms (%d chars)", llm_elapsed, len(raw_response))
-        emit_step("Model Reasoning", f"Response generated in {round(llm_elapsed/1000, 1)}s ({len(raw_response)} chars)", "done")
+
+        # If the inquiry response attempted to invoke tools, seamlessly activate the autonomous agent loop
+        has_tool_call_in_inquiry = bool(
+            re.search(r"<(?:tool_call|invoke|function_call)\b", raw_response, re.IGNORECASE)
+            or re.search(r"Action:\s*[A-Za-z0-9_]+\s*\nAction Input:", raw_response)
+        )
+        if has_tool_call_in_inquiry:
+            logger.info("Inquiry model requested tool execution — activating autonomous agent loop...")
+            agent_tools.set_permission_requester(request_user_permission)
+            agent_result = run_agent_loop(
+                user_request=user_request,
+                project_root=config.project_root,
+                llm_caller=lambda p, sys_inst=None, imgs=None, s_target="thought": _call_llm(
+                    prompt=p,
+                    config=config,
+                    host=config.llm_host,
+                    port=config.llm_port,
+                    system_instruction=sys_inst,
+                    max_tokens=2500,
+                    images=imgs,
+                    stream_target=s_target,
+                ),
+                active_file=getattr(config, "active_file", None),
+                reporter=lambda name, detail, status: emit_step(name, detail, status),
+                chunk_streamer=emit_chunk,
+                max_iterations=6,
+                conversation_history=conversation_history,
+                initial_context=file_contexts,
+                images=images,
+            )
+            return OrchestrationResult(
+                outcome=LoopOutcome.SUCCESS,
+                total_rounds=agent_result.total_rounds,
+                rounds=[],
+                final_patches=[],
+                elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
+                answer=agent_result.answer,
+                intent="inquiry",
+            )
+
+        cleaned_inquiry = _clean_thought_text(raw_response)
+        final_inquiry_answer = cleaned_inquiry if cleaned_inquiry else raw_response
         # Print output to stdout for real-time logging in CLI / UI event stream
-        print(raw_response)
+        print(final_inquiry_answer)
         return OrchestrationResult(
             outcome=LoopOutcome.SUCCESS,
             total_rounds=1,
             rounds=[],
             final_patches=[],
             elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
-            answer=raw_response,
+            answer=final_inquiry_answer,
             intent="inquiry",
         )
 
@@ -2060,7 +2394,6 @@ def orchestrate(
             f"3. Submit your request to generate and apply precision SEARCH/REPLACE edits."
         )
         emit_chunk(notice)
-        emit_step("Model Reasoning", "Offline analysis complete", "done")
         print(notice)
         return OrchestrationResult(
             outcome=LoopOutcome.SUCCESS,
@@ -2074,18 +2407,20 @@ def orchestrate(
 
     # ── Autonomous ReAct Tool-Calling Agent Loop (Claude Code & Aider Parity) ──
     logger.info("🤖 Activating Autonomous ReAct Agent Loop with direct tools...")
-    emit_step("Agent Engine", "Autonomous workspace agent active with direct project tools (grep, read, edit, run)", "running")
+    agent_tools.set_permission_requester(request_user_permission)
 
     agent_result = run_agent_loop(
         user_request=user_request,
         project_root=config.project_root,
-        llm_caller=lambda p, sys_inst=None: _call_llm(
+        llm_caller=lambda p, sys_inst=None, imgs=None, s_target="thought": _call_llm(
             prompt=p,
             config=config,
             host=config.llm_host,
             port=config.llm_port,
             system_instruction=sys_inst,
             max_tokens=2500,
+            images=imgs,
+            stream_target=s_target,
         ),
         active_file=getattr(config, "active_file", None),
         reporter=lambda name, detail, status: emit_step(name, detail, status),
@@ -2093,9 +2428,8 @@ def orchestrate(
         max_iterations=8,
         conversation_history=conversation_history,
         initial_context=file_contexts,
+        images=images,
     )
-
-    emit_step("Agent Engine", f"Autonomous agent finished in {agent_result.total_rounds} turn(s) ({agent_result.elapsed_s}s)", "done")
 
     if agent_result.edited_files:
         logger.info("Agent successfully edited %d file(s): %s", len(agent_result.edited_files), agent_result.edited_files)
@@ -2117,7 +2451,7 @@ def orchestrate(
                 diag_messages = []
                 for lr in report.linter_results:
                     for d in lr.diagnostics:
-                        diag_messages.append(f"- {Path(lr.file_path).name}:{d.line_number}: [{d.severity}] {d.message}")
+                        diag_messages.append(f"- {Path(d.file).name}:{d.line}: [{d.severity}] {d.message}")
 
                 repair_prompt = (
                     f"CRITICAL: Post-verification detected syntax errors in the modified files:\n"
@@ -2129,13 +2463,15 @@ def orchestrate(
                     repair_result = run_agent_loop(
                         user_request=repair_prompt,
                         project_root=config.project_root,
-                        llm_caller=lambda p, sys_inst=None: _call_llm(
+                        llm_caller=lambda p, sys_inst=None, imgs=None, s_target="thought": _call_llm(
                             prompt=p,
                             config=config,
                             host=config.llm_host,
                             port=config.llm_port,
                             system_instruction=sys_inst,
                             max_tokens=2500,
+                            images=imgs,
+                            stream_target=s_target,
                         ),
                         reporter=lambda name, detail, status: emit_step(f"Repair: {name}", detail, status),
                         chunk_streamer=emit_chunk,
@@ -2152,8 +2488,6 @@ def orchestrate(
                     logger.warning("Self-healing repair exception: %s", repair_exc)
             else:
                 emit_step("Syntax Gate", f"PASSED — 0 syntax errors across {len(target_abs_paths)} file(s)", "done")
-
-        emit_step("Verification", f"All operations complete ({agent_result.total_rounds} turns, {agent_result.elapsed_s}s)", "done")
 
         return OrchestrationResult(
             outcome=LoopOutcome.SUCCESS,
@@ -2186,7 +2520,6 @@ def orchestrate(
                     logger.info("Staged diff patches PASSED syntax gate — safely writing to disk")
                     _write_patches_to_disk(diff_patches, config.project_root)
                     emit_step("Syntax Gate", f"PASSED — verified {len(diff_patches)} patch(es)", "done")
-                    emit_step("Verification", f"All operations complete ({agent_result.total_rounds} turns, {agent_result.elapsed_s}s)", "done")
                     return OrchestrationResult(
                         outcome=LoopOutcome.SUCCESS,
                         total_rounds=agent_result.total_rounds,
@@ -2203,7 +2536,6 @@ def orchestrate(
             finally:
                 shutil.rmtree(staging_dir, ignore_errors=True)
         else:
-            emit_step("Verification", f"All operations complete ({agent_result.total_rounds} turns, {agent_result.elapsed_s}s)", "done")
             return OrchestrationResult(
                 outcome=LoopOutcome.SUCCESS,
                 total_rounds=agent_result.total_rounds,
@@ -2636,6 +2968,11 @@ def main() -> int:
         help="Path to JSON file containing previous conversation history turns",
     )
     parser.add_argument(
+        "--images-file",
+        default=None,
+        help="Path to JSON file containing base64 images attached to the user request",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="json_output",
@@ -2678,6 +3015,17 @@ def main() -> int:
             except Exception as exc:
                 logger.warning("Failed to parse history file: %s", exc)
 
+    attached_images: list[str] = []
+    if args.images_file:
+        img_path = Path(args.images_file)
+        if img_path.exists():
+            try:
+                attached_images = json.loads(img_path.read_text(encoding="utf-8"))
+                if not isinstance(attached_images, list):
+                    attached_images = []
+            except Exception as exc:
+                logger.warning("Failed to parse images file: %s", exc)
+
     result = orchestrate(
         user_request=req_str,
         config=config,
@@ -2686,6 +3034,7 @@ def main() -> int:
         skip_performance=args.skip_performance,
         dry_run=args.dry_run,
         conversation_history=conv_history,
+        images=attached_images,
     )
 
     if args.json_output:

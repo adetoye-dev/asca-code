@@ -239,6 +239,12 @@ function getOfflineSnippetCompletion(prefix: string): string {
   return "";
 }
 
+export interface InlineEditResult {
+  ok: boolean;
+  replacement?: string;
+  reason?: string;
+}
+
 export async function executeInlineEdit({
   instruction,
   selectedCode,
@@ -253,8 +259,18 @@ export async function executeInlineEdit({
   surroundingSuffix: string;
   settings: AISettings;
   signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<InlineEditResult> {
   const { provider, model, apiKey, baseUrl } = settings;
+  const timeoutController = new AbortController();
+  const timeoutId = window.setTimeout(() => timeoutController.abort(), 30000);
+  const abortRelay = () => timeoutController.abort();
+  signal?.addEventListener("abort", abortRelay, { once: true });
+  const requestSignal = timeoutController.signal;
+  const finish = (result: InlineEditResult) => {
+    window.clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortRelay);
+    return result;
+  };
 
   // 1. Try server bridge /api/ai/inline-edit (supports all providers, avoids browser CORS)
   try {
@@ -271,15 +287,19 @@ export async function executeInlineEdit({
         baseUrl,
         apiKey,
       }),
-      signal,
+      signal: requestSignal,
     });
     if (res.ok) {
       const data = (await res.json()) as any;
       if (data.ok && typeof data.replacement === "string" && data.replacement.trim()) {
-        return data.replacement;
+        return finish({ ok: true, replacement: data.replacement });
       }
+      return finish({ ok: false, reason: data.reason || `Inline edit request failed (${res.status})` });
     }
-  } catch {}
+  } catch (err: any) {
+    if (err?.name === "AbortError") return finish({ ok: false, reason: "Inline edit request was cancelled or timed out." });
+    return finish({ ok: false, reason: `Inline edit request failed: ${err?.message || err}` });
+  }
 
   // 2. Direct client fallback for local Ollama
   if (provider === "ollama") {
@@ -297,7 +317,7 @@ export async function executeInlineEdit({
           stream: false,
           options: { temperature: 0.2, num_predict: 1024 },
         }),
-        signal,
+        signal: requestSignal,
       });
       if (res.ok) {
         const data = await res.json();
@@ -305,10 +325,13 @@ export async function executeInlineEdit({
         if (text.startsWith("```")) {
           text = text.replace(/^```[a-zA-Z0-9_-]*\n?/, "").replace(/\n?```$/, "");
         }
-        return text;
+        return text ? finish({ ok: true, replacement: text }) : finish({ ok: false, reason: "The model returned an empty replacement." });
       }
-    } catch {}
+      return finish({ ok: false, reason: `Ollama request failed (${res.status})` });
+    } catch (err: any) {
+      return finish({ ok: false, reason: err?.name === "AbortError" ? "Inline edit request was cancelled or timed out." : `Ollama request failed: ${err?.message || err}` });
+    }
   }
 
-  return "";
+  return finish({ ok: false, reason: `Inline edits are not supported for provider '${provider}'.` });
 }

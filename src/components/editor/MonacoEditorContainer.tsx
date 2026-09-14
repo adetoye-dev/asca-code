@@ -73,6 +73,7 @@ export function MonacoEditorContainer({
   const [isInlinePromptOpen, setIsInlinePromptOpen] = useState(false);
   const [inlinePrompt, setInlinePrompt] = useState("");
   const [isInlineLoading, setIsInlineLoading] = useState(false);
+  const inlineAbortControllerRef = useRef<AbortController | null>(null);
 
   const handleInlineSubmit = async () => {
     if (!inlinePrompt.trim() || !editorRef.current || isInlineLoading) return;
@@ -96,15 +97,23 @@ export function MonacoEditorContainer({
     });
 
     setIsInlineLoading(true);
+    const controller = new AbortController();
+    inlineAbortControllerRef.current = controller;
     try {
       const codeToEdit = selectedCode || model.getLineContent(selection.startLineNumber);
-      const replacement = await executeInlineEdit({
+      const result = await executeInlineEdit({
         instruction: inlinePrompt,
         selectedCode: codeToEdit,
         surroundingPrefix: prefix,
         surroundingSuffix: suffix,
         settings: settingsRef.current,
+        signal: controller.signal,
       });
+      if (!result.ok) {
+        if (result.reason) console.warn(result.reason);
+        return;
+      }
+      const replacement = result.replacement;
 
       if (replacement && monacoRef.current) {
         const editRange = selectedCode.length > 0
@@ -123,6 +132,7 @@ export function MonacoEditorContainer({
     } catch (err) {
       console.error("Inline edit failed:", err);
     } finally {
+      inlineAbortControllerRef.current = null;
       setIsInlineLoading(false);
     }
   };
@@ -214,6 +224,7 @@ export function MonacoEditorContainer({
                   e.preventDefault();
                   await handleInlineSubmit();
                 } else if (e.key === "Escape") {
+                  inlineAbortControllerRef.current?.abort();
                   setIsInlinePromptOpen(false);
                   editorRef.current?.focus();
                 }
@@ -221,7 +232,6 @@ export function MonacoEditorContainer({
               placeholder="Describe changes or ask AI to edit code... (Enter to apply, Esc to cancel)"
               className="flex-1 bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-purple-500 transition-colors"
               autoFocus
-              disabled={isInlineLoading}
             />
             <button
               type="button"
@@ -235,10 +245,11 @@ export function MonacoEditorContainer({
             <button
               type="button"
               onClick={() => {
+                inlineAbortControllerRef.current?.abort();
                 setIsInlinePromptOpen(false);
                 editorRef.current?.focus();
               }}
-              disabled={isInlineLoading}
+              disabled={!isInlineLoading}
               className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-colors shrink-0"
             >
               Cancel

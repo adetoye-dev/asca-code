@@ -127,6 +127,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingAnswer,
     streamingThought,
     agentSteps,
+    pendingPermission,
+    respondToPermission,
   } = pipeline;
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
@@ -459,7 +461,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       // Cmd+L / Ctrl+L: send the current editor selection to Chat/Ask
       if (isCmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        setIsRightPanelOpen(true);
+        setIsRightPanelOpen((prev) => !prev);
         window.setTimeout(() => window.dispatchEvent(new CustomEvent("acsa:ai-workflow", { detail: "chat" })), 0);
         return;
       }
@@ -805,7 +807,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         status={status}
         activityLog={activityLog}
         projectRoot={activeProject.path}
-        onRunPipeline={(request, override, activePath, code, history) => {
+        onRunPipeline={(request, override, activePath, code, history, images) => {
           if (override) {
             setAiSettings({
               ...aiSettings,
@@ -815,7 +817,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
             });
           }
-          runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history);
+          runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history, images);
         }}
         onCancelPipeline={cancelPipeline}
         isWide={true}
@@ -828,6 +830,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         streamingAnswer={streamingAnswer}
         streamingThought={streamingThought}
         agentSteps={agentSteps}
+        pendingPermission={pendingPermission}
+        respondToPermission={respondToPermission}
         onClose={() => {
           const api = dockviewApiRef.current;
           const panel = api?.getPanel("dock_ai_chat");
@@ -1000,32 +1004,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
-          {/* AI Chat Button (Toggles Right AI Panel) */}
-          <button
-            type="button"
-            onClick={() => {
-              const api = dockviewApiRef.current;
-              const centerPanel = api?.getPanel("dock_ai_chat");
-              if (centerPanel) {
-                api?.removePanel(centerPanel);
-                setIsRightPanelOpen(true);
-              } else {
-                setIsRightPanelOpen((prev) => !prev);
-              }
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              isRightPanelOpen || dockviewApiRef.current?.getPanel("dock_ai_chat")
-                ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
-                : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
-            }`}
-            title="Toggle AI Chat Panel (Cmd+L)"
-          >
-            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
-            <span>AI Chat</span>
-          </button>
-
-          <div className="h-4 w-[1px] bg-zinc-800 mx-0.5" />
-
           {/* Toggle Primary Sidebar Button */}
           <button
             type="button"
@@ -1054,18 +1032,28 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
           </button>
 
-          {/* Toggle Right Tool Window Button */}
+          {/* AI Chat Button (Toggles Right AI Panel) */}
           <button
             type="button"
-            onClick={() => setIsRightPanelOpen((prev) => !prev)}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isRightPanelOpen
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+            onClick={() => {
+              const api = dockviewApiRef.current;
+              const centerPanel = api?.getPanel("dock_ai_chat");
+              if (centerPanel) {
+                api?.removePanel(centerPanel);
+                setIsRightPanelOpen(true);
+              } else {
+                setIsRightPanelOpen((prev) => !prev);
+              }
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+              isRightPanelOpen || dockviewApiRef.current?.getPanel("dock_ai_chat")
+                ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
+                : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
             }`}
             title="Toggle AI Chat Panel (Cmd+L)"
           >
-            <Icon icon={PanelRight} className="w-3.5 h-3.5" />
+            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
+            <span>Chat</span>
           </button>
         </div>
       </header>
@@ -1308,7 +1296,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
-              onRunPipeline={(request, override, activePath, code, history) => {
+              onRunPipeline={(request, override, activePath, code, history, images) => {
                 if (override) {
                   setAiSettings({
                     ...aiSettings,
@@ -1318,7 +1306,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
                   });
                 }
-                runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history);
+                runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history, images);
               }}
               onCancelPipeline={cancelPipeline}
               onClose={() => setIsRightPanelOpen(false)}
@@ -1333,6 +1321,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               streamingAnswer={streamingAnswer}
               streamingThought={streamingThought}
               agentSteps={agentSteps}
+              pendingPermission={pendingPermission}
+              respondToPermission={respondToPermission}
             />
           </aside>
         )}

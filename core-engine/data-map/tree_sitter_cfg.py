@@ -782,40 +782,46 @@ def _parse_ts_params_regex(params_str: str) -> list[ParameterInfo]:
             params.append(pinfo)
 
 def _extract_go_functions_regex(source: str, file_path: str) -> list[FunctionSignature]:
-    """Regex fallback for Go functions: func (r *Recv)? Name(params) ret"""
-    functions: list[FunctionSignature] = []
-    pattern = re.compile(r"""func\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]+)\s*\(([^)]*)\)(?:\s+([^{]+))?""")
-    for idx, line in enumerate(source.splitlines(), 1):
-        m = pattern.search(line)
-        if m:
-            fn_name = m.group(1)
-            ret_type = (m.group(3) or "").strip()
-            functions.append(FunctionSignature(
-                name=fn_name,
-                language="go",
-                start_line=idx,
-                end_line=idx + 10,
-                return_type=ret_type or None,
-            ))
-    return functions
+    """Regex fallback for Go functions with multiline signatures and real spans."""
+    return _extract_c_like_functions(source, "go", re.compile(
+        r"(?m)^[ \t]*func[ \t]+(?:\([^\n{}]*\)[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\((.*?)\)(?:[ \t]+([^\n{]+))?[ \t]*\{",
+        re.DOTALL,
+    ))
 
 
 def _extract_rust_functions_regex(source: str, file_path: str) -> list[FunctionSignature]:
-    """Regex fallback for Rust functions: fn name(params) -> Ret"""
+    """Regex fallback for Rust functions with multiline signatures and real spans."""
+    return _extract_c_like_functions(source, "rust", re.compile(
+        r"(?m)^[ \t]*(?:pub[ \t]+)?(?:async[ \t]+)?fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\((.*?)\)(?:[ \t]*->[ \t]*([^\{]+?))?[ \t]*\{",
+        re.DOTALL,
+    ))
+
+
+def _extract_c_like_functions(source: str, language: str, pattern: re.Pattern[str]) -> list[FunctionSignature]:
+    """Extract anchored Go/Rust declarations while ignoring comments and finding body ends."""
+    masked = re.sub(r"//[^\n]*|/\*.*?\*/", lambda match: "\n" * match.group(0).count("\n"), source, flags=re.DOTALL)
+    lines = source.splitlines()
     functions: list[FunctionSignature] = []
-    pattern = re.compile(r"""(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)(?:\s*->\s*([^{]+))?""")
-    for idx, line in enumerate(source.splitlines(), 1):
-        m = pattern.search(line)
-        if m:
-            fn_name = m.group(1)
-            ret_type = (m.group(3) or "").strip()
-            functions.append(FunctionSignature(
-                name=fn_name,
-                language="rust",
-                start_line=idx,
-                end_line=idx + 10,
-                return_type=ret_type or None,
-            ))
+    for match in pattern.finditer(masked):
+        start_line = masked.count("\n", 0, match.start()) + 1
+        params = [ParameterInfo(name=part.strip()) for part in _split_params(match.group(2).strip()) if part.strip()]
+        depth = 0
+        body_end = match.end() - 1
+        for index in range(match.end() - 1, len(masked)):
+            if masked[index] == "{":
+                depth += 1
+            elif masked[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    body_end = index
+                    break
+        end_line = min(len(lines), masked.count("\n", 0, body_end) + 1)
+        functions.append(FunctionSignature(
+            name=match.group(1), parameters=params, language=language,
+            start_line=max(1, min(start_line, len(lines) or 1)),
+            end_line=max(start_line, end_line),
+            return_type=(match.group(3) or "").strip() or None,
+        ))
     return functions
 
 

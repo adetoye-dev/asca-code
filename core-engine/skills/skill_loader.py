@@ -170,7 +170,7 @@ def match_skills_for_prompt(prompt: str, project_root: Optional[str] = None) -> 
                 matched.append(skill)
                 hit = True
                 break
-            elif len(trig_lower) > 3 and trig_lower in prompt_lower:
+            elif len(trig_lower) > 3 and re.search(rf"(?<![a-z0-9_-]){re.escape(trig_lower)}(?![a-z0-9_-])", prompt_lower):
                 matched.append(skill)
                 hit = True
                 break
@@ -205,6 +205,8 @@ def import_skill(
     if not clean_name:
         raise ValueError("Invalid skill name")
 
+    if scope not in {"project", "user"}:
+        raise ValueError(f"Unsupported skill scope: {scope}. Use 'project' or 'user'.")
     if scope == "project":
         if not project_root:
             raise ValueError("project_root is required for project-scoped skill")
