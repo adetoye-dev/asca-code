@@ -12,6 +12,7 @@ import { useRef, useEffect, useState } from "react";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { registerAiInlineCompletions, executeInlineEdit } from "../../services/aiAutocomplete";
+import { reviewFile, isReviewableFile, type ReviewIssue } from "../../services/aiReview";
 import { applyMonacoTheme } from "../../services/themeManager";
 import type { AISettings } from "../SettingsModal";
 
@@ -137,6 +138,85 @@ export function MonacoEditorContainer({
     }
   };
 
+  // ── Copilot file review ──────────────────────────────────────────────────
+  const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
+
+  const clearReviewMarkers = () => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (monaco && model) {
+      monaco.editor.setModelMarkers(model, "acsa-review", []);
+    }
+  };
+
+  const handleReviewFile = async () => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || isReviewing) return;
+    setIsReviewing(true);
+    setReviewError("");
+    try {
+      const result = await reviewFile({
+        path,
+        content: editor.getValue(),
+        language: getLanguage(path),
+        settings: settingsRef.current,
+      });
+      if (!result.ok) {
+        setReviewIssues([]);
+        setReviewError(result.error || "Review failed.");
+        setIsReviewPanelOpen(true);
+        clearReviewMarkers();
+        return;
+      }
+      setReviewIssues(result.issues);
+      setIsReviewPanelOpen(true);
+
+      const model = editor.getModel();
+      if (model) {
+        const lineCount = model.getLineCount();
+        const markers = result.issues.map((issue) => {
+          const line = Math.min(Math.max(1, issue.line || 1), lineCount);
+          return {
+            severity:
+              issue.severity === "error"
+                ? monaco.MarkerSeverity.Error
+                : issue.severity === "warning"
+                ? monaco.MarkerSeverity.Warning
+                : monaco.MarkerSeverity.Info,
+            startLineNumber: line,
+            startColumn: 1,
+            endLineNumber: line,
+            endColumn: model.getLineMaxColumn(line),
+            message: `${issue.title}${issue.detail ? ` — ${issue.detail}` : ""}${
+              issue.suggestion ? `\nFix: ${issue.suggestion}` : ""
+            }`,
+            source: "ACSA Copilot",
+          };
+        });
+        monaco.editor.setModelMarkers(model, "acsa-review", markers);
+      }
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
+  // Drop stale findings and markers when the editor switches files.
+  useEffect(() => {
+    setReviewIssues([]);
+    setReviewError("");
+    setIsReviewPanelOpen(false);
+    const monaco = monacoRef.current;
+    const model = editorRef.current?.getModel();
+    if (monaco && model) {
+      monaco.editor.setModelMarkers(model, "acsa-review", []);
+    }
+  }, [path]);
+
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
@@ -201,6 +281,102 @@ export function MonacoEditorContainer({
 
   return (
     <div className="relative h-full w-full bg-workbench overflow-hidden">
+      {/* ── Copilot Review Controls ──────────────────────────────────────── */}
+      <div className="absolute top-2 right-3 z-40 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleReviewFile}
+          disabled={isReviewing || !isReviewableFile(path)}
+          title={
+            isReviewableFile(path)
+              ? "Copilot: review this file for bugs, errors and refactor opportunities"
+              : "This file type is not reviewable"
+          }
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
+        >
+          {isReviewing ? (
+            <span className="w-3 h-3 rounded-full border border-zinc-300 border-t-transparent animate-spin" />
+          ) : (
+            <span>🔍</span>
+          )}
+          <span>{isReviewing ? "Reviewing…" : "Review"}</span>
+          {!isReviewing && reviewIssues.length > 0 && (
+            <span className="px-1 rounded bg-amber-500/20 text-amber-300 font-mono">
+              {reviewIssues.length}
+            </span>
+          )}
+        </button>
+        {isReviewPanelOpen && (
+          <button
+            type="button"
+            onClick={() => setIsReviewPanelOpen(false)}
+            className="px-2 py-1 rounded-md text-[11px] bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
+          >
+            Hide
+          </button>
+        )}
+      </div>
+
+      {/* ── Copilot Review Findings Panel ────────────────────────────────── */}
+      {isReviewPanelOpen && (
+        <div className="absolute top-11 right-3 z-40 w-[380px] max-w-[85%] max-h-[60%] overflow-y-auto rounded-xl bg-[#18181b]/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl p-2.5 space-y-1">
+          <div className="flex items-center justify-between px-1 pb-1 border-b border-white/[0.06]">
+            <span className="text-xs font-semibold text-amber-300">Copilot Review</span>
+            <span className="text-[10px] text-zinc-500 font-mono">
+              {reviewIssues.length} finding(s)
+            </span>
+          </div>
+          {reviewError && <div className="text-[11px] text-red-300 px-1">{reviewError}</div>}
+          {!reviewError && reviewIssues.length === 0 && (
+            <div className="text-[11px] text-emerald-300 px-1">
+              No issues found — this file looks clean.
+            </div>
+          )}
+          {reviewIssues.map((issue, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => {
+                const editor = editorRef.current;
+                if (editor) {
+                  const line = Math.max(1, issue.line || 1);
+                  editor.revealLineInCenter(line);
+                  editor.setPosition({ lineNumber: line, column: 1 });
+                  editor.focus();
+                }
+              }}
+              className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
+            >
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`text-[10px] font-mono px-1 rounded ${
+                    issue.severity === "error"
+                      ? "bg-red-500/20 text-red-300"
+                      : issue.severity === "warning"
+                      ? "bg-amber-500/20 text-amber-300"
+                      : "bg-sky-500/20 text-sky-300"
+                  }`}
+                >
+                  {issue.severity}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-mono">L{issue.line}</span>
+                <span className="text-[11px] font-semibold text-zinc-200 truncate">
+                  {issue.title}
+                </span>
+              </div>
+              {issue.detail && (
+                <div className="text-[10px] text-zinc-400 mt-0.5 leading-snug">{issue.detail}</div>
+              )}
+              {issue.suggestion && (
+                <div className="text-[10px] text-emerald-300/90 mt-0.5 leading-snug">
+                  Fix: {issue.suggestion}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Floating Copilot Cmd+K Prompt Overlay */}
       {isInlinePromptOpen && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150">

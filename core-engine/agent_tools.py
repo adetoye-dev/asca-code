@@ -913,6 +913,90 @@ def run_tests(project_root: str, timeout_seconds: int = 180, **kwargs: Any) -> s
     return "\n".join(parts)
 
 
+
+# ── Model Context Protocol (MCP) integration ─────────────────────────────────
+# Installed MCP servers (.acsa/mcp.json, written by the Marketplace) are exposed
+# to the agent through these two tools, so any MCP server becomes first-class.
+
+def _load_mcp_servers(project_root: str) -> dict[str, Any]:
+    path = Path(project_root) / ".acsa" / "mcp.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    servers = data.get("servers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def _run_mcp_client(config: dict[str, Any], action: str, tool: str = "",
+                    arguments: Optional[dict[str, Any]] = None,
+                    timeout: int = 60) -> dict[str, Any]:
+    script = Path(__file__).resolve().parent / "mcp_client.py"
+    argv = [sys.executable, str(script), "--config", json.dumps(config), "--action", action]
+    if tool:
+        argv += ["--tool", tool, "--args", json.dumps(arguments or {})]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"MCP server timed out after {timeout}s"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+    out = (proc.stdout or "").strip().splitlines()
+    if not out:
+        return {"ok": False, "error": (proc.stderr or "no output from MCP client").strip()[:300]}
+    try:
+        return json.loads(out[-1])
+    except ValueError:
+        return {"ok": False, "error": out[-1][:300]}
+
+
+def mcp_list_tools(project_root: str, server: str = "", **kwargs: Any) -> str:
+    """List the tools exposed by the MCP servers installed in this project."""
+    servers = _load_mcp_servers(project_root)
+    if not servers:
+        return "No MCP servers are installed. Install one from the Marketplace sidebar."
+    if server:
+        if server not in servers:
+            return f"Error: MCP server '{server}' is not installed. Installed: {', '.join(servers)}"
+        servers = {server: servers[server]}
+    lines = ["Installed MCP servers and their tools:"]
+    for sid, config in servers.items():
+        result = _run_mcp_client(config, "list-tools", timeout=45)
+        if result.get("ok"):
+            names = [str(t.get("name")) for t in (result.get("tools") or [])]
+            lines.append(f"- {sid}: {', '.join(names) if names else '(no tools)'}")
+        else:
+            lines.append(f"- {sid}: ERROR {result.get('error')}")
+    lines.append("\nUse mcp_call with {server, tool, arguments} to invoke one.")
+    return "\n".join(lines)
+
+
+def mcp_call(project_root: str, server: str = "", tool: str = "",
+             arguments: Any = None, **kwargs: Any) -> str:
+    """Invoke a tool on an installed MCP server and return its text result."""
+    if not server or not tool:
+        return "Error: both 'server' and 'tool' are required. Use mcp_list_tools first."
+    servers = _load_mcp_servers(project_root)
+    if server not in servers:
+        return f"Error: MCP server '{server}' is not installed. Installed: {', '.join(servers) or 'none'}"
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments) if arguments.strip() else {}
+        except ValueError as exc:
+            return f"Error: 'arguments' must be a JSON object: {exc}"
+    if arguments is None:
+        arguments = {}
+    result = _run_mcp_client(servers[server], "call-tool", tool=tool, arguments=arguments)
+    if not result.get("ok"):
+        return f"Error calling {server}.{tool}: {result.get('error')}"
+    payload = result.get("result")
+    if isinstance(payload, dict) and "text" in payload:
+        return f"[{server}.{tool}]\n{payload['text']}"
+    return f"[{server}.{tool}]\n{json.dumps(payload)}"
+
+
 def locate_concept(project_root: str, concept: str = "", **kwargs: Any) -> str:
     """Resolve high-level UI or architectural concepts using universal dynamic semantic grounding.
     
@@ -1169,6 +1253,8 @@ TOOL_REGISTRY = {
     "edit_file": edit_file,
     "run_command": run_command,
     "run_tests": run_tests,
+    "mcp_list_tools": mcp_list_tools,
+    "mcp_call": mcp_call,
     "search_symbols": search_symbols,
     "get_file_outline": get_file_outline,
     # High-utility aliases for LLM compatibility:
@@ -1277,6 +1363,22 @@ TOOL_SCHEMAS = [
         "description": "Run the project's configured test suite (npm test, or stdlib unittest discovery for Python tests) and get a clean pass/fail summary. Prefer this over improvising a test command; it reports 'no test suite' instead of a false failure.",
         "parameters": {
             "timeout_seconds": "Timeout in seconds (default: 180)",
+        },
+    },
+    {
+        "name": "mcp_list_tools",
+        "description": "List the tools exposed by MCP servers installed in this project (see the Marketplace).",
+        "parameters": {
+            "server": "Optional server id to inspect (omit for all installed servers)",
+        },
+    },
+    {
+        "name": "mcp_call",
+        "description": "Invoke a tool on an installed MCP server. Call mcp_list_tools first to discover the server id and tool name.",
+        "parameters": {
+            "server": "Installed MCP server id",
+            "tool": "Tool name exposed by that server",
+            "arguments": "JSON object of tool arguments",
         },
     },
     {

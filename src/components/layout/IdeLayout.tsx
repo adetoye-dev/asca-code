@@ -35,7 +35,7 @@ import { DockviewWatermark } from "./DockviewWatermark";
 import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
 import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
-import { ExtensionsSidebar } from "../sidebar/ExtensionsSidebar";
+import { MarketplaceSidebar } from "../sidebar/MarketplaceSidebar";
 import { VersionControlDropdown } from "./VersionControlDropdown";
 import { CloneModal } from "../modals/CloneModal";
 import { ProjectModal } from "../ProjectModal";
@@ -1157,10 +1157,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <Icon icon={Cpu} className="w-4 h-4" />
           </button>
 
-          {/* Extensions & Open VSX Marketplace Tab */}
+          {/* Marketplace Tab: Skills, Tools & MCP servers */}
           <button
             type="button"
-            title="Extensions & Themes (Cmd+Shift+X)"
+            title="Marketplace: Skills, Tools & MCP Servers (Cmd+Shift+X)"
             onClick={() => {
               if (activeSidebarTab === "extensions" && isSidebarOpen) {
                 setIsSidebarOpen(false);
@@ -1236,7 +1236,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           )}
 
           {activeSidebarTab === "extensions" && (
-            <ExtensionsSidebar onApplyTheme={setThemeId} activeThemeId={themeId} />
+            <MarketplaceSidebar projectRoot={activeProject.path} />
           )}
 
           {/* Draggable Resize Handle */}

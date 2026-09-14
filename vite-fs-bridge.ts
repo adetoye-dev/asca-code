@@ -473,6 +473,59 @@ function broadcastTerminalData(data: string) {
   }
 }
 
+/** Parse a model's file-review response into a validated list of issues. */
+function extractReviewIssues(raw: string): any[] {
+  if (!raw) return [];
+  let text = raw.trim();
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  let parsed: any = null;
+  const tryParse = (candidate: string) => {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  };
+  parsed = tryParse(text);
+  if (!parsed) {
+    const s = text.indexOf("{");
+    const e = text.lastIndexOf("}");
+    if (s >= 0 && e > s) parsed = tryParse(text.slice(s, e + 1));
+  }
+  if (!parsed) {
+    const s = text.indexOf("[");
+    const e = text.lastIndexOf("]");
+    if (s >= 0 && e > s) parsed = tryParse(text.slice(s, e + 1));
+  }
+  if (!parsed) return [];
+
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.issues)
+    ? parsed.issues
+    : [];
+  const severities = new Set(["error", "warning", "info"]);
+  const out: any[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const rawLine = Number(item.line ?? item.line_number ?? 0);
+    const severity = severities.has(String(item.severity || "").toLowerCase())
+      ? String(item.severity).toLowerCase()
+      : "info";
+    out.push({
+      line: Number.isFinite(rawLine) && rawLine > 0 ? Math.floor(rawLine) : 1,
+      severity,
+      title: String(item.title || item.message || "Issue").slice(0, 160),
+      detail: String(item.detail || item.description || "").slice(0, 600),
+      suggestion: item.suggestion ? String(item.suggestion).slice(0, 600) : "",
+    });
+    if (out.length >= 25) break;
+  }
+  return out;
+}
+
+
 export function realFilesystemPlugin(): Plugin {
   return {
     name: "vite-plugin-real-filesystem",
@@ -2586,6 +2639,102 @@ export function realFilesystemPlugin(): Plugin {
           }
 
           // ── POST /api/ai/inline-edit (Copilot In-File Quick Edit) ───────────
+          if (pathname === "/api/ai/review-file" && req.method === "POST") {
+            try {
+              const body = await parseJsonBody(req);
+              const {
+                path: reviewPath = "",
+                content = "",
+                language = "",
+                provider = "ollama",
+                model = "",
+                baseUrl = "",
+                apiKey = "",
+              } = body;
+
+              if (!content || !String(content).trim()) {
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: false, error: "File is empty.", issues: [] }));
+                return;
+              }
+
+              const clipped = String(content).length > 12000 ? String(content).slice(0, 12000) : String(content);
+              const systemPrompt =
+                "You are a meticulous senior code reviewer. Analyse the provided file and report concrete issues: bugs, logic errors, edge cases, security problems, and worthwhile refactors. " +
+                'Respond with ONLY a JSON object of the shape {"issues":[{"line":<number>,"severity":"error|warning|info","title":"<short>","detail":"<why>","suggestion":"<concrete fix>"}]}. ' +
+                "Use the 1-based line number in the file. Report at most 12 issues, most important first. If the file is clean, return {\"issues\":[]}. No prose, no markdown fences.";
+              const userPrompt = `File: ${reviewPath}${language ? ` (${language})` : ""}\n\n\`\`\`\n${clipped}\n\`\`\`\n\nReturn the JSON review object.`;
+              const requestSignal = AbortSignal.timeout(60000);
+              const effectiveModel = model || (provider === "ollama" ? "qwen2.5-coder:7b" : "");
+              let raw = "";
+
+              if (provider === "ollama") {
+                const r = await fetch((baseUrl || "http://127.0.0.1:11434") + "/api/chat", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: effectiveModel,
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: userPrompt },
+                    ],
+                    stream: false,
+                    options: { temperature: 0.1, num_predict: 1600 },
+                  }),
+                  signal: requestSignal,
+                });
+                if (!r.ok) throw new Error(`Ollama request failed (${r.status})`);
+                const data: any = await r.json();
+                raw = (data.message?.content || "").trim();
+              } else if (provider === "anthropic") {
+                if (!apiKey.trim()) throw new Error("An API key is required for the Anthropic provider.");
+                const r = await fetch((baseUrl || "https://api.anthropic.com/v1") + "/messages", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey,
+                    "anthropic-version": "2023-06-01",
+                  },
+                  body: JSON.stringify({
+                    model: effectiveModel || "claude-3-5-sonnet-latest",
+                    max_tokens: 1600,
+                    system: systemPrompt,
+                    messages: [{ role: "user", content: userPrompt }],
+                  }),
+                  signal: requestSignal,
+                });
+                if (!r.ok) throw new Error(`Anthropic request failed (${r.status})`);
+                const data: any = await r.json();
+                raw = (data.content?.[0]?.text || "").trim();
+              } else {
+                if (!apiKey.trim()) throw new Error(`An API key is required for provider '${provider}'.`);
+                const r = await fetch((baseUrl || "https://api.openai.com/v1") + "/chat/completions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+                  body: JSON.stringify({
+                    model: effectiveModel || "gpt-4o-mini",
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: userPrompt },
+                    ],
+                    temperature: 0.1,
+                  }),
+                  signal: requestSignal,
+                });
+                if (!r.ok) throw new Error(`Provider request failed (${r.status})`);
+                const data: any = await r.json();
+                raw = (data.choices?.[0]?.message?.content || "").trim();
+              }
+
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true, model: effectiveModel, issues: extractReviewIssues(raw) }));
+            } catch (err: any) {
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, error: err?.message || String(err), issues: [] }));
+            }
+            return;
+          }
+
           if (pathname === "/api/ai/inline-edit" && req.method === "POST") {
             try {
               const body = await parseJsonBody(req);
@@ -4069,6 +4218,109 @@ export function realFilesystemPlugin(): Plugin {
             fs.writeFileSync(targetFile, fileContent, "utf-8");
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ ok: true, name: cleanName, path: targetFile, scope }));
+            return;
+          }
+
+          // ── MCP server registry (.acsa/mcp.json) ───────────────────────────
+          if (pathname === "/api/mcp/servers" && req.method === "GET") {
+            const projectRoot = parsedUrl.searchParams.get("projectRoot") || process.cwd();
+            const root = resolveProjectRoot(projectRoot);
+            const configPath = path.join(root, ".acsa", "mcp.json");
+            let servers: Record<string, any> = {};
+            if (fs.existsSync(configPath)) {
+              try {
+                const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+                if (parsed && typeof parsed === "object" && parsed.servers) servers = parsed.servers;
+              } catch {}
+            }
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, servers }));
+            return;
+          }
+
+          if (pathname === "/api/mcp/servers" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const { id, config: serverConfig, projectRoot } = body;
+            if (!id || !serverConfig || !serverConfig.command) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: "id and config.command are required" }));
+              return;
+            }
+            const root = resolveProjectRoot(projectRoot || process.cwd());
+            const configPath = path.join(root, ".acsa", "mcp.json");
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            let servers: Record<string, any> = {};
+            if (fs.existsSync(configPath)) {
+              try {
+                const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+                if (parsed && typeof parsed === "object" && parsed.servers) servers = parsed.servers;
+              } catch {}
+            }
+            servers[id] = serverConfig;
+            fs.writeFileSync(configPath, JSON.stringify({ servers }, null, 2), "utf-8");
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, id }));
+            return;
+          }
+
+          if (pathname === "/api/mcp/servers/remove" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const { id, projectRoot } = body;
+            const root = resolveProjectRoot(projectRoot || process.cwd());
+            const configPath = path.join(root, ".acsa", "mcp.json");
+            if (fs.existsSync(configPath) && id) {
+              try {
+                const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+                const servers = parsed?.servers || {};
+                delete servers[id];
+                fs.writeFileSync(configPath, JSON.stringify({ servers }, null, 2), "utf-8");
+              } catch {}
+            }
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, id }));
+            return;
+          }
+
+          if (pathname === "/api/mcp/tools" && req.method === "POST") {
+            const body = await parseJsonBody(req);
+            const { id, config: inlineConfig, projectRoot } = body;
+            const root = resolveProjectRoot(projectRoot || process.cwd());
+            let serverConfig = inlineConfig;
+            if (!serverConfig && id) {
+              const configPath = path.join(root, ".acsa", "mcp.json");
+              if (fs.existsSync(configPath)) {
+                try {
+                  serverConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"))?.servers?.[id];
+                } catch {}
+              }
+            }
+            if (!serverConfig || !serverConfig.command) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: "Unknown MCP server config" }));
+              return;
+            }
+            const mcpScript = path.resolve("core-engine/mcp_client.py");
+            execFile(
+              "python3",
+              [mcpScript, "--config", JSON.stringify(serverConfig), "--action", "list-tools"],
+              { timeout: 30000, maxBuffer: 4 * 1024 * 1024 },
+              (error, stdout) => {
+                res.setHeader("Content-Type", "application/json");
+                if (error && !stdout) {
+                  res.end(JSON.stringify({ ok: false, error: error.message, tools: [] }));
+                  return;
+                }
+                try {
+                  const lastLine = (stdout || "").trim().split("\n").pop() || "{}";
+                  const parsed = JSON.parse(lastLine);
+                  res.end(
+                    JSON.stringify({ ok: Boolean(parsed.ok), tools: parsed.tools || [], error: parsed.error })
+                  );
+                } catch {
+                  res.end(JSON.stringify({ ok: false, tools: [], error: "Could not parse MCP response" }));
+                }
+              }
+            );
             return;
           }
 

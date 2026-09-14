@@ -139,5 +139,16 @@ class ContextCompactionTests(unittest.TestCase):
         )
 
 
+class SystemPromptTests(unittest.TestCase):
+    def test_template_renders_without_keyerror(self):
+        # Guards a nasty failure mode: a stray {brace} in the .format() template
+        # raises KeyError and takes down every single agent run.
+        rendered = agent_loop.SYSTEM_PROMPT_TEMPLATE.format(
+            repo_map="RM", tool_schemas_json="[]", project_root="/p", active_file_info=""
+        )
+        self.assertIn("MCP TOOLS", rendered)
+
+
 if __name__ == "__main__":
+
     unittest.main()
