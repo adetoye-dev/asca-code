@@ -13,6 +13,7 @@ import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { registerAiInlineCompletions, executeInlineEdit } from "../../services/aiAutocomplete";
 import { reviewFile, isReviewableFile, type ReviewIssue } from "../../services/aiReview";
+import { configureMonacoTypeScript } from "../../services/monacoTsConfig";
 import { applyMonacoTheme } from "../../services/themeManager";
 import type { AISettings } from "../SettingsModal";
 
@@ -27,6 +28,7 @@ interface MonacoEditorContainerProps {
   targetColumn?: number;
   revealTrigger?: number;
   onSelectionChange?: (selection: string) => void;
+  projectRoot?: string;
 }
 
 export function MonacoEditorContainer({
@@ -40,6 +42,7 @@ export function MonacoEditorContainer({
   targetColumn,
   revealTrigger,
   onSelectionChange,
+  projectRoot = "",
 }: MonacoEditorContainerProps) {
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof MonacoType | null>(null);
@@ -143,6 +146,8 @@ export function MonacoEditorContainer({
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewNote, setReviewNote] = useState("");
+  const [reviewClean, setReviewClean] = useState(false);
+  const [fixingIndex, setFixingIndex] = useState<number | null>(null);
   const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
 
   const clearReviewMarkers = () => {
@@ -178,7 +183,13 @@ export function MonacoEditorContainer({
       setReviewIssues(result.issues);
       setReviewNote(result.note || "");
       if (result.warning) setReviewError(result.warning);
-      setIsReviewPanelOpen(true);
+      // Only intrude on the editor when there is actually something to review.
+      const hasFindings = result.issues.length > 0;
+      setIsReviewPanelOpen(hasFindings || Boolean(result.warning));
+      setReviewClean(!hasFindings && !result.warning);
+      if (!hasFindings && !result.warning) {
+        window.setTimeout(() => setReviewClean(false), 3500);
+      }
 
       const model = editor.getModel();
       if (model) {
@@ -209,6 +220,70 @@ export function MonacoEditorContainer({
     }
   };
 
+  const closeInlinePrompt = () => {
+    inlineAbortControllerRef.current?.abort();
+    inlineAbortControllerRef.current = null;
+    setIsInlinePromptOpen(false);
+    setIsInlineLoading(false);
+    editorRef.current?.focus();
+  };
+
+  /** Ask the model to fix a single review finding and apply the result. */
+  const handleFixIssue = async (issue: ReviewIssue, index: number) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!editor || !monaco || !model || fixingIndex !== null) return;
+
+    const lineCount = model.getLineCount();
+    const line = Math.min(Math.max(1, issue.line || 1), lineCount);
+    const start = Math.max(1, line - 10);
+    const end = Math.min(lineCount, line + 10);
+    const range = new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
+    const selectedCode = model.getValueInRange(range);
+    const prefix = model.getValueInRange(new monaco.Range(1, 1, start, 1));
+    const suffix = model.getValueInRange(
+      new monaco.Range(end, model.getLineMaxColumn(end), lineCount, model.getLineMaxColumn(lineCount))
+    );
+
+    const instruction = [
+      `Fix this reported issue on line ${line}: ${issue.title}.`,
+      issue.detail ? `Why it is a problem: ${issue.detail}` : "",
+      issue.suggestion ? `Suggested fix: ${issue.suggestion}` : "",
+      "Change only what is required to fix this issue; preserve the surrounding code exactly.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    setFixingIndex(index);
+    try {
+      const result = await executeInlineEdit({
+        instruction,
+        selectedCode,
+        surroundingPrefix: prefix.slice(-800),
+        surroundingSuffix: suffix.slice(0, 800),
+        settings: settingsRef.current,
+      });
+      if (result.ok && result.replacement && result.replacement.trim()) {
+        editor.executeEdits("copilot-fix", [{ range, text: result.replacement }]);
+        setReviewIssues((prev) => prev.filter((_, i) => i !== index));
+      }
+    } finally {
+      setFixingIndex(null);
+    }
+  };
+
+  // Escape always closes the inline prompt, even when the editor has focus.
+  useEffect(() => {
+    if (!isInlinePromptOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeInlinePrompt();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInlinePromptOpen]);
+
   // Drop stale findings and markers when the editor switches files.
   useEffect(() => {
     setReviewIssues([]);
@@ -223,6 +298,10 @@ export function MonacoEditorContainer({
   }, [path]);
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
+    // The TypeScript contribution (and its worker) only exists once a JS/TS
+    // model has been created, so configure it here rather than in beforeMount.
+    configureMonacoTypeScript(monaco, projectRoot);
+
     editorRef.current = editor;
     monacoRef.current = monaco;
 
@@ -304,7 +383,7 @@ export function MonacoEditorContainer({
           ) : (
             <span>🔍</span>
           )}
-          <span>{isReviewing ? "Reviewing…" : "Review"}</span>
+          <span>{isReviewing ? "Reviewing…" : reviewClean ? "✓ Clean" : "Review"}</span>
           {!isReviewing && reviewIssues.length > 0 && (
             <span className="px-1 rounded bg-amber-500/20 text-amber-300 font-mono">
               {reviewIssues.length}
@@ -324,12 +403,22 @@ export function MonacoEditorContainer({
 
       {/* ── Copilot Review Findings Panel ────────────────────────────────── */}
       {isReviewPanelOpen && (
-        <div className="absolute top-11 right-3 z-40 w-[380px] max-w-[85%] max-h-[60%] overflow-y-auto rounded-xl bg-[#18181b]/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl p-2.5 space-y-1">
+        <div className="absolute bottom-3 right-3 z-40 w-[300px] max-w-[80%] max-h-[42%] overflow-y-auto rounded-lg bg-[#18181b]/92 backdrop-blur-xl border border-amber-500/30 shadow-xl p-2 space-y-1">
           <div className="flex items-center justify-between px-1 pb-1 border-b border-white/[0.06]">
-            <span className="text-xs font-semibold text-amber-300">Copilot Review</span>
-            <span className="text-[10px] text-zinc-500 font-mono">
-              {reviewIssues.length} finding(s)
-            </span>
+            <span className="text-[11px] font-semibold text-amber-300">Copilot Review</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-zinc-500 font-mono">
+                {reviewIssues.length} finding(s)
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsReviewPanelOpen(false)}
+                title="Dismiss"
+                className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-white/10 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
           </div>
           {reviewError && <div className="text-[11px] text-red-300 px-1">{reviewError}</div>}
           {reviewNote && (
@@ -341,20 +430,22 @@ export function MonacoEditorContainer({
             </div>
           )}
           {reviewIssues.map((issue, index) => (
-            <button
+            <div
               key={index}
-              type="button"
-              onClick={() => {
-                const editor = editorRef.current;
-                if (editor) {
-                  const line = Math.max(1, issue.line || 1);
-                  editor.revealLineInCenter(line);
-                  editor.setPosition({ lineNumber: line, column: 1 });
-                  editor.focus();
-                }
-              }}
-              className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
+              className="w-full px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
             >
+              <div
+                className="cursor-pointer"
+                onClick={() => {
+                  const editor = editorRef.current;
+                  if (editor) {
+                    const line = Math.max(1, issue.line || 1);
+                    editor.revealLineInCenter(line);
+                    editor.setPosition({ lineNumber: line, column: 1 });
+                    editor.focus();
+                  }
+                }}
+              >
               <div className="flex items-center gap-1.5">
                 <span
                   className={`text-[10px] font-mono px-1 rounded ${
@@ -380,9 +471,25 @@ export function MonacoEditorContainer({
                   Fix: {issue.suggestion}
                 </div>
               )}
-            </button>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1">
+                <button
+                  type="button"
+                  disabled={fixingIndex !== null}
+                  onClick={() => handleFixIssue(issue, index)}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                >
+                  {fixingIndex === index ? "Fixing…" : "Fix with Copilot"}
+                </button>
+              </div>
+            </div>
           ))}
         </div>
+      )}
+
+      {/* Click-away backdrop so the inline prompt can always be dismissed */}
+      {isInlinePromptOpen && (
+        <div className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
       )}
 
       {/* Floating Copilot Cmd+K Prompt Overlay */}
@@ -396,7 +503,17 @@ export function MonacoEditorContainer({
                 {settingsRef.current.model || "Active AI"}
               </span>
             </span>
-            <span className="text-[10px] text-zinc-500 font-mono">Cmd+K</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-zinc-500 font-mono">Cmd+K</span>
+              <button
+                type="button"
+                onClick={closeInlinePrompt}
+                title="Close (Esc)"
+                className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-white/10 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -428,12 +545,7 @@ export function MonacoEditorContainer({
             </button>
             <button
               type="button"
-              onClick={() => {
-                inlineAbortControllerRef.current?.abort();
-                setIsInlinePromptOpen(false);
-                editorRef.current?.focus();
-              }}
-              disabled={!isInlineLoading}
+              onClick={closeInlinePrompt}
               className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-colors shrink-0"
             >
               Cancel
@@ -451,6 +563,7 @@ export function MonacoEditorContainer({
         theme={themeId}
         beforeMount={(monaco) => {
           applyMonacoTheme(monaco, themeId);
+          configureMonacoTypeScript(monaco, projectRoot);
         }}
         onChange={(val) => onChange(val || "")}
         onMount={handleEditorDidMount}

@@ -717,6 +717,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
           revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
           onSelectionChange={setSelectedCode}
+          projectRoot={activeProject.path}
         />
       );
     },
