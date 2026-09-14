@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test",
     "test": "python3 -m unittest discover -s tests -t .",
     "test:verbose": "python3 -m unittest discover -s tests -t . -v",
     "test:e2e": "python3 tests/e2e/run_e2e.py",
