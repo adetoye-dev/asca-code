@@ -50,6 +50,18 @@ for _p in (_ENGINE_DIR, _GAUNTLET_DIR, _COMPILER_DIR, _DATAMAP_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+# Machine-local configuration (credentials, tuning) before anything reads env.
+try:
+    from env_file import load_env_file  # noqa: E402
+
+    _env_keys = load_env_file()
+    if _env_keys:
+        logging.getLogger("Orchestrator").info(
+            "Loaded %d setting(s) from .env: %s", len(_env_keys), ", ".join(sorted(_env_keys))
+        )
+except Exception:  # noqa: BLE001 - configuration must never break startup
+    pass
+
 from scale_detector import detect_project_scale  # noqa: E402
 from skills import skill_loader  # noqa: E402
 from subagents import SwarmCoordinator  # noqa: E402
@@ -296,6 +308,28 @@ def emit_chunk(token: str) -> None:
         sys.stdout.flush()
     except Exception:
         pass
+
+
+def resolve_provider_key(config: Optional["ProjectConfig"], provider: str) -> str:
+    """Credential for `provider`: explicit config, then environment, then database.
+
+    Order matters. An explicit `--api-key` (what the bridge passes after resolving
+    server-side) is authoritative; the environment lets CI and headless runs work
+    with no database; and the app database is what the desktop UI writes to, so
+    the engine can run with no key on the command line at all.
+    """
+    explicit = (config.llm_api_key if config else None) or ""
+    if explicit.strip():
+        return explicit.strip()
+    try:
+        import app_db
+
+        resolved = app_db.resolve_api_key(provider)
+        if resolved:
+            return resolved.strip()
+    except Exception:  # noqa: BLE001 - credential lookup must not break a run
+        pass
+    return ""
 
 
 def consume_openai_delta(choice: dict, emit_token: Callable[[str], None]) -> tuple[str, str]:
@@ -703,7 +737,7 @@ def _call_llm(
 
     # 2. Handle Anthropic Provider
     if provider == "anthropic":
-        api_key = (config.llm_api_key if config else None) or os.environ.get("AIDE_API_KEY", "")
+        api_key = resolve_provider_key(config, provider)
         if not api_key:
             _last_llm_error = "Anthropic API key is missing. Please configure it in AI Management Dashboard."
             logger.error(_last_llm_error)
@@ -817,7 +851,7 @@ def _call_llm(
             return f"{base}/chat/completions"
         return f"{base}/v1/chat/completions"
 
-    api_key = (config.llm_api_key if config else None) or os.environ.get("AIDE_API_KEY", "")
+    api_key = resolve_provider_key(config, provider)
     target_base = (config.llm_base_url if config and config.llm_base_url else None) or DEFAULT_PROVIDER_URLS.get(provider)
 
     if target_base or api_key:

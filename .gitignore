@@ -118,3 +118,15 @@ ide_perf_staging_*
 aide_sandbox_*
 *.tmp
 tmp*
+
+# Local environment: credentials and machine-specific overrides.
+# `.env.example` is the tracked template.
+.env
+.env.*
+!.env.example
+
+# App database (created under the user data dir by default, but a repo-local
+# ACSA_DATA_DIR would put it here).
+acsa.db
+acsa.db-wal
+acsa.db-shm
