@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
+import "../../monacoSetup";
 import { Check, X, Menu } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { applyMonacoTheme } from "../../services/themeManager";

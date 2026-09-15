@@ -12,6 +12,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
+import "../../monacoSetup";
 import { AlertCircle, ChevronDown, ChevronRight, Sparkles, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import {
