@@ -54,23 +54,82 @@ Rebuild it whenever the engine changes — the bundled copy is what users run.
 
 ## 3. Sign and notarise — **[configured; needs an Apple Developer account]**
 
-Unsigned builds are quarantined by Gatekeeper on other people's Macs.
+Unsigned builds are quarantined by Gatekeeper on other people's Macs, so this is
+the step between "it builds" and "someone else can install it".
 
-1. Developer ID Application certificate in the login keychain.
-2. Set `bundle.macOS.signingIdentity` in `.tauri/tauri.conf.json` (currently
-   `null`), and provide `entitlements` if the engine needs any.
-3. Notarise and staple:
+Everything on our side is already wired: the hardened runtime and entitlements
+are set in `.tauri/tauri.conf.json`, and `.github/workflows/release.yml` imports
+the certificate, builds, notarises and then verifies the signature and the
+ticket. What it needs is the certificate and the repository secrets.
+
+### 3a. Get a Developer ID certificate
+
+Requires a paid Apple Developer Program membership. Apple issues **Developer ID
+Application** certificates only to members.
+
+1. Keychain Access → Certificate Assistant → *Request a Certificate From a
+   Certificate Authority* → save the CSR to disk (Keychain Access → *Saved to
+   disk*, 2048-bit RSA).
+2. developer.apple.com → Certificates, Identifiers & Profiles → **+** →
+   *Developer ID Application* → upload the CSR → download the `.cer`.
+3. Double-click the `.cer` to install it, then in Keychain Access select the
+   certificate **and its private key**, right-click → *Export* → `.p12`, and set
+   a password.
+4. Base64 it for CI:
 
    ```bash
-   xcrun notarytool submit "ACSA Code.dmg" --keychain-profile <profile> --wait
-   xcrun stapler staple "ACSA Code.app"
+   base64 -i DeveloperID.p12 | pbcopy     # paste into APPLE_CERTIFICATE
    ```
 
-   Tauri can do this in CI via `APPLE_CERTIFICATE`, `APPLE_ID`,
-   `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+5. Note the exact identity string, which is what `APPLE_SIGNING_IDENTITY` wants:
 
-Windows equivalents: `bundle.windows.certificateThumbprint` (currently `null`)
-and `digestAlgorithm`, then sign with `signtool`.
+   ```bash
+   security find-identity -v -p codesigning
+   # "Developer ID Application: Your Name (TEAMID)"
+   ```
+
+6. Notarisation needs an **app-specific password** (appleid.apple.com → Sign-In
+   and Security → App-Specific Passwords), not your Apple ID password. The Team
+   ID is the 10-character code in the membership details.
+
+### 3b. Add the repository secrets
+
+`.github/workflows/release.yml` reads exactly these:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | base64 of the `.p12` from step 4 |
+| `APPLE_CERTIFICATE_PASSWORD` | the password you set when exporting it |
+| `KEYCHAIN_PASSWORD` | any password; used for the throwaway CI keychain |
+| `APPLE_SIGNING_IDENTITY` | the string from step 5 |
+| `APPLE_ID` | your Apple ID email |
+| `APPLE_PASSWORD` | the app-specific password from step 6 |
+| `APPLE_TEAM_ID` | the 10-character team ID |
+
+Tauri signs from `APPLE_SIGNING_IDENTITY` and notarises automatically once the
+last three are present. Without `APPLE_CERTIFICATE` the workflow still runs and
+warns that it is building unsigned, so a fork is not blocked.
+
+### 3c. Verify locally before tagging
+
+```bash
+cd .tauri && ../node_modules/.bin/tauri build --bundles app,dmg
+codesign --verify --deep --strict --verbose=2 "target/release/bundle/macos/ACSA Code.app"
+spctl --assess --type execute --verbose=2 "target/release/bundle/macos/ACSA Code.app"
+xcrun stapler validate "target/release/bundle/macos/ACSA Code.app"
+```
+
+`spctl` should report *accepted, source=Notarized Developer ID*. If it says
+*rejected*, the entitlement that matters most for this app is
+`com.apple.security.cs.disable-library-validation` — the frozen engine unpacks
+its own libpython, and the hardened runtime kills the process on launch without
+it.
+
+### 3d. Windows (later)
+
+`bundle.windows.certificateThumbprint` is `null` and no job signs or publishes a
+Windows build. The shape is the same: an Authenticode certificate, then
+`signtool` over the `nsis` installer.
 
 ## 4. Auto-updates — **[blocked: needs a signing key and a release host]**
 
