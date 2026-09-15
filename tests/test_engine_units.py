@@ -65,6 +65,69 @@ class SearchReplaceParsingTests(unittest.TestCase):
         self.assertIn("target-snippet-2", patches[0].patched_content)
 
 
+class PatchWriteFidelityTests(unittest.TestCase):
+    """`patched_content` is the exact bytes the syntax gate validates in staging.
+    The final write must land those same bytes on disk — if it instead re-derives
+    content through the fuzzy diff applier, a file can pass the gate and still be
+    corrupted. These tests pin that contract and the invalid-Python safety net.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="acsa-write-"))
+        self.target = self.root / "calc.py"
+        self.original = "def multiply(a, b):\n    return a * b\n"
+        self.target.write_text(self.original, encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_writes_validated_patched_content_verbatim(self):
+        validated = "def multiply(a, b):\n    return a * b  # verified\n"
+        patch = manager.DiffPatch(
+            file_path=str(self.target),
+            original_content=self.original,
+            patched_content=validated,
+            diff_text="--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def multiply(a, b):\n-    return a * b\n+    return a * b  # verified\n",
+        )
+        manager._write_patches_to_disk([patch], str(self.root))
+        self.assertEqual(self.target.read_text(encoding="utf-8"), validated)
+
+    def test_noop_patch_does_not_invoke_fuzzy_applier(self):
+        # patched_content equal to the original must be a clean no-op, not a
+        # reason to fall through to the strict=False diff applier.
+        patch = manager.DiffPatch(
+            file_path=str(self.target),
+            original_content=self.original,
+            patched_content=self.original,
+            diff_text="--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-broken(\n+broken(\n",
+        )
+        with mock.patch.object(
+            manager, "apply_diff_text", side_effect=AssertionError("fuzzy applier must not run")
+        ):
+            manager._write_patches_to_disk([patch], str(self.root))
+        self.assertEqual(self.target.read_text(encoding="utf-8"), self.original)
+
+    def test_fallback_restores_backup_when_result_is_invalid_python(self):
+        # No patched_content -> the diff fallback runs. If it produces invalid
+        # Python we must not leave the broken file on disk.
+        patch = manager.DiffPatch(
+            file_path=str(self.target),
+            original_content="",
+            patched_content="",
+            diff_text="--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-def multiply(a, b):\n+def multiply(a,:\n",
+        )
+
+        def fake_apply(diff_text, project_root="", backup=True, strict=False):
+            (self.root / "calc.py.bak").write_text(self.original, encoding="utf-8")
+            self.target.write_text("def multiply(a,\n", encoding="utf-8")
+            result = mock.Mock(file_path=str(self.target), status="applied")
+            return mock.Mock(results=[result], rejected=[], errors=[])
+
+        with mock.patch.object(manager, "apply_diff_text", side_effect=fake_apply):
+            manager._write_patches_to_disk([patch], str(self.root))
+        self.assertEqual(self.target.read_text(encoding="utf-8"), self.original)
+
+
 class ContextIndexPruningTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="acsa-ctx-"))

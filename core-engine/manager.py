@@ -18,6 +18,7 @@ Design constraints
 
 from __future__ import annotations
 
+import ast
 import difflib
 import hashlib
 import http.client
@@ -1379,8 +1380,13 @@ def _write_patches_to_disk(patches: list[DiffPatch], project_root: str = "") -> 
                 )
                 continue
 
-        # 1. High-fidelity direct write: patch.patched_content is the exact verified content
-        if patch.patched_content and patch.patched_content != patch.original_content:
+        # 1. High-fidelity direct write. `patched_content` is the exact content
+        # the syntax gate validated in staging, so writing it verbatim is the
+        # only way to guarantee "validated X" also means "wrote X". Re-deriving
+        # the result through the fuzzy applier here would let a file pass the
+        # gate and still land corrupted. An unchanged patch is a clean no-op and
+        # must not fall through to the applier either.
+        if patch.patched_content:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists():
@@ -1435,6 +1441,34 @@ def _write_patches_to_disk(patches: list[DiffPatch], project_root: str = "") -> 
                 "Patch showed no successful final write for %s; keeping correction loop active",
                 patch.file_path,
             )
+            continue
+
+        # The fallback applier runs with strict=False, so its output was never
+        # syntax-gated. Never leave invalid Python behind: restore the pre-write
+        # backup and keep the correction loop active instead.
+        for result in batch.results:
+            result_path = Path(result.file_path).resolve() if getattr(result, "file_path", None) else None
+            if result_path is None or result.status not in {"applied", "created"}:
+                continue
+            if result_path.suffix != ".py" or not result_path.exists():
+                continue
+            try:
+                ast.parse(result_path.read_text(encoding="utf-8"))
+            except SyntaxError as exc:
+                bak_path = result_path.with_suffix(result_path.suffix + ".bak")
+                if bak_path.exists():
+                    shutil.copy2(bak_path, result_path)
+                    restored = f"restored from {bak_path.name}"
+                else:
+                    restored = "no backup available"
+                logger.warning(
+                    "Fallback patch produced invalid Python in %s (%s) — %s",
+                    result_path,
+                    exc,
+                    restored,
+                )
+                if str(result_path) in written:
+                    written.remove(str(result_path))
 
     return written
 
@@ -2548,6 +2582,10 @@ def orchestrate(
             if (Path(config.project_root) / f).exists()
         ]
 
+        # Errors still present after the self-healing pass. A mutation that
+        # leaves broken syntax on disk must NOT be reported as success.
+        unresolved_syntax: list[str] = []
+
         if target_abs_paths:
             report = run_syntax_gate(target_abs_paths, cwd=config.project_root)
             if report.total_errors > 0:
@@ -2591,10 +2629,33 @@ def orchestrate(
                             agent_result.answer += f"\n\n### Self-Healing Post-Verification\n{repair_result.answer}"
                     else:
                         emit_step("Self-Healing Gate", f"Verification warning: {rep_after.total_errors} remaining issue(s)", "failed")
+                        for lr in rep_after.linter_results:
+                            for d in lr.diagnostics:
+                                unresolved_syntax.append(
+                                    f"- {Path(d.file).name}:{d.line}: [{d.severity}] {d.message}"
+                                )
                 except Exception as repair_exc:
                     logger.warning("Self-healing repair exception: %s", repair_exc)
+                    unresolved_syntax = [f"- self-healing repair failed: {repair_exc}"]
             else:
                 emit_step("Syntax Gate", f"PASSED — 0 syntax errors across {len(target_abs_paths)} file(s)", "done")
+
+        if unresolved_syntax:
+            detail = "\n".join(unresolved_syntax[:8])
+            logger.warning("Mutation left unresolved syntax errors; reporting failure:\n%s", detail)
+            return OrchestrationResult(
+                outcome=LoopOutcome.FAILED,
+                total_rounds=agent_result.total_rounds,
+                rounds=[],
+                final_patches=[],
+                elapsed_ms=(time.monotonic() - pipeline_start) * 1000,
+                answer=agent_result.answer,
+                intent="mutation",
+                error_detail=(
+                    "The agent's edits left syntax errors that self-healing could not fix, "
+                    "so this change is not being reported as successful:\n" + detail
+                ),
+            )
 
         return OrchestrationResult(
             outcome=LoopOutcome.SUCCESS,
