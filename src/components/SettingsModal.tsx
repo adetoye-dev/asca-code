@@ -356,25 +356,29 @@ export function SettingsModal({
     setTestMessage("");
 
     try {
-      const targetUrl =
-        provider === "ollama"
-          ? (baseUrl || "http://127.0.0.1:11434") + "/api/tags"
-          : provider === "local"
-          ? (baseUrl || "http://127.0.0.1:8080") + "/health"
-          : (baseUrl || "https://api.openai.com/v1") + "/models";
-
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
-      }
-
-      const res = await fetch(targetUrl, { method: "GET", headers });
-      if (res.ok) {
+      // Proxied through the bridge so the request is made with the stored
+      // credential and the key never has to be held in the browser.
+      const res = await fetch("/api/ai/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          baseUrl: baseUrl || undefined,
+          apiKey: apiKey || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success !== false) {
+        const count = Array.isArray(data?.models) ? data.models.length : 0;
         setTestStatus("success");
-        setTestMessage(`Connection verified! Server responded with HTTP ${res.status}`);
+        setTestMessage(
+          count > 0
+            ? `Connection verified — ${count} model${count === 1 ? "" : "s"} available.`
+            : "Connection verified!"
+        );
       } else {
         setTestStatus("error");
-        setTestMessage(`Server returned HTTP ${res.status}`);
+        setTestMessage(data?.error || `Request failed (HTTP ${res.status})`);
       }
     } catch (err: any) {
       setTestStatus("error");

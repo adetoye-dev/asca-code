@@ -9,6 +9,7 @@
  */
 
 import type { AIProviderConfig, AIProviderId } from "../types/workbench";
+import { appStore, type StoredProvider } from "./appStore";
 
 const STORAGE_KEY = "acsa_code_ai_providers_v4";
 const DEFAULT_PROVIDER_KEY = "acsa_code_default_provider_v4";
@@ -298,119 +299,170 @@ export function curateProviderModels(providerId: string, rawModels: string[]): s
   return scored.slice(0, 12).map((s) => s.model);
 }
 
+/** In-memory mirror of the registry so `loadAllProviders()` can stay synchronous. */
+let providerCache: Record<AIProviderId, AIProviderConfig> | null = null;
+
+/** Selected chat model, mirrored for synchronous reads. */
+let selectedModelCache: StoredSelectedModel | null | undefined;
+
+function cloneInitialProviders(): Record<AIProviderId, AIProviderConfig> {
+  return Object.fromEntries(
+    Object.entries(INITIAL_PROVIDERS).map(([id, provider]) => [
+      id,
+      { ...provider, availableModels: [...provider.availableModels] },
+    ])
+  ) as Record<AIProviderId, AIProviderConfig>;
+}
+
+/**
+ * The provider registry, for synchronous callers.
+ *
+ * Returns the cache hydrated by `hydrateProviders()`; before that completes it
+ * returns the built-in defaults, so an early render shows sensible values rather
+ * than nothing.
+ */
 export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
-  const cloneInitialProviders = () =>
-    Object.fromEntries(
-      Object.entries(INITIAL_PROVIDERS).map(([id, provider]) => [id, {
-        ...provider,
-        availableModels: [...provider.availableModels],
-      }])
-    ) as Record<AIProviderId, AIProviderConfig>;
+  const base = providerCache ?? cloneInitialProviders();
+  const clone = Object.fromEntries(
+    Object.entries(base).map(([id, provider]) => [
+      id,
+      { ...provider, availableModels: [...provider.availableModels] },
+    ])
+  ) as Record<AIProviderId, AIProviderConfig>;
+  delete (clone as any).deterministic;
+  return clone;
+}
 
+/**
+ * Load the registry from the app database into the cache. Call once at startup.
+ *
+ * This is also the one-time migration off `localStorage`. Older builds kept the
+ * whole registry — cloud API keys included — in the browser; that blob is read
+ * here, written into the database (configuration as provider rows, credentials
+ * as secrets) and then deleted. Until it is deleted the key is still sitting in
+ * the browser, so the removal is the point of the exercise, not a tidy-up.
+ */
+export async function hydrateProviders(): Promise<void> {
+  const merged = cloneInitialProviders();
+  delete (merged as any).deterministic;
+
+  let legacy: Record<string, any> | null = null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    // Migration from previous or legacy storage keys
-    if (!raw) {
-      const prevStorage = localStorage.getItem(PREV_STORAGE_KEY_V3) || localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (prevStorage) {
-        try {
-          const oldParsed = JSON.parse(prevStorage);
-          const migrated = cloneInitialProviders();
-          for (const key of Object.keys(oldParsed) as AIProviderId[]) {
-            if (migrated[key]) {
-              if (migrated[key].category === "cloud") {
-                migrated[key].apiKey = oldParsed[key]?.apiKey || "";
-                migrated[key].baseUrl = oldParsed[key]?.baseUrl || migrated[key].baseUrl;
-                migrated[key].isConnected = !!(oldParsed[key]?.apiKey);
-              }
-            }
-          }
-          delete (migrated as any).deterministic;
-          migrated.ollama.selectedModel = "qwen2.5-coder:7b";
-          migrated.ollama.availableModels = ["qwen2.5-coder:7b"];
-          migrated.ollama.isConnected = true;
-          migrated.ollama.isDefault = true;
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-          localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
-          return migrated;
-        } catch {}
-      }
-      const initial = cloneInitialProviders();
-      delete (initial as any).deterministic;
-      return initial;
-    }
-
-    const parsed = JSON.parse(raw);
-    let defaultId = (localStorage.getItem(DEFAULT_PROVIDER_KEY) || "ollama") as AIProviderId;
-    if (defaultId === ("deterministic" as AIProviderId)) {
-      defaultId = "ollama";
-      try {
-        localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
-      } catch {}
-    }
-
-    const merged = cloneInitialProviders();
-    for (const key of Object.keys(parsed) as AIProviderId[]) {
-      if (key === ("deterministic" as AIProviderId)) continue; // Purge deterministic
-      if (merged[key]) {
-        merged[key] = {
-          ...merged[key],
-          ...parsed[key],
-          isDefault: key === defaultId,
-        };
-      }
-    }
-    delete (merged as any).deterministic;
-
-    // ── Active Sanitation & Model Refresh for Cloud Models ───────
-    let needsCloudResave = false;
-    for (const [pId, initConfig] of Object.entries(INITIAL_PROVIDERS) as [AIProviderId, AIProviderConfig][]) {
-      if (pId === "ollama") continue;
-      const current = merged[pId];
-      if (current) {
-        // If parsed storage has models, curate them to strict code flagships; otherwise seed with initConfig.availableModels
-        const savedModels = parsed[pId]?.availableModels;
-        if (Array.isArray(savedModels) && savedModels.length > 0) {
-          const curated = curateProviderModels(pId, savedModels);
-          const savedSelection = parsed[pId]?.selectedModel;
-          const preserved = savedSelection && savedModels.includes(savedSelection) && !curated.includes(savedSelection)
-            ? [savedSelection, ...curated]
-            : curated;
-          current.availableModels = preserved.length > 0 ? preserved : [...initConfig.availableModels];
-          if (preserved.length !== savedModels.length) {
-            needsCloudResave = true;
-          }
-        } else {
-          current.availableModels = [...initConfig.availableModels];
-        }
-        // Ensure selectedModel is valid and exists in curated models
-        if (!current.selectedModel || !current.availableModels.includes(current.selectedModel)) {
-          current.selectedModel = current.availableModels[0] || initConfig.selectedModel;
-          needsCloudResave = true;
-        }
-      }
-    }
-
-    // Ensure default provider is valid
-    if (!merged[defaultId]) {
-      merged.ollama.isDefault = true;
-      try {
-        localStorage.setItem(DEFAULT_PROVIDER_KEY, "ollama");
-      } catch {}
-    }
-
-    // Resave cleaned storage if deterministic was stripped or models were migrated
-    if (parsed.deterministic || needsCloudResave) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-      } catch {}
-    }
-
-    return merged;
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ||
+      localStorage.getItem(PREV_STORAGE_KEY_V3) ||
+      localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw) legacy = JSON.parse(raw);
   } catch {
-    const initial = cloneInitialProviders();
-    delete (initial as any).deterministic;
-    return initial;
+    legacy = null;
+  }
+
+  let stored: Record<string, StoredProvider> = {};
+  let defaultId: AIProviderId = "ollama";
+  let selected: StoredSelectedModel | null = null;
+  try {
+    stored = await appStore.getProviders();
+    const settings = await appStore.getSettings();
+    defaultId = (settings["default_provider"] as AIProviderId) || "ollama";
+    selected = (settings["selected_model"] as StoredSelectedModel) || null;
+  } catch {
+    // Database unavailable (first run, or a packaged build without the bridge):
+    // fall back to defaults rather than leaving the UI empty.
+  }
+
+  const nothingStoredYet = Object.keys(stored).length === 0;
+  if (legacy && nothingStoredYet) {
+    for (const [id, entry] of Object.entries(legacy)) {
+      if (!merged[id as AIProviderId]) continue;
+      try {
+        await appStore.upsertProvider({
+          id,
+          baseUrl: entry?.baseUrl,
+          selectedModel: entry?.selectedModel,
+          availableModels: Array.isArray(entry?.availableModels) ? entry.availableModels : undefined,
+        });
+        const key = typeof entry?.apiKey === "string" ? entry.apiKey.trim() : "";
+        if (key) await appStore.setSecret(`${id}_api_key`, key);
+      } catch {
+        // Keep migrating the rest; a partial migration beats a hard failure.
+      }
+    }
+    try {
+      stored = await appStore.getProviders();
+    } catch {
+      /* keep whatever we have */
+    }
+  }
+
+  // Unconditional, and deliberately outside the migration branch above: once the
+  // database exists, a registry left in the browser is superseded whether or not
+  // we just migrated it. Leaving it behind would mean credentials still sitting
+  // in localStorage, which is the whole thing this change is meant to stop.
+  if (legacy) {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(PREV_STORAGE_KEY_V3);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      localStorage.removeItem(DEFAULT_PROVIDER_KEY);
+      localStorage.removeItem(SELECTED_MODEL_KEY);
+    } catch {
+      /* storage disabled */
+    }
+  }
+
+  for (const [id, config] of Object.entries(merged) as [AIProviderId, AIProviderConfig][]) {
+    const row = stored[id];
+    if (row) {
+      if (row.baseUrl) config.baseUrl = row.baseUrl;
+      if (Array.isArray(row.availableModels) && row.availableModels.length > 0) {
+        config.availableModels = row.availableModels;
+      }
+      if (row.selectedModel) config.selectedModel = row.selectedModel;
+      // Cloud credentials live in the database; the page never receives them,
+      // so "connected" is reported from whether a secret is configured.
+      if (config.category === "cloud") config.isConnected = Boolean(row.hasApiKey);
+    }
+    config.isDefault = id === defaultId;
+  }
+
+  providerCache = merged;
+  selectedModelCache = selected;
+  notifyModelsUpdated();
+}
+
+/** Persist registry configuration (never credentials) for one provider. */
+export async function persistProviderConfig(config: AIProviderConfig): Promise<void> {
+  await appStore.upsertProvider({
+    id: config.id,
+    baseUrl: config.baseUrl,
+    selectedModel: config.selectedModel,
+    availableModels: config.availableModels,
+  });
+}
+
+/** Store a cloud credential. An empty value is ignored — use clearProviderApiKey. */
+export async function setProviderApiKey(providerId: AIProviderId, apiKey: string): Promise<void> {
+  const trimmed = (apiKey || "").trim();
+  if (!trimmed) return;
+  await appStore.setSecret(`${providerId}_api_key`, trimmed);
+  if (providerCache?.[providerId]) providerCache[providerId].isConnected = true;
+  notifyModelsUpdated();
+}
+
+/** Remove a stored cloud credential. */
+export async function clearProviderApiKey(providerId: AIProviderId): Promise<void> {
+  await appStore.clearSecret(`${providerId}_api_key`);
+  if (providerCache?.[providerId]) providerCache[providerId].isConnected = false;
+  notifyModelsUpdated();
+}
+
+function notifyModelsUpdated(): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
+    }
+  } catch {
+    /* no window (tests) */
   }
 }
 
@@ -418,14 +470,17 @@ export function saveProviderConfig(config: AIProviderConfig): Record<AIProviderI
   const all = loadAllProviders();
   delete (all as any).deterministic;
   all[config.id] = { ...config };
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-  } catch {}
-  try {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
-    }
-  } catch {}
+  if (providerCache) providerCache[config.id] = { ...config };
+
+  // Write through to the database. Configuration becomes a provider row; a
+  // credential becomes a secret and is never part of the registry payload.
+  void persistProviderConfig(config).catch(() => {});
+  // An empty apiKey means "unchanged" here — clearing a key is explicit, via
+  // clearProviderApiKey — otherwise saving a config would silently wipe it.
+  if (config.category === "cloud" && (config.apiKey || "").trim()) {
+    void setProviderApiKey(config.id, config.apiKey).catch(() => {});
+  }
+  notifyModelsUpdated();
   return all;
 }
 
@@ -772,47 +827,42 @@ export interface StoredSelectedModel {
  */
 export function saveActiveSelectedModel(providerId: AIProviderId, model: string): void {
   if (!providerId || !model) return;
+  const all = loadAllProviders();
+  if (all[providerId]?.category === "local" || providerId === "ollama") {
+    // Local models are background workers and must never be saved as the chat model selector choice
+    return;
+  }
+  selectedModelCache = { providerId, model };
+  void appStore.setSetting("selected_model", { providerId, model }).catch(() => {});
+  if (all[providerId]) {
+    saveProviderConfig({ ...all[providerId], selectedModel: model });
+  }
   try {
-    const all = loadAllProviders();
-    if (all[providerId]?.category === "local" || providerId === "ollama") {
-      // Local models are background workers and must never be saved as the chat model selector choice
-      return;
-    }
-    localStorage.setItem(SELECTED_MODEL_KEY, JSON.stringify({ providerId, model }));
-    if (all[providerId]) {
-      all[providerId].selectedModel = model;
-      saveProviderConfig(all[providerId]);
-    }
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("acsa:selected-model-changed", { detail: { providerId, model } })
       );
     }
-  } catch {}
+  } catch {
+    /* no window */
+  }
 }
 
 /**
  * Retrieves the user's previously selected model from persistent storage.
  */
 export function getActiveSelectedModel(): StoredSelectedModel | null {
-  try {
-    const raw = localStorage.getItem(SELECTED_MODEL_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.providerId && parsed.model) {
-      const pid = parsed.providerId as AIProviderId;
-      const all = loadAllProviders();
-      // Purge any legacy local model from persistent storage so it never pollutes the chat selector
-      if (all[pid]?.category === "local" || pid === "ollama") {
-        localStorage.removeItem(SELECTED_MODEL_KEY);
-        return null;
-      }
-      return parsed as StoredSelectedModel;
-    }
-    return null;
-  } catch {
+  const parsed = selectedModelCache ?? null;
+  if (!parsed || !parsed.providerId || !parsed.model) return null;
+  const pid = parsed.providerId as AIProviderId;
+  // A local model must never pollute the chat selector, even if an older build
+  // stored one.
+  if (loadAllProviders()[pid]?.category === "local" || pid === "ollama") {
+    selectedModelCache = null;
+    void appStore.setSetting("selected_model", null).catch(() => {});
     return null;
   }
+  return parsed;
 }
 
 /**

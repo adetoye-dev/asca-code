@@ -23,6 +23,9 @@ import type {
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
+import { hydrateProviders } from "../services/aiModelManager";
+import { hydrateChatHistory } from "../services/aiChatPersistence";
+import { appStore } from "../services/appStore";
 import {
   syncProjectIndex,
   getIndexStatus,
@@ -150,29 +153,11 @@ export function usePipeline(): UsePipelineReturn {
   const isTauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   // AI settings
-  const [aiSettings, setAiSettingsState] = useState<AISettings>(() => {
-    let raw: AISettings = DEFAULT_AI_SETTINGS;
-    try {
-      const saved =
-        localStorage.getItem("aide_ai_settings") ||
-        localStorage.getItem("ide_ai_settings");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === "object") {
-          const p = parsed.provider === "deterministic" ? "ollama" : (parsed.provider || DEFAULT_AI_SETTINGS.provider);
-          raw = {
-            provider: p,
-            // Never fall back to the Ollama default tag for a cloud provider -
-            // hydration fills the model from the provider registry instead.
-            model: parsed.model || (p === "ollama" ? "qwen2.5-coder:7b" : ""),
-            apiKey: parsed.apiKey || "",
-            baseUrl: parsed.baseUrl || (p === "ollama" ? "http://127.0.0.1:11434" : ""),
-          };
-        }
-      }
-    } catch {}
-    return hydrateAiSettings(raw);
-  });
+  // The database is the source of truth; this is the first-paint default until
+  // the bootstrap effect below restores the saved selection.
+  const [aiSettings, setAiSettingsState] = useState<AISettings>(() =>
+    hydrateAiSettings(DEFAULT_AI_SETTINGS)
+  );
 
   const setAiSettings = (newSettings: AISettings) => {
     const safeSettings: AISettings = {
@@ -182,11 +167,85 @@ export function usePipeline(): UsePipelineReturn {
       baseUrl: newSettings?.baseUrl || "",
     };
     setAiSettingsState(hydrateAiSettings(safeSettings));
-    try {
-      const { provider, model, baseUrl } = safeSettings;
-      localStorage.setItem("aide_ai_settings", JSON.stringify({ provider, model, baseUrl }));
-    } catch {}
+    // Only the non-secret parts are persisted; credentials live in the app
+    // database and are resolved server-side.
+    const { provider, model, baseUrl } = safeSettings;
+    void appStore.setSetting("ai_settings", { provider, model, baseUrl }).catch(() => {});
   };
+
+  /**
+   * Bootstrap the app's own state from the database.
+   *
+   * Runs once: hydrating the provider registry (which also performs the one-time
+   * migration of any registry left in localStorage, credentials included),
+   * restoring the last-opened project, and loading that project's transcript.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await hydrateProviders();
+        const [settings, active] = await Promise.all([
+          appStore.getSettings(),
+          appStore.getActiveProject(),
+        ]);
+        if (cancelled) return;
+
+        // One-time migration of the pre-database settings blob.
+        let savedAi = settings["ai_settings"] as AISettings | undefined;
+        if (!savedAi) {
+          try {
+            const legacy =
+              localStorage.getItem("aide_ai_settings") || localStorage.getItem("ide_ai_settings");
+            if (legacy) {
+              const parsed = JSON.parse(legacy);
+              if (parsed && typeof parsed === "object" && parsed.provider) {
+                savedAi = { provider: parsed.provider, model: parsed.model || "", apiKey: "", baseUrl: parsed.baseUrl || "" };
+                void appStore
+                  .setSetting("ai_settings", {
+                    provider: savedAi.provider,
+                    model: savedAi.model,
+                    baseUrl: savedAi.baseUrl,
+                  })
+                  .catch(() => {});
+              }
+              localStorage.removeItem("aide_ai_settings");
+              localStorage.removeItem("ide_ai_settings");
+            }
+          } catch {
+            /* storage disabled */
+          }
+        }
+        if (savedAi?.provider) {
+          setAiSettingsState((prev) =>
+            hydrateAiSettings({
+              provider: savedAi.provider,
+              model: savedAi.model || prev.model,
+              apiKey: "",
+              baseUrl: savedAi.baseUrl || "",
+            })
+          );
+        }
+
+        if (active?.path && active.path !== "." && active.path !== "./") {
+          setActiveProjectState({ name: active.name, path: active.path });
+          void hydrateChatHistory(active.path);
+        }
+        // The active project lives in the database now; drop the old browser
+        // pointer so it cannot resurrect an unrelated project later.
+        try {
+          localStorage.removeItem("aide_active_project");
+        } catch {
+          /* storage disabled */
+        }
+      } catch {
+        // Database unavailable: the defaults above keep the app usable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Re-hydrate keys/base URLs whenever the AI Models & Providers page saves,
   // or another tab changes storage, so editor AI never runs with a stale key.
@@ -205,25 +264,17 @@ export function usePipeline(): UsePipelineReturn {
 
   // Active project state
   const [activeProject, setActiveProjectState] = useState<ProjectMeta>(() => {
-    try {
-      const saved = localStorage.getItem("aide_active_project");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed?.path && parsed.path !== "." && parsed.path !== "./") {
-          return parsed;
-        }
-      }
-      return { name: "acsa-code", path: "." };
-    } catch {
-      return { name: "acsa-code", path: "." };
-    }
+    // The active project is resolved from the app database during hydration
+    // (see the bootstrap effect). Until that completes we start on the bundled
+    // workbench itself rather than on whatever happens to be left in this
+    // browser's localStorage — that pointer used to resurrect an unrelated
+    // project on a machine that had ever opened one.
+    return { name: "acsa-code", path: "." };
   });
 
   const setActiveProject = (proj: ProjectMeta) => {
     setActiveProjectState(proj);
-    try {
-      localStorage.setItem("aide_active_project", JSON.stringify(proj));
-    } catch {}
+    void appStore.touchProject(proj.path, proj.name).catch(() => {});
   };
 
   const [projectFiles, setProjectFiles] = useState<FileNode[]>([]);

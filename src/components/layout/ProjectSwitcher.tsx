@@ -12,6 +12,7 @@ import { useState, useRef, useEffect } from "react";
 import { Plus, Check, GitFork, ChevronDown, Folder } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import type { ProjectMeta } from "../../hooks/usePipeline";
+import { appStore } from "../../services/appStore";
 
 interface ProjectSwitcherProps {
   activeProject: ProjectMeta;
@@ -35,49 +36,62 @@ export function ProjectSwitcher({
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load and update recent projects (limited to most recent 3, deduplicated)
+  // Recent projects come from the app database (limited to the most recent 3,
+  // deduplicated). They used to live in localStorage, which meant the list — and
+  // the "active project" pointer derived from it — was per-browser state that
+  // could resurrect a project on a machine that had merely opened one.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-      const list: ProjectMeta[] = raw ? JSON.parse(raw) : [];
+    let cancelled = false;
+    const normPath = (p?: string) => {
+      const value = (p || "").trim();
+      if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
+        return value.endsWith("/") || value.endsWith("\\") ? value.slice(0, 3) : value;
+      }
+      return value.replace(/[/\\]+$/, "");
+    };
 
-      const normPath = (p?: string) => {
-        const value = (p || "").trim();
-        if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
-          return value.endsWith("/") || value.endsWith("\\") ? value.slice(0, 3) : value;
-        }
-        return value.replace(/[/\\]+$/, "");
-      };
+    (async () => {
       const activeNorm = normPath(activeProject.path);
-
-      // Deduplicate all entries by normalized path, excluding stale dot paths
       const seen = new Set<string>();
       const deduped: ProjectMeta[] = [];
 
-      // Ensure active project is always at the front
-      if (activeProject && activeProject.name) {
-        if (activeNorm && activeNorm !== "." && activeNorm !== "./") {
-          seen.add(activeNorm);
+      // The active project always leads the list.
+      if (activeProject?.name && activeNorm && activeNorm !== "." && activeNorm !== "./") {
+        seen.add(activeNorm);
+        deduped.push({ ...activeProject, path: activeNorm });
+      }
+
+      try {
+        const stored = await appStore.listProjects(6);
+        for (const item of stored) {
+          const itemNorm = normPath(item.path);
+          if (!itemNorm || itemNorm === "." || itemNorm === "./" || seen.has(itemNorm)) continue;
+          seen.add(itemNorm);
+          deduped.push({ name: item.name, path: itemNorm });
         }
-        deduped.push({ ...activeProject, path: activeNorm || activeProject.path });
+      } catch {
+        // Database unavailable: show just the active project.
       }
 
-      for (const item of list) {
-        const itemNorm = normPath(item.path);
-        if (!itemNorm || itemNorm === "." || itemNorm === "./") continue;
-        if (seen.has(itemNorm)) continue;
-        seen.add(itemNorm);
-        deduped.push({ ...item, path: itemNorm });
+      if (cancelled) return;
+      const limited = deduped.slice(0, 3);
+      setRecentProjects(limited.length > 0 ? limited : [activeProject]);
+
+      // Remember this project so it is offered next time.
+      if (activeNorm && activeNorm !== "." && activeNorm !== "./") {
+        void appStore.touchProject(activeProject.path, activeProject.name).catch(() => {});
       }
+      // The old list is now redundant, and leaving it would keep a stale pointer.
+      try {
+        localStorage.removeItem(RECENT_PROJECTS_KEY);
+      } catch {
+        /* storage disabled */
+      }
+    })();
 
-      const MAX_OPEN_PROJECTS = 3;
-      const limited = deduped.slice(0, MAX_OPEN_PROJECTS);
-
-      localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(limited));
-      setRecentProjects(limited);
-    } catch {
-      setRecentProjects([activeProject]);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [activeProject]);
 
   // Click outside to dismiss

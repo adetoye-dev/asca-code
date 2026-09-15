@@ -253,6 +253,35 @@ const activeWatchTimers = new Map<string, NodeJS.Timeout>();
 let indexWriteQueue: Promise<void> = Promise.resolve();
 let activeProjectGeneration = 0;
 
+/**
+ * Run a command against the app database.
+ *
+ * The schema is owned by `core-engine/app_db.py` so the browser bridge and the
+ * packaged Tauri app cannot drift apart; both go through this one CLI. Request
+ * volume here is a handful per session, so the process hop is not worth a second
+ * implementation.
+ */
+function dbCommand<T = any>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const cli = path.resolve("core-engine", "db_cli.py");
+  return new Promise((resolve, reject) => {
+    execFile(
+      "python3",
+      [cli, command, JSON.stringify(payload)],
+      { timeout: 20000, maxBuffer: 8 * 1024 * 1024, env: process.env },
+      (error, stdout) => {
+        const lastLine = (stdout || "").trim().split("\n").pop() || "";
+        try {
+          const parsed = JSON.parse(lastLine);
+          if (parsed?.ok) resolve(parsed.data as T);
+          else reject(new Error(parsed?.error || error?.message || `db command failed: ${command}`));
+        } catch {
+          reject(new Error(error?.message || `db command produced no JSON: ${command}`));
+        }
+      }
+    );
+  });
+}
+
 /** True when the in-memory index/graph were built for `root`. */
 function indexCacheMatches(root: string): boolean {
   return !!activeProjectIndex && activeGraphRoot === root;
@@ -843,19 +872,23 @@ async function resolveEditorProvider(params: {
       note: "",
     };
   }
-  // The engine may already hold the key (AIDE_API_KEY), e.g. when the provider
-  // was configured outside the settings UI. Prefer it over degrading to a
-  // small local model.
-  const envKey = (process.env.AIDE_API_KEY || "").trim();
-  const envProvider = (process.env.AIDE_PROVIDER || "").trim();
-  if (envKey && (!envProvider || envProvider === provider)) {
-    return {
-      provider,
-      model: params.model || process.env.AIDE_MODEL || "",
-      apiKey: envKey,
-      baseUrl: params.baseUrl || process.env.AIDE_BASE_URL || "",
-      note: `Used the key from the environment (${provider}).`,
-    };
+  // The credential may already be configured in the app database, or supplied
+  // by the environment (which takes precedence). Resolving it here means cloud
+  // providers work without the browser ever holding the key — and it beats
+  // degrading to a small local model just because the client sent none.
+  try {
+    const storedKey = ((await dbCommand<string | null>("providers.resolveKey", { id: provider })) || "").trim();
+    if (storedKey) {
+      return {
+        provider,
+        model: params.model || process.env.AIDE_MODEL || "",
+        apiKey: storedKey,
+        baseUrl: params.baseUrl || process.env.AIDE_BASE_URL || "",
+        note: "",
+      };
+    }
+  } catch {
+    // Database unavailable (e.g. first run) — fall through to the local worker.
   }
   const localModel = await pickBestLocalOllamaModel();
   if (localModel) {
@@ -1597,6 +1630,88 @@ export function realFilesystemPlugin(): Plugin {
                 scripts,
               })
             );
+            return;
+          }
+
+          // ── App database (settings, providers, projects, chat, usage, auth) ─
+          // Backed by core-engine/app_db.py. Credentials go in and never come
+          // back out: `GET /api/app/providers` reports only whether a key is
+          // configured, and the raw value stays server-side.
+          if (pathname.startsWith("/api/app/")) {
+            const send = (status: number, payload: unknown) => {
+              res.statusCode = status;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(payload));
+            };
+            const query = parsedUrl.searchParams;
+            const body = req.method === "POST" ? await parseJsonBody(req) : {};
+
+            try {
+              if (pathname === "/api/app/info" && req.method === "GET") {
+                send(200, await dbCommand("info"));
+              } else if (pathname === "/api/app/settings" && req.method === "GET") {
+                send(200, await dbCommand("settings.get"));
+              } else if (pathname === "/api/app/settings" && req.method === "POST") {
+                await dbCommand("settings.set", { key: body.key, value: body.value });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/providers" && req.method === "GET") {
+                send(200, await dbCommand("providers.get"));
+              } else if (pathname === "/api/app/providers" && req.method === "POST") {
+                await dbCommand("providers.upsert", {
+                  id: body.id,
+                  baseUrl: body.baseUrl,
+                  selectedModel: body.selectedModel,
+                  availableModels: body.availableModels,
+                });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/secrets" && req.method === "GET") {
+                send(200, await dbCommand("secrets.list"));
+              } else if (pathname === "/api/app/secrets" && req.method === "POST") {
+                // Passing an empty value clears the credential.
+                await dbCommand("secrets.set", { name: body.name, value: body.value ?? "" });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/secrets" && req.method === "DELETE") {
+                await dbCommand("secrets.delete", { name: query.get("name") });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/projects" && req.method === "GET") {
+                send(200, await dbCommand("projects.list", { limit: Number(query.get("limit")) || 10 }));
+              } else if (pathname === "/api/app/projects" && req.method === "POST") {
+                await dbCommand("projects.touch", { path: body.path, name: body.name });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/projects/active" && req.method === "GET") {
+                send(200, await dbCommand("projects.active"));
+              } else if (pathname === "/api/app/projects/forget" && req.method === "POST") {
+                await dbCommand("projects.forget", { path: body.path });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/chat" && req.method === "GET") {
+                send(200, await dbCommand("chat.load", { projectPath: query.get("projectRoot") || "" }));
+              } else if (pathname === "/api/app/chat" && req.method === "POST") {
+                await dbCommand("chat.save", { projectPath: body.projectRoot, messages: body.messages });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/chat/clear" && req.method === "POST") {
+                await dbCommand("chat.clear", { projectPath: body.projectRoot });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/usage" && req.method === "GET") {
+                send(200, await dbCommand("usage.summary", {
+                  projectPath: query.get("projectRoot") || undefined,
+                  sinceTs: Number(query.get("sinceTs")) || 0,
+                }));
+              } else if (pathname === "/api/app/auth/register" && req.method === "POST") {
+                send(200, await dbCommand("auth.register", body));
+              } else if (pathname === "/api/app/auth/login" && req.method === "POST") {
+                send(200, await dbCommand("auth.login", body));
+              } else if (pathname === "/api/app/auth/logout" && req.method === "POST") {
+                await dbCommand("auth.logout", { token: body.token });
+                send(200, { ok: true });
+              } else if (pathname === "/api/app/auth/me" && req.method === "GET") {
+                const token = req.headers["x-acsa-session"];
+                send(200, await dbCommand("auth.me", { token: typeof token === "string" ? token : "" }));
+              } else {
+                send(404, { error: `Unknown app endpoint: ${pathname}` });
+              }
+            } catch (err: any) {
+              send(400, { error: String(err?.message || err) });
+            }
             return;
           }
 
@@ -2862,7 +2977,16 @@ export function realFilesystemPlugin(): Plugin {
 
           if (pathname === "/api/ai/test-connection" && req.method === "POST") {
             const body = await parseJsonBody(req);
-            const { provider, baseUrl, apiKey } = body;
+            const { provider, baseUrl } = body;
+            // Prefer the stored credential so the browser never has to hold it.
+            let apiKey = String(body.apiKey || "").trim();
+            if (!apiKey && provider && provider !== "ollama" && provider !== "local") {
+              try {
+                apiKey = ((await dbCommand<string | null>("providers.resolveKey", { id: provider })) || "").trim();
+              } catch {
+                // No stored key; the provider call below will fail loudly enough.
+              }
+            }
             const start = Date.now();
 
             try {
@@ -4417,6 +4541,17 @@ export function realFilesystemPlugin(): Plugin {
               images = [],
             } = body;
 
+            // Credentials are resolved server-side: the browser only ever holds
+            // "which provider/model", never the key itself.
+            let effectiveApiKey = String(apiKey || "").trim();
+            if (!effectiveApiKey && provider && provider !== "ollama") {
+              try {
+                effectiveApiKey = ((await dbCommand<string | null>("providers.resolveKey", { id: provider })) || "").trim();
+              } catch {
+                // No stored credential; the engine will report a clear error.
+              }
+            }
+
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache");
             res.setHeader("Connection", "keep-alive");
@@ -4486,7 +4621,7 @@ export function realFilesystemPlugin(): Plugin {
             const effectiveBaseUrl = baseUrl || DEFAULT_PROVIDER_BASE_URLS[provider] || "";
             if (model) args.push("--model", model);
             if (effectiveBaseUrl) args.push("--base-url", effectiveBaseUrl);
-            if (apiKey) args.push("--api-key", apiKey);
+            if (effectiveApiKey) args.push("--api-key", effectiveApiKey);
 
             sendEvent("output", {
               line_number: 1,
@@ -4499,7 +4634,7 @@ export function realFilesystemPlugin(): Plugin {
               env: {
                 ...process.env,
                 PYTHONUNBUFFERED: "1",
-                ...(apiKey ? { AIDE_API_KEY: apiKey } : {}),
+                ...(effectiveApiKey ? { AIDE_API_KEY: effectiveApiKey } : {}),
               },
             });
 
