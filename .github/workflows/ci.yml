@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (typecheck, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run verify` is typecheck (both tsconfigs) plus the Python suite.
+      # The engine is stdlib-only, so the tests need nothing else installed.
+      - name: Verify
+        run: npm run verify
+
+      - name: Production build
+        run: npm run build
+
+  sidecar:
+    name: Frozen engine sidecar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The app ships this binary so users need no Python install; if it stops
+      # building, the packaged app stops working, so it is gated here.
+      - name: Build acsa-engine
+        run: scripts/build_engine_sidecar.sh
+
+      - name: Sidecar answers each subcommand
+        run: |
+          set -euo pipefail
+          BIN="$(ls .tauri/binaries/acsa-engine-*)"
+          export ACSA_DATA_DIR="$(mktemp -d)"
+          "$BIN" db info
+          "$BIN" db settings.set '{"key":"ci","value":true}'
+          "$BIN" db settings.get | grep -q '"ci": true'
+          "$BIN" index --project-root . --json > /dev/null
+          echo "sidecar OK"
+
+  desktop:
+    name: Desktop bundle
+    runs-on: macos-latest
+    needs: [verify]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .tauri
+
+      - run: npm ci
+
+      - name: Build the engine sidecar
+        run: scripts/build_engine_sidecar.sh
+
+      - name: Bundle the app
+        working-directory: .tauri
+        run: ../node_modules/.bin/tauri build --bundles app
+
+      # Guards the failure that shipped for months unnoticed: a bundle that
+      # builds but cannot find its engine, or panics on launch from bad plugin
+      # config. Both were only caught by actually running the thing.
+      - name: The bundle contains the engine and starts
+        run: |
+          set -euo pipefail
+          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          test -f "$APP/Contents/Resources/core-engine/manager.py"
+          test -x "$APP/Contents/MacOS/acsa-engine"
+          "$APP/Contents/MacOS/autonomous-ide" > /tmp/launch.log 2>&1 &
+          PID=$!
+          sleep 12
+          kill "$PID" 2>/dev/null || true
+          grep -q "Engine dir" /tmp/launch.log || (cat /tmp/launch.log; exit 1)
+          echo "bundle launches and resolves its engine"
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Autonomous-IDE-macos-app
+          path: .tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14

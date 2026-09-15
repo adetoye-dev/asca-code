@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the hardened runtime.
+
+  Referenced by `bundle.macOS.entitlements` in tauri.conf.json, which is null
+  until this file is signed with a real Developer ID certificate.
+
+  Why each one is here:
+
+  * disable-library-validation — required by the frozen engine. PyInstaller
+    unpacks its own copy of libpython and a set of extension modules at runtime,
+    and the hardened runtime refuses to load libraries not signed by the same
+    team. Without this, `acsa-engine` is killed on launch on a signed build.
+
+  * allow-jit / allow-unsigned-executable-memory — the JavaScript engine behind
+    the webview needs writable-executable pages.
+
+  * allow-dyld-environment-variables — the sidecar is launched with a modified
+    environment (ACSA_DATA_DIR, and the credential the bridge resolves).
+
+  Deliberately NOT included: `com.apple.security.get-task-allow` (that is a
+  development-only entitlement and it weakens the hardened runtime).
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+  </dict>
+</plist>

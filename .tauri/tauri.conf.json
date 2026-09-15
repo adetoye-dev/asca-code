@@ -47,10 +47,11 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "frameworks": [],
-      "entitlements": null,
+      "entitlements": "Entitlements.plist",
       "exceptionDomain": "",
       "signingIdentity": null,
-      "providerShortName": null
+      "providerShortName": null,
+      "hardenedRuntime": true
     },
     "windows": {
       "digestAlgorithm": "sha256",

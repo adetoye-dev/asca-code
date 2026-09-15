@@ -1,0 +1,121 @@
+name: Release
+
+# Builds, signs and notarises the desktop app, then attaches it to a GitHub
+# Release. Triggered by a version tag, or manually.
+#
+# Required secrets for a *signed* build (see docs/RELEASING.md):
+#   APPLE_CERTIFICATE            base64 of the Developer ID .p12
+#   APPLE_CERTIFICATE_PASSWORD   its password
+#   KEYCHAIN_PASSWORD            any password for the temporary CI keychain
+#   APPLE_SIGNING_IDENTITY       e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   for notarisation
+#
+# Without APPLE_CERTIFICATE the workflow still runs and produces an UNSIGNED
+# build, with a warning — so a fork or a pre-certificate run is not blocked, but
+# nobody mistakes the artifact for distributable.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .tauri
+
+      - run: npm ci
+
+      - name: Verify before shipping
+        run: npm run verify
+
+      - name: Build the engine sidecar
+        run: scripts/build_engine_sidecar.sh
+
+      - name: Warn when signing is not configured
+        if: env.APPLE_CERTIFICATE == ''
+        run: |
+          echo "::warning::APPLE_CERTIFICATE is not set — building UNSIGNED. \
+          Gatekeeper will quarantine this on other machines; see docs/RELEASING.md."
+
+      - name: Import the signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      # Tauri signs from APPLE_SIGNING_IDENTITY and notarises automatically when
+      # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are present.
+      - name: Bundle
+        working-directory: .tauri
+        run: ../node_modules/.bin/tauri build --bundles app,dmg
+
+      - name: Confirm the bundle resolves its engine
+        run: |
+          set -euo pipefail
+          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          test -x "$APP/Contents/MacOS/acsa-engine"
+          test -f "$APP/Contents/Resources/core-engine/manager.py"
+          "$APP/Contents/MacOS/autonomous-ide" > /tmp/launch.log 2>&1 &
+          PID=$!
+          sleep 12
+          kill "$PID" 2>/dev/null || true
+          grep -q "Engine dir" /tmp/launch.log || (cat /tmp/launch.log; exit 1)
+
+      - name: Verify the signature and notarisation ticket
+        if: env.APPLE_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          draft: true
+          files: |
+            .tauri/target/release/bundle/macos/*.dmg
+            .tauri/target/release/bundle/macos/*.app.tar.gz
+          body: |
+            Built from ${{ github.sha }}.
+
+            Auto-update artifacts are not produced yet — see
+            `docs/RELEASING.md` for the signing key and manifest host that step needs.
