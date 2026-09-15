@@ -575,6 +575,134 @@ def extract_architectural_landmarks(project_root: Path, file_indices: list[FileI
     return landmarks
 
 
+_JS_EXTENSIONS = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts")
+_OTHER_EXTENSIONS = (".json", ".css", ".scss", ".vue", ".svelte", ".md", ".py")
+_ALL_IMPORT_EXTENSIONS = _JS_EXTENSIONS + _OTHER_EXTENSIONS
+
+_BARE_MODULE_RE = re.compile(r"^[A-Za-z_][\w.]*$")
+_JS_SUFFIX_RE = re.compile(r"\.(js|jsx|mjs|cjs)$")
+
+
+def _normalize_relative(dir_parts: list[str], spec: str) -> str:
+    """Joins a relative specifier onto dir_parts, collapsing '.' and '..'."""
+    parts = list(dir_parts)
+    for segment in spec.split("/"):
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+        else:
+            parts.append(segment)
+    return "/".join(parts)
+
+
+def resolve_local_import(
+    spec: str, from_path: str, known_paths: set[str]
+) -> Optional[str]:
+    """Resolve a module specifier to another indexed project file, or None.
+
+    Only project-local imports resolve: relative specifiers (``./x``, ``../x``)
+    and Python bare modules that match an indexed sibling. Third-party packages
+    return None, so they never create phantom file→file edges.
+    """
+    if not spec:
+        return None
+    posix_from = from_path.replace("\\", "/")
+    dir_parts = posix_from.split("/")[:-1]
+
+    if spec.startswith("."):
+        base = _normalize_relative(dir_parts, spec)
+        # TS/ESM writes ``./foo.js`` to mean ``./foo.ts``; try both forms.
+        stripped = _JS_SUFFIX_RE.sub("", base)
+        bases = [base, stripped] if stripped != base else [base]
+        for candidate_base in bases:
+            for ext in _ALL_IMPORT_EXTENSIONS:
+                candidate = f"{candidate_base}{ext}"
+                if candidate in known_paths:
+                    return candidate
+        for candidate_base in bases:
+            for ext in _ALL_IMPORT_EXTENSIONS:
+                candidate = f"{candidate_base}/index{ext}"
+                if candidate in known_paths:
+                    return candidate
+        return None
+
+    if _BARE_MODULE_RE.match(spec):
+        module_path = spec.replace(".", "/")
+        prefix = "/".join(dir_parts)
+        candidates = [
+            f"{prefix}/{module_path}.py" if prefix else f"{module_path}.py",
+            f"{module_path}.py",
+            f"{prefix}/{module_path}/__init__.py" if prefix else f"{module_path}/__init__.py",
+        ]
+        for candidate in candidates:
+            if candidate in known_paths:
+                return candidate
+    return None
+
+
+def build_dependency_graph(
+    file_indices: list[FileIndex],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build graph nodes/edges, including resolved file→file import edges."""
+    known_paths = {fi.relative_path for fi in file_indices}
+    graph_nodes: list[dict[str, Any]] = []
+    graph_edges: list[dict[str, Any]] = []
+
+    for fi in file_indices:
+        file_node_id = f"file:{fi.relative_path}"
+        graph_nodes.append(
+            {
+                "id": file_node_id,
+                "type": "file",
+                "filePath": fi.relative_path,
+                "meta": {"lineCount": fi.line_count, "language": fi.language},
+            }
+        )
+
+        for sym in fi.symbols:
+            sym_id = f"{fi.relative_path}::{sym.name}"
+            graph_nodes.append(
+                {
+                    "id": sym_id,
+                    "type": sym.kind,
+                    "filePath": fi.relative_path,
+                    "startLine": sym.start_line,
+                    "endLine": sym.end_line,
+                    "signatureHash": compute_file_hash(sym.signature),
+                    "meta": asdict(sym),
+                }
+            )
+            graph_edges.append(
+                {
+                    "source": file_node_id,
+                    "target": sym_id,
+                    "type": "structural_import",
+                }
+            )
+
+        for imp in fi.imports:
+            graph_edges.append(
+                {
+                    "source": file_node_id,
+                    "target": f"import:{imp}",
+                    "type": "import_reference",
+                }
+            )
+            target_file = resolve_local_import(imp, fi.relative_path, known_paths)
+            if target_file and target_file != fi.relative_path:
+                graph_edges.append(
+                    {
+                        "source": file_node_id,
+                        "target": f"file:{target_file}",
+                        "type": "file_import",
+                    }
+                )
+
+    return graph_nodes, graph_edges
+
+
 def index_entire_project(project_root_str: str) -> dict[str, Any]:
     """Walk the project tree and index all supported source files."""
     start_time = time.monotonic()
@@ -596,50 +724,18 @@ def index_entire_project(project_root_str: str) -> dict[str, Any]:
                     file_indices.append(idx)
 
     symbols_map: dict[str, list[dict[str, Any]]] = {}
-    graph_nodes: list[dict[str, Any]] = []
-    graph_edges: list[dict[str, Any]] = []
 
     total_symbols = 0
     for fi in file_indices:
-        file_node_id = f"file:{fi.relative_path}"
-        graph_nodes.append({
-            "id": file_node_id,
-            "type": "file",
-            "filePath": fi.relative_path,
-            "meta": {"lineCount": fi.line_count, "language": fi.language},
-        })
-
         for sym in fi.symbols:
             total_symbols += 1
-            sym_id = f"{fi.relative_path}::{sym.name}"
             sym_dict = asdict(sym)
 
             if sym.name not in symbols_map:
                 symbols_map[sym.name] = []
             symbols_map[sym.name].append(sym_dict)
 
-            graph_nodes.append({
-                "id": sym_id,
-                "type": sym.kind,
-                "filePath": fi.relative_path,
-                "startLine": sym.start_line,
-                "endLine": sym.end_line,
-                "signatureHash": compute_file_hash(sym.signature),
-                "meta": sym_dict,
-            })
-
-            graph_edges.append({
-                "source": file_node_id,
-                "target": sym_id,
-                "type": "structural_import",
-            })
-
-        for imp in fi.imports:
-            graph_edges.append({
-                "source": file_node_id,
-                "target": f"import:{imp}",
-                "type": "import_reference",
-            })
+    graph_nodes, graph_edges = build_dependency_graph(file_indices)
 
     profile = detect_project_profile(project_root, file_indices)
     landmarks = extract_architectural_landmarks(project_root, file_indices)
@@ -746,6 +842,11 @@ def update_file_incremental(project_root_str: str, relative_path: str) -> Option
     existing_index["updated_at"] = time.time()
     existing_index["total_symbols"] = total_symbols
     existing_index["symbols"] = symbols_map
+    # Rebuild the graph so incremental saves do not leave it stale (the graph
+    # previously kept whatever the last full index produced, so new symbols and
+    # imports were invisible to blast-radius / dependency queries).
+    graph_nodes, graph_edges = build_dependency_graph(file_indices)
+    existing_index["graph"] = {"nodes": graph_nodes, "edges": graph_edges}
     existing_index["profile"] = detect_project_profile(project_root, file_indices)
     existing_index["landmarks"] = existing_index.get("landmarks", {})
     existing_index["architecture"] = {

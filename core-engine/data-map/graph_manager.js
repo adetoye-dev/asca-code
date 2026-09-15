@@ -33,6 +33,8 @@ const NODE_TYPES = Object.freeze(
 const EDGE_TYPES = Object.freeze(
   /** @type {const} */ ({
     IMPORT: "structural_import",
+    /** file → file edge for a resolved project-local import. */
+    FILE_IMPORT: "file_import",
     DATA_FLOW: "data_flow_call",
     SCHEMA_SUB: "schema_subscription",
     PROP_READ: "property_read",
