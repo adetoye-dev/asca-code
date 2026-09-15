@@ -1,21 +1,18 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri-v2-schema/main/tauri.conf.schema.json",
-
   "productName": "Autonomous IDE",
   "version": "0.1.0",
   "identifier": "com.autonomous-ide.app",
-
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
   },
-
   "app": {
     "windows": [
       {
-        "title": "Autonomous IDE — Local-First Code Generation",
+        "title": "Autonomous IDE \u2014 Local-First Code Generation",
         "label": "main",
         "width": 1440,
         "height": 900,
@@ -31,24 +28,22 @@
         "focus": true
       }
     ],
-
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:8080 http://localhost:8080; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
     },
-
     "withGlobalTauri": true
   },
-
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": false,
-
+    "resources": {
+      "../core-engine": "core-engine",
+      "../scripts": "scripts"
+    },
     "icon": [
       "icons/icon.png"
     ],
-
     "targets": "all",
-
     "macOS": {
       "minimumSystemVersion": "11.0",
       "frameworks": [],
@@ -57,7 +52,6 @@
       "signingIdentity": null,
       "providerShortName": null
     },
-
     "windows": {
       "digestAlgorithm": "sha256",
       "certificateThumbprint": null,
@@ -66,20 +60,26 @@
       "nsis": {
         "displayLanguageSelector": false,
         "installMode": "currentUser",
-        "languages": ["English"],
+        "languages": [
+          "English"
+        ],
         "headerImage": null,
         "sidebarImage": null
       }
     },
-
     "linux": {
       "deb": {
-        "depends": ["python3", "python3-venv"],
+        "depends": [
+          "python3",
+          "python3-venv"
+        ],
         "section": "devel",
         "priority": "optional"
       },
       "rpm": {
-        "depends": ["python3"],
+        "depends": [
+          "python3"
+        ],
         "release": "1"
       },
       "appimage": {
@@ -87,73 +87,9 @@
       }
     }
   },
-
   "plugins": {
     "shell": {
-      "open": false,
-      "scope": {
-        "sidecar": false,
-        "scopes": [
-          {
-            "name": "python-orchestrator",
-            "cmd": "python3",
-            "args": [
-              "core-engine/manager.py",
-              { "validator": "\\S+" }
-            ]
-          },
-          {
-            "name": "bootstrap-script",
-            "cmd": "bash",
-            "args": [
-              "core-engine/models/bootstrap.sh",
-              { "validator": "^--(detect|download|serve|status|kill)$" }
-            ]
-          }
-        ]
-      }
-    },
-
-    "http": {
-      "scope": {
-        "allow": [
-          {
-            "url": "http://127.0.0.1:8080/**"
-          },
-          {
-            "url": "http://localhost:8080/**"
-          }
-        ],
-        "deny": [
-          {
-            "url": "http://*:*/**"
-          },
-          {
-            "url": "https://*:*/**"
-          }
-        ]
-      }
-    },
-
-    "fs": {
-      "scope": {
-        "allow": [
-          "$APPDATA/**",
-          "$RESOURCE/**",
-          "$TEMP/**"
-        ],
-        "deny": [
-          "$HOME/.ssh/**",
-          "$HOME/.gnupg/**",
-          "$HOME/.aws/**",
-          "$HOME/.kube/**",
-          "/etc/**",
-          "/System/**",
-          "/usr/**",
-          "C:\\Windows\\**",
-          "C:\\Program Files\\**"
-        ]
-      }
+      "open": false
     }
   }
 }

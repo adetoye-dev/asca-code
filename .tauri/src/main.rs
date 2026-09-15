@@ -18,7 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
@@ -434,23 +434,37 @@ fn create_project_template(
 
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
 
-fn resolve_engine_dir() -> PathBuf {
-    // In development, the engine lives relative to the Tauri project root.
-    // In production, it would be bundled as a resource.
-    let candidates = vec![
-        // From .tauri/src/ → ../../core-engine
+/// Locate the bundled Python engine.
+///
+/// Order matters: a packaged app must read the copy shipped in its own resource
+/// directory. The previous candidates were all build-machine paths
+/// (`CARGO_MANIFEST_DIR`, a CWD-relative `core-engine`, an exe-relative dir),
+/// none of which exist on a user's machine — so an installed build could not
+/// find the engine at all and every AI action failed.
+fn resolve_engine_dir(resource_dir: Option<&Path>) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. Production: bundled as a Tauri resource.
+    if let Some(resources) = resource_dir {
+        candidates.push(resources.join("core-engine"));
+    }
+
+    // 2. Development: from .tauri/src/ → ../../core-engine
+    candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("core-engine"),
-        // From project root
-        PathBuf::from("core-engine"),
-        // Absolute fallback for bundled apps
+    );
+    // 3. Development: relative to the working directory.
+    candidates.push(PathBuf::from("core-engine"));
+    // 4. Last resort: next to the executable.
+    candidates.push(
         std::env::current_exe()
             .unwrap_or_default()
             .parent()
             .unwrap_or(&PathBuf::from("."))
             .join("core-engine"),
-    ];
+    );
 
     for candidate in &candidates {
         let manager = candidate.join("manager.py");
@@ -484,7 +498,7 @@ async fn run_generation_pipeline(
     }
     sliders.validate()?;
 
-    let engine_dir = resolve_engine_dir();
+    let engine_dir = resolve_engine_dir(app_handle.path().resource_dir().ok().as_deref());
     let manager_path = engine_dir.join("manager.py");
 
     if !manager_path.exists() {
@@ -766,7 +780,7 @@ fn main() {
             }
             println!(
                 "[IDE] Autonomous IDE started. Engine dir: {:?}",
-                resolve_engine_dir()
+                resolve_engine_dir(app.path().resource_dir().ok().as_deref())
             );
             Ok(())
         })
