@@ -449,6 +449,83 @@ export function getDefaultProvider(): AIProviderConfig {
   return all[defaultId] || all.ollama;
 }
 
+export interface EditorAiConfig {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+  /** Where the config came from — surfaced so a local fallback is never silent. */
+  source: "selected" | "configured" | "settings" | "local";
+}
+
+/**
+ * Resolves the model that editor AI features (review, inline edit, Code Map
+ * explanations) should use.
+ *
+ * They used to take `aiSettings`, a legacy blob persisted under different keys
+ * from the provider registry, so it frequently carried provider "ollama" with
+ * no key while the user's real cloud key sat in the registry — silently
+ * degrading every editor AI call to a small local worker. Resolution now walks
+ * the same sources the chat uses before falling back to a local model.
+ */
+export function resolveEditorAiConfig(
+  settings?: { provider?: string; model?: string; apiKey?: string; baseUrl?: string } | null
+): EditorAiConfig {
+  const s = settings || {};
+  const all = loadAllProviders() as Record<string, AIProviderConfig>;
+  const hasUsableKey = (key?: string) => Boolean(key && key.trim().length > 3);
+
+  // 1. The model the user explicitly picked for chat/agent work.
+  const active = getActiveSelectedModel();
+  if (active) {
+    const cfg = all[active.providerId as string];
+    if (hasUsableKey(cfg?.apiKey)) {
+      return {
+        provider: active.providerId,
+        model: active.model,
+        apiKey: cfg.apiKey || "",
+        baseUrl: cfg.baseUrl || "",
+        source: "selected",
+      };
+    }
+  }
+
+  // 2. Any configured cloud provider with a usable key (default first).
+  const preferred = getDefaultProvider();
+  const candidates = [preferred, ...Object.values(all)];
+  for (const cfg of candidates) {
+    if (cfg && cfg.category === "cloud" && hasUsableKey(cfg.apiKey)) {
+      return {
+        provider: cfg.id,
+        model: cfg.selectedModel || cfg.availableModels?.[0] || "",
+        apiKey: cfg.apiKey || "",
+        baseUrl: cfg.baseUrl || "",
+        source: "configured",
+      };
+    }
+  }
+
+  // 3. The legacy settings blob, when it actually carries a key.
+  if (hasUsableKey(s.apiKey)) {
+    return {
+      provider: s.provider || "ollama",
+      model: s.model || "",
+      apiKey: s.apiKey || "",
+      baseUrl: s.baseUrl || "",
+      source: "settings",
+    };
+  }
+
+  // 4. Local worker — the honest fallback, and the UI says so.
+  return {
+    provider: "ollama",
+    model: getAutoSelectedLocalWorker(),
+    apiKey: "",
+    baseUrl: "",
+    source: "local",
+  };
+}
+
 export const LOCAL_WORKER_KEY = "acsa_local_worker_model";
 
 /**

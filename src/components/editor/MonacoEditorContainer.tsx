@@ -18,6 +18,7 @@ import { registerAiInlineCompletions, executeInlineEdit } from "../../services/a
 import { reviewFile, isReviewableFile, type ReviewIssue } from "../../services/aiReview";
 import { configureMonacoTypeScript } from "../../services/monacoTsConfig";
 import { applyMonacoTheme } from "../../services/themeManager";
+import { getAutoSelectedLocalWorker, resolveEditorAiConfig } from "../../services/aiModelManager";
 import type { AISettings } from "../SettingsModal";
 
 interface MonacoEditorContainerProps {
@@ -108,14 +109,31 @@ export function MonacoEditorContainer({
     inlineAbortControllerRef.current = controller;
     try {
       const codeToEdit = selectedCode || model.getLineContent(selection.startLineNumber);
-      const result = await executeInlineEdit({
+      const inlineAi = resolveEditorAiConfig(settingsRef.current);
+      let result = await executeInlineEdit({
         instruction: inlinePrompt,
         selectedCode: codeToEdit,
         surroundingPrefix: prefix,
         surroundingSuffix: suffix,
-        settings: settingsRef.current,
+        settings: inlineAi,
         signal: controller.signal,
       });
+      if (!result.ok && inlineAi.provider !== "ollama") {
+        // Cloud key rejected (expired/revoked): retry locally instead of failing.
+        result = await executeInlineEdit({
+          instruction: inlinePrompt,
+          selectedCode: codeToEdit,
+          surroundingPrefix: prefix,
+          surroundingSuffix: suffix,
+          settings: {
+            provider: "ollama",
+            model: getAutoSelectedLocalWorker(),
+            apiKey: "",
+            baseUrl: "",
+          },
+          signal: controller.signal,
+        });
+      }
       if (!result.ok) {
         if (result.reason) console.warn(result.reason);
         return;
@@ -206,12 +224,31 @@ export function MonacoEditorContainer({
     setIsReviewing(true);
     setReviewError("");
     try {
-      const result = await reviewFile({
+      const ai = resolveEditorAiConfig(settingsRef.current);
+      let result = await reviewFile({
         path,
         content: editor.getValue(),
         language: getLanguage(path),
-        settings: settingsRef.current,
+        settings: ai,
       });
+      // A configured cloud key can still be rejected (expired / revoked / out of
+      // credit). Rather than dead-ending the review, retry on the local worker —
+      // and report the downgrade so it is never silent.
+      if (!result.ok && ai.provider !== "ollama") {
+        const localModel = getAutoSelectedLocalWorker();
+        const retry = await reviewFile({
+          path,
+          content: editor.getValue(),
+          language: getLanguage(path),
+          settings: { provider: "ollama", model: localModel, apiKey: "", baseUrl: "" },
+        });
+        if (retry.ok) {
+          result = {
+            ...retry,
+            note: `${ai.provider} request failed (${result.error || "error"}) — reviewed with local ${localModel} instead.`,
+          };
+        }
+      }
       if (!result.ok) {
         clearReview();
         setReviewNote("");
@@ -311,13 +348,28 @@ export function MonacoEditorContainer({
 
     setFixingIndex(index);
     try {
-      const result = await executeInlineEdit({
+      const fixAi = resolveEditorAiConfig(settingsRef.current);
+      let result = await executeInlineEdit({
         instruction,
         selectedCode,
         surroundingPrefix: prefix.slice(-800),
         surroundingSuffix: suffix.slice(0, 800),
-        settings: settingsRef.current,
+        settings: fixAi,
       });
+      if (!result.ok && fixAi.provider !== "ollama") {
+        result = await executeInlineEdit({
+          instruction,
+          selectedCode,
+          surroundingPrefix: prefix.slice(-800),
+          surroundingSuffix: suffix.slice(0, 800),
+          settings: {
+            provider: "ollama",
+            model: getAutoSelectedLocalWorker(),
+            apiKey: "",
+            baseUrl: "",
+          },
+        });
+      }
       if (result.ok && result.replacement && result.replacement.trim()) {
         editor.executeEdits("acsa-fix", [{ range, text: result.replacement }]);
         // Line numbers of the other findings are no longer valid after this
@@ -561,7 +613,9 @@ export function MonacoEditorContainer({
 
     // Register AI Ghost Text Autocomplete
     if (!aiDisposableRef.current) {
-      aiDisposableRef.current = registerAiInlineCompletions(monaco, () => settingsRef.current);
+      aiDisposableRef.current = registerAiInlineCompletions(monaco, () =>
+        resolveEditorAiConfig(settingsRef.current)
+      );
     }
 
     // Reveal target line if provided
@@ -789,7 +843,7 @@ export function MonacoEditorContainer({
               <span>✨</span>
               <span>ACSA Inline Edit</span>
               <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-mono">
-                {settingsRef.current.model || "Active AI"}
+                {resolveEditorAiConfig(settingsRef.current).model || "Active AI"}
               </span>
             </span>
             <div className="flex items-center gap-2">

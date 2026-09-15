@@ -50,7 +50,6 @@ export function CodeMapGraph({
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverRef = useRef<LayoutNode | null>(null);
-  const fittedRef = useRef(false);
 
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -59,7 +58,13 @@ export function CodeMapGraph({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const update = () => setSize({ width: el.clientWidth, height: el.clientHeight });
+    const update = () => {
+      // A sizing transition (e.g. the details panel opening) can briefly report
+      // 0x0. Feeding that to the canvas makes zoom-to-fit produce an invalid
+      // transform that never recovers, so ignore degenerate frames.
+      if (el.clientWidth < 40 || el.clientHeight < 40) return;
+      setSize({ width: el.clientWidth, height: el.clientHeight });
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -189,37 +194,49 @@ export function CodeMapGraph({
   }, []);
 
   const handleEngineStop = useCallback(() => {
-    if (fittedRef.current) return;
-    fittedRef.current = true;
+    // Fit whenever the layout settles (initial load, after symbol expansion,
+    // after toggling clusters). A manual zoom is preserved because the engine
+    // only stops when something actually changed.
+    if (size.width < 40 || size.height < 40) return;
     try {
       graphRef.current?.zoomToFit(500, 70, (n: any) => isActive(n as ArchNode));
     } catch {
       /* nothing to fit */
     }
-  }, [isActive]);
+  }, [isActive, size]);
 
-  // Tame the default forces: the stock charge flings disconnected files far
-  // away, so a zoom-to-fit ends up shrinking the whole map to a dot.
+  // Seed a compact, deterministic starting layout (golden-angle spiral) and
+  // tame the forces. Positions are re-seeded on every layout change: node
+  // objects persist across changes, so stale coordinates from a previous shape
+  // could otherwise stretch the extent and shrink the whole map to a dot.
   useEffect(() => {
+    graphData.nodes.forEach((node: any, index: number) => {
+      const radius = 11 * Math.sqrt(index);
+      const angle = index * 2.399963229728653; // golden angle
+      node.x = Math.cos(angle) * radius;
+      node.y = Math.sin(angle) * radius;
+    });
     const fg = graphRef.current;
     if (!fg) return;
     const charge = fg.d3Force("charge") as any;
-    charge?.strength(-34)?.distanceMax?.(260);
+    charge?.strength(-28)?.distanceMax?.(190);
     const link = fg.d3Force("link") as any;
-    link?.distance?.(34);
+    link?.distance?.(26);
     const center = fg.d3Force("center") as any;
-    center?.strength?.(0.12);
+    center?.strength?.(0.28);
     try {
+      // Frame the freshly seeded layout immediately so the camera never keeps a
+      // transform from a previous shape (which left the map off-screen), then
+      // reheat: onEngineStop fits again once the layout settles.
+      if (size.width >= 40 && size.height >= 40) {
+        fg.zoomToFit?.(0, 70, (n: any) => isActive(n as ArchNode));
+      }
       fg.d3ReheatSimulation();
     } catch {
       /* older builds */
     }
-  }, [graphData]);
+  }, [graphData, isActive, size]);
 
-  // Re-fit when the lens changes to a completely different node set.
-  useEffect(() => {
-    fittedRef.current = false;
-  }, [hiddenCommunities, depthFocus]);
 
   return (
     <div ref={wrapRef} className="relative h-full w-full bg-[#0d0d10] rounded-xl border border-hairline overflow-hidden">

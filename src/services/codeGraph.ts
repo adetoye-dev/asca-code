@@ -245,7 +245,14 @@ export function buildArchitectureGraph(
   try {
     // A low resolution merges micro-clusters into recognisable subsystems,
     // which is what makes the map readable rather than confetti.
-    const mapping = louvain(nodeGraph, { resolution: 0.6 });
+    // Louvain is randomised, so it gets a fixed seed — otherwise the clusters
+    // (and their colours and labels) reshuffle on every reload.
+    let seed = 20240915;
+    const rng = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    const mapping = louvain(nodeGraph, { resolution: 0.6, rng });
     Object.entries(mapping).forEach(([node, community]) => {
       communityOf.set(node, community as number);
     });

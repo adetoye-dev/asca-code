@@ -8,7 +8,17 @@
  */
 
 import type * as MonacoType from "monaco-editor";
-import type { AISettings } from "../components/SettingsModal";
+/**
+ * The fields editor AI calls actually need. Both the legacy `AISettings` blob
+ * and the resolved editor config (which prefers a configured cloud provider)
+ * satisfy this, so callers are free to pass either.
+ */
+export interface EditorAiSettings {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+}
 
 let activeAbortController: AbortController | null = null;
 let debounceTimer: any = null;
@@ -16,7 +26,7 @@ let pendingResolver: ((value: any) => void) | null = null;
 
 export function registerAiInlineCompletions(
   monaco: typeof MonacoType,
-  getSettings: () => AISettings
+  getSettings: () => EditorAiSettings
 ): MonacoType.IDisposable {
   return monaco.languages.registerInlineCompletionsProvider("*", {
     provideInlineCompletions: async (model, position, _context, token) => {
@@ -116,7 +126,7 @@ export function registerAiInlineCompletions(
 interface FetchParams {
   prefix: string;
   suffix: string;
-  settings: AISettings;
+  settings: EditorAiSettings;
   signal: AbortSignal;
 }
 
@@ -234,7 +244,7 @@ export async function executeInlineEdit({
   selectedCode: string;
   surroundingPrefix: string;
   surroundingSuffix: string;
-  settings: AISettings;
+  settings: EditorAiSettings;
   signal?: AbortSignal;
 }): Promise<InlineEditResult> {
   const { provider, model, apiKey, baseUrl } = settings;

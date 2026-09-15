@@ -752,6 +752,20 @@ async function resolveEditorProvider(params: {
       note: "",
     };
   }
+  // The engine may already hold the key (AIDE_API_KEY), e.g. when the provider
+  // was configured outside the settings UI. Prefer it over degrading to a
+  // small local model.
+  const envKey = (process.env.AIDE_API_KEY || "").trim();
+  const envProvider = (process.env.AIDE_PROVIDER || "").trim();
+  if (envKey && (!envProvider || envProvider === provider)) {
+    return {
+      provider,
+      model: params.model || process.env.AIDE_MODEL || "",
+      apiKey: envKey,
+      baseUrl: params.baseUrl || process.env.AIDE_BASE_URL || "",
+      note: `Used the key from the environment (${provider}).`,
+    };
+  }
   const localModel = await pickBestLocalOllamaModel();
   if (localModel) {
     return {

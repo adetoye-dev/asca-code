@@ -35,6 +35,7 @@ import {
 } from "../../services/codeGraph";
 import { CodeMapGraph } from "./CodeMapGraph";
 import { streamChatCompletion } from "../../services/aiChatService";
+import { getAutoSelectedLocalWorker, resolveEditorAiConfig } from "../../services/aiModelManager";
 import type { AISettings } from "../SettingsModal";
 import {
   fetchBlastRadius,
@@ -238,44 +239,55 @@ export function CodeMapDashboard({
         }
 
         const facts = graph ? describeFileRole(entry, graph, entrypoints).join(" ") : "";
-        let acc = "";
-        await streamChatCompletion({
-          provider: aiSettings?.provider || "ollama",
-          model: aiSettings?.model || "",
-          apiKey: aiSettings?.apiKey || "",
-          baseUrl: aiSettings?.baseUrl || "",
-          projectRoot,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You explain code to an engineer who is new to this codebase. Answer in 3-5 short sentences of plain prose — no markdown, no bullet lists, no code fences. Cover what this file is for, how it fits the rest of the codebase, and anything to know before changing it.",
-            },
-            {
-              role: "user",
-              content: `File: ${entry.path}\nIndexed facts: ${facts || "(none)"}\n\nSource:\n${source.slice(0, 8000) || "(source unavailable)"}`,
-            },
-          ],
-          onDelta: (delta) => {
-            acc += delta;
-            setAiSummary(acc.trim());
+        const ai = resolveEditorAiConfig(aiSettings);
+        const messages = [
+          {
+            role: "system" as const,
+            content:
+              "You explain code to an engineer who is new to this codebase. Answer in 3-5 short sentences of plain prose — no markdown, no bullet lists, no code fences. Cover what this file is for, how it fits the rest of the codebase, and anything to know before changing it.",
           },
-          onDone: () => {
-            const final = acc.trim();
-            if (final) {
-              try {
-                localStorage.setItem(cacheKey, final);
-              } catch {
-                /* cache is best-effort */
-              }
-            }
-            setIsExplaining(false);
+          {
+            role: "user" as const,
+            content: `File: ${entry.path}\nIndexed facts: ${facts || "(none)"}\n\nSource:\n${source.slice(0, 8000) || "(source unavailable)"}`,
           },
-          onError: (message) => {
-            setExplainError(message || "Explanation failed.");
-            setIsExplaining(false);
-          },
-        });
+        ];
+
+        const run = (cfg: { provider: string; model: string; apiKey: string; baseUrl: string }) =>
+          new Promise<string>((resolve, reject) => {
+            let acc = "";
+            streamChatCompletion({
+              ...cfg,
+              projectRoot,
+              messages,
+              onDelta: (delta) => {
+                acc += delta;
+                setAiSummary(acc.trim());
+              },
+              onDone: () => resolve(acc.trim()),
+              onError: (message) => reject(new Error(message || "Explanation failed.")),
+            }).catch((err) => reject(err instanceof Error ? err : new Error(String(err))));
+          });
+
+        let final = "";
+        try {
+          final = await run(ai);
+        } catch (err: any) {
+          // A rejected cloud key should not dead-end: retry locally and say so.
+          if (ai.provider === "ollama") throw err;
+          const localModel = getAutoSelectedLocalWorker();
+          final = await run({ provider: "ollama", model: localModel, apiKey: "", baseUrl: "" });
+          if (final) {
+            setExplainError(`${ai.provider} request failed — explained with local ${localModel} instead.`);
+          }
+        }
+        if (final) {
+          try {
+            localStorage.setItem(cacheKey, final);
+          } catch {
+            /* cache is best-effort */
+          }
+        }
+        setIsExplaining(false);
       } catch (err: any) {
         setExplainError(err?.message || "Explanation failed.");
         setIsExplaining(false);
@@ -335,6 +347,280 @@ export function CodeMapDashboard({
         <div className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">{symbol.signature}</div>
       )}
     </button>
+  );
+
+  const detailsPane = (
+    <>
+            {selectedFile && selectedEntry ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFile(null)}
+                    className="p-1 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
+                    title="Back to overview"
+                  >
+                    <Icon icon={ArrowLeft} className="w-3.5 h-3.5" />
+                  </button>
+                  <FileIcon fileName={selectedEntry.path} className="w-4 h-4 shrink-0" />
+                  <span className="text-[13px] font-medium text-zinc-100 font-mono truncate">
+                    {selectedEntry.path}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                  <Chip label="lines" value={selectedEntry.lines} />
+                  <Chip label="symbols" value={selectedEntry.symbolCount} />
+                  <Chip label="imports" value={selectedImportCount} />
+                  <Chip label="importer files" value={selectedDirectDependents} tone="amber" />
+                  {selectedEntry.language && <Chip label="lang" value={selectedEntry.language} />}
+                  <button
+                    type="button"
+                    onClick={() => onOpenFile(selectedEntry.path, 1)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-600/80 hover:bg-purple-500 text-white font-medium transition-colors"
+                  >
+                    <Icon icon={Crosshair} className="w-3 h-3" />
+                    Open file
+                  </button>
+                </div>
+
+                {/* What this file is for — instant, from indexed facts. */}
+                <Card title="Role in this codebase">
+                  <ul className="space-y-1 px-1 py-0.5">
+                    {(graph ? describeFileRole(selectedEntry, graph, entrypoints) : []).map(
+                      (line) => (
+                        <li key={line} className="flex items-start gap-1.5 text-[11px] text-zinc-300">
+                          <span className="text-zinc-600 mt-[1px]">•</span>
+                          <span className="leading-snug">{line}</span>
+                        </li>
+                      )
+                    )}
+                  </ul>
+                  <div className="mt-2 pt-2 border-t border-hairline">
+                    {aiSummary ? (
+                      <p className="text-[11px] text-zinc-400 leading-relaxed whitespace-pre-wrap px-1">
+                        {aiSummary}
+                      </p>
+                    ) : explainError ? (
+                      <div className="flex items-start gap-1.5 px-1 text-[11px] text-red-300">
+                        <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
+                        <span className="leading-snug">{explainError}</span>
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => explainFile(selectedEntry)}
+                      disabled={isExplaining}
+                      className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-purple-600/80 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
+                      title="Ask the active model to explain this file's purpose"
+                    >
+                      <Icon icon={Sparkles} className="w-3 h-3" />
+                      {isExplaining ? "Explaining…" : aiSummary ? "Regenerate explanation" : "Explain with AI"}
+                    </button>
+                  </div>
+                </Card>
+
+                <Card title={`Symbols (${outline.length})`}>
+                  {isLoadingFile && <div className="text-[11px] text-zinc-500 px-1">Loading…</div>}
+                  {!isLoadingFile && outline.length === 0 && (
+                    <div className="text-[11px] text-zinc-500 px-1">
+                      No top-level symbols indexed in this file.
+                    </div>
+                  )}
+                  {outline.map((s) => renderSymbolRow(s, false))}
+                </Card>
+
+                <Card title={`Blast radius — ${dependents.length} file(s) affected by a change`}>
+                  {dependents.length === 0 ? (
+                    <div className="text-[11px] text-zinc-500 px-1">
+                      Nothing depends on this file (transitively) — safe to change in isolation.
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {dependents.map((dep) => (
+                        <button
+                          key={dep}
+                          type="button"
+                          onClick={() => setSelectedFile(dep)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
+                        >
+                          <Icon icon={CornerDownRight} className="w-3 h-3 text-zinc-500 shrink-0" />
+                          <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                            {dep}
+                          </span>
+                          <span className="text-[10px] text-zinc-600 font-mono shrink-0">
+                            {dirname(dep) || "."}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card title={`Imports ${selectedImportCount} file(s)`}>
+                  {(graph?.importsOf.get(selectedEntry.path) || []).length === 0 ? (
+                    <div className="text-[11px] text-zinc-500 px-1">
+                      Nothing project-local is imported here.
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {(graph?.importsOf.get(selectedEntry.path) || []).map((dep) => (
+                        <button
+                          key={dep}
+                          type="button"
+                          onClick={() => setSelectedFile(dep)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
+                        >
+                          <Icon icon={ArrowDownToLine} className="w-3 h-3 text-zinc-500 shrink-0" />
+                          <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                            {dep}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </>
+            ) : (
+              <>
+                <Card title="Architecture">
+                  {!indexMap && !error && (
+                    <div className="text-[11px] text-zinc-500 px-1">No index loaded.</div>
+                  )}
+                  {indexMap && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
+                        <Meta label="Archetype" value={indexMap.architecture.archetype || "—"} />
+                        <Meta label="Mode" value={indexMap.architecture.mode || "—"} />
+                        <Meta label="Scale tier" value={indexMap.architecture.scaleTier || "—"} />
+                        <Meta
+                          label="Frameworks"
+                          value={
+                            (indexMap.profile?.frameworks || indexMap.architecture.ecosystems || [])
+                              .join(", ") || "—"
+                          }
+                        />
+                        <Meta
+                          label="Languages"
+                          value={
+                            indexMap.profile?.languages
+                              ? Object.entries(indexMap.profile.languages)
+                                  .sort((a, b) => b[1] - a[1])
+                                  .map(([l, n]) => `${l} ${n}`)
+                                  .join(" · ")
+                              : "—"
+                          }
+                        />
+                        <Meta
+                          label="Updated"
+                          value={
+                            indexMap.updatedAt
+                              ? new Date(Number(indexMap.updatedAt) * 1000).toLocaleString()
+                              : "—"
+                          }
+                        />
+                      </div>
+                      {indexMap.architecture.entrypoints.length > 0 && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+                            Entrypoints
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {indexMap.architecture.entrypoints.map((ep) => (
+                              <button
+                                key={ep}
+                                type="button"
+                                onClick={() => onOpenFile(ep, 1)}
+                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono hover:bg-emerald-500/20 transition-colors"
+                              >
+                                {ep}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+
+                {landmarks.length > 0 && (
+                  <Card title="Landmarks">
+                    <div className="space-y-2">
+                      {landmarks.map(([key, value]) => (
+                        <div key={key} className="text-[11px]">
+                          <span className="text-zinc-500 font-mono">{key.replace(/_/g, " ")}</span>
+                          <div className="flex flex-wrap gap-1.5 mt-1">
+                            {String(value)
+                              .split(/,\s*/)
+                              .map((item) => item.trim())
+                              .filter(Boolean)
+                              .map((item) =>
+                                indexMap?.files.some((f) => f.path === item) ? (
+                                  <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => setSelectedFile(item)}
+                                    className="px-2 py-0.5 rounded-md bg-zinc-800/70 border border-zinc-700/60 text-zinc-300 text-[10px] font-mono hover:bg-zinc-700 transition-colors"
+                                  >
+                                    {item}
+                                  </button>
+                                ) : (
+                                  <span
+                                    key={item}
+                                    className="px-2 py-0.5 rounded-md bg-zinc-900/60 border border-zinc-800 text-zinc-500 text-[10px] font-mono"
+                                  >
+                                    {item}
+                                  </span>
+                                )
+                              )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                {graph && graph.hubs.length > 0 && (
+                  <Card title="Most depended-on files (by importer count)">
+                    <div className="space-y-0.5">
+                      {graph.hubs.slice(0, 12).map((hub) => (
+                        <button
+                          key={hub.path}
+                          type="button"
+                          onClick={() => setSelectedFile(hub.path)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
+                        >
+                          <FileIcon fileName={hub.path} className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                            {hub.path}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                            {hub.imports} imports
+                          </span>
+                          <span className="text-[10px] text-amber-300/90 font-mono shrink-0 w-[74px] text-right">
+                            {hub.dependents} importers
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                {!indexMap && error && (
+                  <Card title="Getting started">
+                    <div className="text-[11px] text-zinc-400 leading-relaxed px-1">
+                      The code map is built from the AST symbol index in{" "}
+                      <span className="font-mono text-zinc-300">.acsa/index.json</span>. Run{" "}
+                      <span className="font-mono text-zinc-300">Re-index</span> above to generate it for{" "}
+                      <span className="font-mono text-zinc-300">{projectName || projectRoot}</span>.
+                    </div>
+                  </Card>
+                )}
+              </>
+            )}
+    </>
   );
 
   return (
@@ -568,9 +854,11 @@ export function CodeMapDashboard({
           </div>
         </div>
 
-        {/* ── Centre: interactive map (Map lens only) ───────────────────── */}
+        {/* ── Centre: interactive map (Map lens only). The details panel is an
+             overlay so opening it never resizes (and re-frames) the canvas. ── */}
         {lens === "graph" && (
-          <div className="flex-1 min-w-0 p-3">
+          <div className="flex-1 min-w-0 relative">
+            <div className="absolute inset-0 p-3">
             {architecture && architecture.nodes.length > 0 ? (
               <CodeMapGraph
                 nodes={architecture.nodes}
@@ -587,289 +875,21 @@ export function CodeMapDashboard({
                 {isLoading ? "Building code map…" : "No resolvable dependencies to graph yet."}
               </div>
             )}
+            </div>
+
+            {selectedFile && (
+              <div className="absolute top-3 right-3 bottom-3 w-[340px] z-10 overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
+                {detailsPane}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── Right: file detail (Index lens) or the selected file (Map lens) ── */}
-        {(lens === "index" || selectedFile) && (
-        <div
-          className={
-            lens === "graph"
-              ? "w-[340px] shrink-0 border-l border-hairline overflow-y-auto p-4 space-y-4"
-              : "flex-1 min-w-0 overflow-y-auto p-4 space-y-4"
-          }
-        >
-          {selectedFile && selectedEntry ? (
-            <>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedFile(null)}
-                  className="p-1 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-                  title="Back to overview"
-                >
-                  <Icon icon={ArrowLeft} className="w-3.5 h-3.5" />
-                </button>
-                <FileIcon fileName={selectedEntry.path} className="w-4 h-4 shrink-0" />
-                <span className="text-[13px] font-medium text-zinc-100 font-mono truncate">
-                  {selectedEntry.path}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                <Chip label="lines" value={selectedEntry.lines} />
-                <Chip label="symbols" value={selectedEntry.symbolCount} />
-                <Chip label="imports" value={selectedImportCount} />
-                <Chip label="importer files" value={selectedDirectDependents} tone="amber" />
-                {selectedEntry.language && <Chip label="lang" value={selectedEntry.language} />}
-                <button
-                  type="button"
-                  onClick={() => onOpenFile(selectedEntry.path, 1)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-600/80 hover:bg-purple-500 text-white font-medium transition-colors"
-                >
-                  <Icon icon={Crosshair} className="w-3 h-3" />
-                  Open file
-                </button>
-              </div>
-
-              {/* What this file is for — instant, from indexed facts. */}
-              <Card title="Role in this codebase">
-                <ul className="space-y-1 px-1 py-0.5">
-                  {(graph ? describeFileRole(selectedEntry, graph, entrypoints) : []).map(
-                    (line) => (
-                      <li key={line} className="flex items-start gap-1.5 text-[11px] text-zinc-300">
-                        <span className="text-zinc-600 mt-[1px]">•</span>
-                        <span className="leading-snug">{line}</span>
-                      </li>
-                    )
-                  )}
-                </ul>
-                <div className="mt-2 pt-2 border-t border-hairline">
-                  {aiSummary ? (
-                    <p className="text-[11px] text-zinc-400 leading-relaxed whitespace-pre-wrap px-1">
-                      {aiSummary}
-                    </p>
-                  ) : explainError ? (
-                    <div className="flex items-start gap-1.5 px-1 text-[11px] text-red-300">
-                      <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
-                      <span className="leading-snug">{explainError}</span>
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => explainFile(selectedEntry)}
-                    disabled={isExplaining}
-                    className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-purple-600/80 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
-                    title="Ask the active model to explain this file's purpose"
-                  >
-                    <Icon icon={Sparkles} className="w-3 h-3" />
-                    {isExplaining ? "Explaining…" : aiSummary ? "Regenerate explanation" : "Explain with AI"}
-                  </button>
-                </div>
-              </Card>
-
-              <Card title={`Symbols (${outline.length})`}>
-                {isLoadingFile && <div className="text-[11px] text-zinc-500 px-1">Loading…</div>}
-                {!isLoadingFile && outline.length === 0 && (
-                  <div className="text-[11px] text-zinc-500 px-1">
-                    No top-level symbols indexed in this file.
-                  </div>
-                )}
-                {outline.map((s) => renderSymbolRow(s, false))}
-              </Card>
-
-              <Card title={`Blast radius — ${dependents.length} file(s) affected by a change`}>
-                {dependents.length === 0 ? (
-                  <div className="text-[11px] text-zinc-500 px-1">
-                    Nothing depends on this file (transitively) — safe to change in isolation.
-                  </div>
-                ) : (
-                  <div className="space-y-0.5">
-                    {dependents.map((dep) => (
-                      <button
-                        key={dep}
-                        type="button"
-                        onClick={() => setSelectedFile(dep)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
-                      >
-                        <Icon icon={CornerDownRight} className="w-3 h-3 text-zinc-500 shrink-0" />
-                        <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
-                          {dep}
-                        </span>
-                        <span className="text-[10px] text-zinc-600 font-mono shrink-0">
-                          {dirname(dep) || "."}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </Card>
-
-              <Card title={`Imports ${selectedImportCount} file(s)`}>
-                {(graph?.importsOf.get(selectedEntry.path) || []).length === 0 ? (
-                  <div className="text-[11px] text-zinc-500 px-1">
-                    Nothing project-local is imported here.
-                  </div>
-                ) : (
-                  <div className="space-y-0.5">
-                    {(graph?.importsOf.get(selectedEntry.path) || []).map((dep) => (
-                      <button
-                        key={dep}
-                        type="button"
-                        onClick={() => setSelectedFile(dep)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
-                      >
-                        <Icon icon={ArrowDownToLine} className="w-3 h-3 text-zinc-500 shrink-0" />
-                        <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
-                          {dep}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </>
-          ) : (
-            <>
-              <Card title="Architecture">
-                {!indexMap && !error && (
-                  <div className="text-[11px] text-zinc-500 px-1">No index loaded.</div>
-                )}
-                {indexMap && (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
-                      <Meta label="Archetype" value={indexMap.architecture.archetype || "—"} />
-                      <Meta label="Mode" value={indexMap.architecture.mode || "—"} />
-                      <Meta label="Scale tier" value={indexMap.architecture.scaleTier || "—"} />
-                      <Meta
-                        label="Frameworks"
-                        value={
-                          (indexMap.profile?.frameworks || indexMap.architecture.ecosystems || [])
-                            .join(", ") || "—"
-                        }
-                      />
-                      <Meta
-                        label="Languages"
-                        value={
-                          indexMap.profile?.languages
-                            ? Object.entries(indexMap.profile.languages)
-                                .sort((a, b) => b[1] - a[1])
-                                .map(([l, n]) => `${l} ${n}`)
-                                .join(" · ")
-                            : "—"
-                        }
-                      />
-                      <Meta
-                        label="Updated"
-                        value={
-                          indexMap.updatedAt
-                            ? new Date(Number(indexMap.updatedAt) * 1000).toLocaleString()
-                            : "—"
-                        }
-                      />
-                    </div>
-                    {indexMap.architecture.entrypoints.length > 0 && (
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
-                          Entrypoints
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {indexMap.architecture.entrypoints.map((ep) => (
-                            <button
-                              key={ep}
-                              type="button"
-                              onClick={() => onOpenFile(ep, 1)}
-                              className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono hover:bg-emerald-500/20 transition-colors"
-                            >
-                              {ep}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </Card>
-
-              {landmarks.length > 0 && (
-                <Card title="Landmarks">
-                  <div className="space-y-2">
-                    {landmarks.map(([key, value]) => (
-                      <div key={key} className="text-[11px]">
-                        <span className="text-zinc-500 font-mono">{key.replace(/_/g, " ")}</span>
-                        <div className="flex flex-wrap gap-1.5 mt-1">
-                          {String(value)
-                            .split(/,\s*/)
-                            .map((item) => item.trim())
-                            .filter(Boolean)
-                            .map((item) =>
-                              indexMap?.files.some((f) => f.path === item) ? (
-                                <button
-                                  key={item}
-                                  type="button"
-                                  onClick={() => setSelectedFile(item)}
-                                  className="px-2 py-0.5 rounded-md bg-zinc-800/70 border border-zinc-700/60 text-zinc-300 text-[10px] font-mono hover:bg-zinc-700 transition-colors"
-                                >
-                                  {item}
-                                </button>
-                              ) : (
-                                <span
-                                  key={item}
-                                  className="px-2 py-0.5 rounded-md bg-zinc-900/60 border border-zinc-800 text-zinc-500 text-[10px] font-mono"
-                                >
-                                  {item}
-                                </span>
-                              )
-                            )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              )}
-
-              {graph && graph.hubs.length > 0 && (
-                <Card title="Most depended-on files (by importer count)">
-                  <div className="space-y-0.5">
-                    {graph.hubs.slice(0, 12).map((hub) => (
-                      <button
-                        key={hub.path}
-                        type="button"
-                        onClick={() => setSelectedFile(hub.path)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
-                      >
-                        <FileIcon fileName={hub.path} className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
-                          {hub.path}
-                        </span>
-                        <span className="text-[10px] text-zinc-500 font-mono shrink-0">
-                          {hub.imports} imports
-                        </span>
-                        <span className="text-[10px] text-amber-300/90 font-mono shrink-0 w-[74px] text-right">
-                          {hub.dependents} importers
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </Card>
-              )}
-
-              {!indexMap && error && (
-                <Card title="Getting started">
-                  <div className="text-[11px] text-zinc-400 leading-relaxed px-1">
-                    The code map is built from the AST symbol index in{" "}
-                    <span className="font-mono text-zinc-300">.acsa/index.json</span>. Run{" "}
-                    <span className="font-mono text-zinc-300">Re-index</span> above to generate it for{" "}
-                    <span className="font-mono text-zinc-300">{projectName || projectRoot}</span>.
-                  </div>
-                </Card>
-              )}
-            </>
-          )}
-        </div>
+        {/* ── Right column: file detail in the Index lens (Map lens overlays it) ── */}
+        {lens === "index" && (
+          <div className="flex-1 min-w-0 overflow-y-auto p-4 space-y-4">{detailsPane}</div>
         )}
+
       </div>
     </div>
   );

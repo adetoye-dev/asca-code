@@ -20,7 +20,12 @@ import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 
 export interface AISettings {
-  provider: "deterministic" | "ollama" | "local" | "openai";
+  /**
+   * Provider id. This used to be a stale union of four ids, which hid the fact
+   * that cloud providers (deepseek, anthropic, …) were valid here — accepting
+   * any provider id keeps the type honest.
+   */
+  provider: string;
   model: string;
   apiKey: string;
   baseUrl: string;
