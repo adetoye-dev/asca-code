@@ -42,10 +42,10 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Bundles and launches | **[done]** | `tauri build` produces an `.app` that starts and finds its engine in `Contents/Resources`. |
 | Engine shipped with the app | **[done]** | `bundle.resources` plus resource-dir resolution. |
 | Icons | **[partial]** | Valid generated placeholders; needs real brand art. |
-| Python runtime | **[open]** | The app shells out to `python3`. A clean macOS or Windows machine has no usable interpreter, so the agent cannot run for an end user. **Largest remaining blocker.** |
-| Code signing / notarisation | **[open]** | `signingIdentity` is `null`; unsigned builds are quarantined by Gatekeeper. See `RELEASING.md`. |
+| Python runtime | **[done]** | The engine is frozen into a single ~10 MB `acsa-engine` sidecar (`scripts/build_engine_sidecar.sh`) and resolved by the Rust and bridge spawn paths. No interpreter needed on the user's machine. |
+| Code signing / notarisation | **[partial]** | Hardened runtime and entitlements are configured and `release.yml` imports the certificate, notarises, and verifies the ticket — but it needs an Apple Developer certificate, so no signed build has been produced yet. |
 | Auto-update | **[open]** | Documented end to end in `RELEASING.md`; needs a signing key and a release host. |
-| CI | **[open]** | No `.github/workflows`. `npm run verify` (typecheck + tests) and `tauri build` should run on every push. |
+| CI | **[done]** | `ci.yml` runs typecheck + tests + build, builds the sidecar, and bundles, launches and engine-checks the `.app`. `release.yml` signs on tag. |
 
 ## Quality gates
 
@@ -79,10 +79,10 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 ## Suggested order
 
-1. **Python runtime** — nothing else matters until a clean machine can run the agent.
-2. **Signing + CI** — so there is a build anyone can install and it stays green.
-3. **Licence + notices** — required before distributing.
-4. **Secret redaction in logs**, then **crash reporting**, so support is possible.
-5. **Auto-update**, once builds are signed and there is a release host.
-6. **Backup/restore** and **keychain** for credentials.
+1. **Licence + notices** — the remaining hard blocker; required before distributing.
+2. **An Apple Developer certificate** — so `release.yml` produces a signed, notarised build rather than an unsigned one.
+3. **Secret redaction in logs**, then **crash reporting**, so support is possible.
+4. **Auto-update**, once builds are signed and there is a release host.
+5. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
+6. **Backup/restore** and **OS keychain** for credentials.
 7. **Accessibility audit**.

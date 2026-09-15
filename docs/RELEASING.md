@@ -16,8 +16,10 @@ that only the maintainer can make).
 Verify a build before shipping:
 
 ```bash
+scripts/build_engine_sidecar.sh
 cd .tauri
 ../node_modules/.bin/tauri build --bundles app
+ls "target/release/bundle/macos/Autonomous IDE.app/Contents/MacOS/acsa-engine"
 "target/release/bundle/macos/Autonomous IDE.app/Contents/MacOS/autonomous-ide" &
 # expect: [IDE] Autonomous IDE started. Engine dir: ".../Contents/Resources/core-engine"
 ```
@@ -30,20 +32,24 @@ cd .tauri
 npx tauri icon path/to/brand-1024x1024.png --output .tauri/icons
 ```
 
-## 2. Ship a Python runtime — **[blocked: product decision]**
+## 2. Ship a Python runtime — **[done]**
 
-The app runs the engine as `python3 core-engine/manager.py`.
+The engine is frozen into a single binary and shipped as a Tauri sidecar, so the
+app needs no interpreter on the user's machine.
 
-- macOS no longer ships a usable `python3`; `/usr/bin/python3` only exists once
-  Xcode Command Line Tools are installed, and otherwise triggers an install
-  prompt. Windows ships none.
-- Options: bundle a frozen engine (PyInstaller/shiv) as a Tauri **sidecar** and
-  prefer it over system `python3`; or bundle a Python runtime; or state the
-  prerequisite during onboarding.
+```bash
+scripts/build_engine_sidecar.sh        # -> .tauri/binaries/acsa-engine-<triple>
+```
 
-Until this is decided, an end user with a clean machine cannot run the agent.
+`acsa-engine` exposes the subcommands the app spawns (`manager`, `db`, `index`,
+`pty`); `bundle.externalBin` ships it and Tauri strips the triple suffix when
+bundling. Both the Rust commands and the development bridge prefer it and fall
+back to `python3 <entry point>` for a source checkout. CI rebuilds it and asserts
+each subcommand answers.
 
-## 3. Sign and notarise — **[blocked: needs an Apple Developer account]**
+Rebuild it whenever the engine changes — the bundled copy is what users run.
+
+## 3. Sign and notarise — **[configured; needs an Apple Developer account]**
 
 Unsigned builds are quarantined by Gatekeeper on other people's Macs.
 
