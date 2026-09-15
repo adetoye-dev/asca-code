@@ -94,7 +94,9 @@ Application** certificates only to members.
    security find-identity -v -p codesigning
    # want: "1 valid identities found" plus
    # "Developer ID Application: Your Name (TEAMID)"
-   # "0 valid identities found" => the private key is missing; redo step 1 here.
+   # "0 valid identities found" has two causes — see the traps below. Compare
+   # against `security find-identity -p codesigning` (no -v) before concluding
+   # that the private key is missing.
    ```
 
 4. Base64 it for CI:
@@ -113,14 +115,20 @@ Application** certificates only to members.
 #### Traps that cost us a detour
 
 - **The Keychain dropdown defaults to iCloud.** Pick **login** every time. An
-  import targeting iCloud fails with `-25294` (`errSecNoSuchKeychain`), and once
-  a copy of the certificate exists outside `login.keychain-db`, every later
-  import there is refused as
-  `SecKeychainItemImport: The specified item already exists in the keychain` —
-  while `security find-certificate -a -p ~/Library/Keychains/login.keychain-db`
-  still shows nothing. Delete the stray copy first (Keychain Access → select the
-  iCloud keychain → search the certificate name → delete), then import into
-  `login`.
+  import that targets iCloud fails with `-25294` (`errSecNoSuchKeychain`), which
+  reads like a corrupt certificate but only means the target keychain was not
+  usable. If a later import reports
+  `SecKeychainItemImport: The specified item already exists in the keychain`,
+  take it literally — the certificate is already in the keychain you selected, so
+  skip the import and go to the identity check. Confirm with:
+
+  ```bash
+  security find-certificate -a -c "<your name>" -p \
+    ~/Library/Keychains/login.keychain-db | openssl x509 -noout -subject
+  ```
+
+  Do not delete and re-import by reflex; the ordinary case is that the import
+  already worked.
 - **A `.cer` from a different machine is useless.** Only the public half lives
   in the file. If the CSR was not made on this Mac, the certificate imports but
   reports no identity, and `codesign`/CI cannot use it.
@@ -128,6 +136,33 @@ Application** certificates only to members.
   share a common name, so they overwrite each other as keychain items. Keep the
   one issued under **Developer ID Certification Authority G2** (five years) and
   revoke the rest in the portal — an older **G1** cert expires within a year.
+- **A fresh leaf often imports as "not trusted".** Keychain Access shows a red X
+  and `find-identity -v` reports `0 valid identities found` — but drop the `-v`
+  and it reports `1 identities found`. That means the certificate and private key
+  are both fine and only the **intermediate is missing**. The leaf says which one
+  it needs:
+
+  ```bash
+  security find-certificate -a -c "<your name>" -p \
+    ~/Library/Keychains/login.keychain-db | openssl x509 -noout -issuer
+  # "Developer ID Certification Authority, OU=G2"  -> you need the G2 intermediate
+  # "Developer ID Certification Authority, OU=Apple Certification Authority" -> G1
+  ```
+
+  A G2 leaf does **not** chain through the G1 intermediate even though both are
+  called "Developer ID Certification Authority" — the `OU` is what differs, and
+  macOS ships the G1 one, so the G2 leaf stays untrusted until you add G2. Install
+  the matching intermediate from <https://www.apple.com/certificateauthority/>:
+
+  ```bash
+  curl -fsSL -o /tmp/DeveloperIDG2CA.cer \
+    https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+  security import /tmp/DeveloperIDG2CA.cer -k ~/Library/Keychains/login.keychain-db
+  security find-identity -v -p codesigning   # now: 1 valid identities found
+  ```
+
+  This is normally local-only: the macOS GitHub runners already ship Apple's
+  intermediates, so the `.p12` does not need to carry the chain.
 
 ### 3b. Add the repository secrets
 
