@@ -1,0 +1,19 @@
+{
+  "//": "Type-checks the Vite dev-server bridge. It is a Node-side module that is NOT part of the browser bundle, so it has its own relaxed config (lots of untyped request bodies) — but it still catches undefined identifiers, bad imports and typos, which the browser-only config never saw.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "allowJs": false,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["vite-fs-bridge.ts"]
+}

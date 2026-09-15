@@ -23,10 +23,19 @@ import {
   AlertCircle,
   Crosshair,
   Waypoints,
+  Sparkles,
+  ArrowDownToLine,
 } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
-import { buildCodeGraph } from "../../services/codeGraph";
+import {
+  buildArchitectureGraph,
+  buildCodeGraph,
+  describeFileRole,
+} from "../../services/codeGraph";
+import { CodeMapGraph } from "./CodeMapGraph";
+import { streamChatCompletion } from "../../services/aiChatService";
+import type { AISettings } from "../SettingsModal";
 import {
   fetchBlastRadius,
   fetchFileOutline,
@@ -42,6 +51,8 @@ interface CodeMapDashboardProps {
   projectRoot: string;
   projectName?: string;
   onOpenFile: (path: string, line?: number) => void;
+  /** Provider used for the on-demand "Explain with AI" summaries. */
+  aiSettings?: AISettings | null;
 }
 
 function kindTone(kind: string): string {
@@ -58,7 +69,13 @@ function dirname(p: string): string {
   return i >= 0 ? p.slice(0, i) : "";
 }
 
-export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeMapDashboardProps) {
+export function CodeMapDashboard({
+  projectRoot,
+  projectName,
+  onOpenFile,
+  aiSettings = null,
+}: CodeMapDashboardProps) {
+  const [lens, setLens] = useState<"graph" | "index">("graph");
   const [indexMap, setIndexMap] = useState<IndexMap | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -75,11 +92,45 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
   const [dependents, setDependents] = useState<string[]>([]);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
 
+  /** Dependency communities hidden from the graph view. */
+  const [hiddenCommunities, setHiddenCommunities] = useState<Set<number>>(new Set());
+  /** Highlight only the selected file's direct neighbours. */
+  const [focusNeighborhood, setFocusNeighborhood] = useState(false);
+  const [aiSummary, setAiSummary] = useState("");
+  const [explainError, setExplainError] = useState("");
+  const [isExplaining, setIsExplaining] = useState(false);
+
   // Direct file→file import edges, resolved locally from indexed specifiers.
   const graph = useMemo(
     () => (indexMap ? buildCodeGraph(indexMap.files) : null),
     [indexMap]
   );
+
+  const entrypoints = useMemo(
+    () => indexMap?.architecture.entrypoints || [],
+    [indexMap]
+  );
+
+  // Interactive view: nodes sized by weight, clustered by community.
+  const architecture = useMemo(
+    () => (indexMap && graph ? buildArchitectureGraph(indexMap.files, graph, entrypoints) : null),
+    [indexMap, graph, entrypoints]
+  );
+
+  /** Selected file + its direct neighbours, for the focus lens. */
+  const neighborhood = useMemo(() => {
+    if (!selectedFile || !graph) return null;
+    const paths = new Set<string>([selectedFile]);
+    (graph.importsOf.get(selectedFile) || []).forEach((p) => paths.add(p));
+    (graph.dependentsOf.get(selectedFile) || []).forEach((p) => paths.add(p));
+    return { root: selectedFile, paths };
+  }, [selectedFile, graph]);
+
+  // A new selection invalidates any rendered explanation.
+  useEffect(() => {
+    setAiSummary("");
+    setExplainError("");
+  }, [selectedFile]);
 
   const loadMap = useCallback(async () => {
     setIsLoading(true);
@@ -150,6 +201,88 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
       setIsReindexing(false);
     }
   };
+
+  /**
+   * Asks the configured model to explain a file's purpose in plain prose.
+   * The indexed facts are included so the answer is grounded, and the result is
+   * cached per (path, content hash) so repeat visits cost nothing.
+   */
+  const explainFile = useCallback(
+    async (entry: IndexFileEntry) => {
+      if (isExplaining) return;
+      const cacheKey = `acsa_codemap_summary_v1::${entry.path}::${entry.hash || entry.lines}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          setAiSummary(cached);
+          return;
+        }
+      } catch {
+        /* storage unavailable — just regenerate */
+      }
+
+      setIsExplaining(true);
+      setAiSummary("");
+      setExplainError("");
+      try {
+        let source = "";
+        try {
+          const res = await fetch("/api/fs/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectRoot, filePath: entry.path }),
+          });
+          if (res.ok) source = (await res.json()).content || "";
+        } catch {
+          /* index facts alone are still enough to explain the role */
+        }
+
+        const facts = graph ? describeFileRole(entry, graph, entrypoints).join(" ") : "";
+        let acc = "";
+        await streamChatCompletion({
+          provider: aiSettings?.provider || "ollama",
+          model: aiSettings?.model || "",
+          apiKey: aiSettings?.apiKey || "",
+          baseUrl: aiSettings?.baseUrl || "",
+          projectRoot,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You explain code to an engineer who is new to this codebase. Answer in 3-5 short sentences of plain prose — no markdown, no bullet lists, no code fences. Cover what this file is for, how it fits the rest of the codebase, and anything to know before changing it.",
+            },
+            {
+              role: "user",
+              content: `File: ${entry.path}\nIndexed facts: ${facts || "(none)"}\n\nSource:\n${source.slice(0, 8000) || "(source unavailable)"}`,
+            },
+          ],
+          onDelta: (delta) => {
+            acc += delta;
+            setAiSummary(acc.trim());
+          },
+          onDone: () => {
+            const final = acc.trim();
+            if (final) {
+              try {
+                localStorage.setItem(cacheKey, final);
+              } catch {
+                /* cache is best-effort */
+              }
+            }
+            setIsExplaining(false);
+          },
+          onError: (message) => {
+            setExplainError(message || "Explanation failed.");
+            setIsExplaining(false);
+          },
+        });
+      } catch (err: any) {
+        setExplainError(err?.message || "Explanation failed.");
+        setIsExplaining(false);
+      }
+    },
+    [aiSettings, entrypoints, graph, isExplaining, projectRoot]
+  );
 
   const fileMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -226,6 +359,24 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
           </>
         )}
         <span className="flex-1" />
+        {/* Lens switch: the map explains the shape, the index explains the detail. */}
+        <div className="inline-flex items-center rounded-md border border-zinc-700/70 bg-zinc-900/60 p-0.5">
+          {(["graph", "index"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setLens(option)}
+              className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                lens === option
+                  ? "bg-zinc-700/80 text-zinc-100"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+              title={option === "graph" ? "Interactive dependency map" : "Symbol & file index"}
+            >
+              {option === "graph" ? "Map" : "Index"}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={handleReindex}
@@ -268,6 +419,64 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
               <div className="p-3 text-[11px] text-zinc-500">Building code map…</div>
             )}
 
+            {/* Map lens: the clusters Louvain found, each toggleable. */}
+            {lens === "graph" && query.trim().length < 2 && architecture && (
+              <>
+                <SectionLabel>
+                  <Icon icon={Waypoints} className="w-3 h-3 inline -mt-0.5 mr-1" />
+                  Communities ({architecture.communities.length})
+                </SectionLabel>
+                <div className="px-2 pb-1 text-[10px] text-zinc-500 leading-snug">
+                  Files clustered by dependency. Toggle to isolate a subsystem.
+                </div>
+                {architecture.communities.map((community) => {
+                  const hidden = hiddenCommunities.has(community.id);
+                  return (
+                    <button
+                      key={community.id}
+                      type="button"
+                      onClick={() =>
+                        setHiddenCommunities((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(community.id)) next.delete(community.id);
+                          else next.add(community.id);
+                          return next;
+                        })
+                      }
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors hover:bg-white/[0.05] ${
+                        hidden ? "opacity-45" : ""
+                      }`}
+                      title={hidden ? "Show this cluster" : "Hide this cluster"}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-sm shrink-0 border border-white/10"
+                        style={{ background: hidden ? "transparent" : community.color }}
+                      />
+                      <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                        {community.label}
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                        {community.count}
+                      </span>
+                    </button>
+                  );
+                })}
+                {selectedFile && (
+                  <button
+                    type="button"
+                    onClick={() => setFocusNeighborhood((prev) => !prev)}
+                    className={`mt-2 w-full px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
+                      focusNeighborhood
+                        ? "border-purple-500/50 bg-purple-500/10 text-purple-200"
+                        : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {focusNeighborhood ? "Showing neighbourhood only" : "Focus selected neighbourhood"}
+                  </button>
+                )}
+              </>
+            )}
+
             {query.trim().length >= 2 && (
               <>
                 <SectionLabel>
@@ -303,7 +512,7 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
               </>
             )}
 
-            {query.trim().length < 2 && indexMap && (
+            {lens === "index" && query.trim().length < 2 && indexMap && (
               <>
                 <SectionLabel>
                   <Icon icon={Waypoints} className="w-3 h-3 inline -mt-0.5 mr-1" />
@@ -359,8 +568,37 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
           </div>
         </div>
 
-        {/* ── Right: overview or file detail ────────────────────────────── */}
-        <div className="flex-1 min-w-0 overflow-y-auto p-4 space-y-4">
+        {/* ── Centre: interactive map (Map lens only) ───────────────────── */}
+        {lens === "graph" && (
+          <div className="flex-1 min-w-0 p-3">
+            {architecture && architecture.nodes.length > 0 ? (
+              <CodeMapGraph
+                nodes={architecture.nodes}
+                links={architecture.links}
+                communities={architecture.communities}
+                hiddenCommunities={hiddenCommunities}
+                query={query}
+                selectedPath={selectedFile}
+                onSelect={setSelectedFile}
+                depthFocus={focusNeighborhood ? neighborhood : null}
+              />
+            ) : (
+              <div className="h-full w-full rounded-xl border border-hairline bg-[#0d0d10] flex items-center justify-center text-[11px] text-zinc-500">
+                {isLoading ? "Building code map…" : "No resolvable dependencies to graph yet."}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Right: file detail (Index lens) or the selected file (Map lens) ── */}
+        {(lens === "index" || selectedFile) && (
+        <div
+          className={
+            lens === "graph"
+              ? "w-[340px] shrink-0 border-l border-hairline overflow-y-auto p-4 space-y-4"
+              : "flex-1 min-w-0 overflow-y-auto p-4 space-y-4"
+          }
+        >
           {selectedFile && selectedEntry ? (
             <>
               <div className="flex items-center gap-2">
@@ -394,6 +632,42 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
                 </button>
               </div>
 
+              {/* What this file is for — instant, from indexed facts. */}
+              <Card title="Role in this codebase">
+                <ul className="space-y-1 px-1 py-0.5">
+                  {(graph ? describeFileRole(selectedEntry, graph, entrypoints) : []).map(
+                    (line) => (
+                      <li key={line} className="flex items-start gap-1.5 text-[11px] text-zinc-300">
+                        <span className="text-zinc-600 mt-[1px]">•</span>
+                        <span className="leading-snug">{line}</span>
+                      </li>
+                    )
+                  )}
+                </ul>
+                <div className="mt-2 pt-2 border-t border-hairline">
+                  {aiSummary ? (
+                    <p className="text-[11px] text-zinc-400 leading-relaxed whitespace-pre-wrap px-1">
+                      {aiSummary}
+                    </p>
+                  ) : explainError ? (
+                    <div className="flex items-start gap-1.5 px-1 text-[11px] text-red-300">
+                      <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span className="leading-snug">{explainError}</span>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => explainFile(selectedEntry)}
+                    disabled={isExplaining}
+                    className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-purple-600/80 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
+                    title="Ask the active model to explain this file's purpose"
+                  >
+                    <Icon icon={Sparkles} className="w-3 h-3" />
+                    {isExplaining ? "Explaining…" : aiSummary ? "Regenerate explanation" : "Explain with AI"}
+                  </button>
+                </div>
+              </Card>
+
               <Card title={`Symbols (${outline.length})`}>
                 {isLoadingFile && <div className="text-[11px] text-zinc-500 px-1">Loading…</div>}
                 {!isLoadingFile && outline.length === 0 && (
@@ -425,6 +699,31 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
                         </span>
                         <span className="text-[10px] text-zinc-600 font-mono shrink-0">
                           {dirname(dep) || "."}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card title={`Imports ${selectedImportCount} file(s)`}>
+                {(graph?.importsOf.get(selectedEntry.path) || []).length === 0 ? (
+                  <div className="text-[11px] text-zinc-500 px-1">
+                    Nothing project-local is imported here.
+                  </div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {(graph?.importsOf.get(selectedEntry.path) || []).map((dep) => (
+                      <button
+                        key={dep}
+                        type="button"
+                        onClick={() => setSelectedFile(dep)}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
+                      >
+                        <Icon icon={ArrowDownToLine} className="w-3 h-3 text-zinc-500 shrink-0" />
+                        <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
+                        <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                          {dep}
                         </span>
                       </button>
                     ))}
@@ -570,6 +869,7 @@ export function CodeMapDashboard({ projectRoot, projectName, onOpenFile }: CodeM
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   );

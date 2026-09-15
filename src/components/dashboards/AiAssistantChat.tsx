@@ -1248,11 +1248,6 @@ Click to re-index project.`}
                 <div>
                   <h2 className="text-sm font-bold text-zinc-100 tracking-tight flex items-center gap-2">
                     <span>ACSA Code AI Assistant</span>
-                    {selectedModelItem?.model && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60 text-zinc-300">
-                        {selectedModelItem.model}
-                      </span>
-                    )}
                   </h2>
                   <p className="text-xs text-zinc-400 mt-1">
                     Ask questions, request code reviews, generate components, or inspect recent changes.

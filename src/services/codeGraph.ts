@@ -12,6 +12,8 @@
  */
 
 import type { IndexFileEntry } from "./agentHarness";
+import Graph from "graphology";
+import louvain from "graphology-communities-louvain";
 
 export interface CodeGraph {
   /** file → files it imports (project-local only). */
@@ -125,4 +127,247 @@ export function buildCodeGraph(files: IndexFileEntry[]): CodeGraph {
     edgeCount,
     hubs,
   };
+}
+
+// ── Architecture graph (interactive view) ───────────────────────────────────
+
+/** Community colours, chosen to stay distinguishable on a dark canvas. */
+export const COMMUNITY_PALETTE = [
+  "#5b8def",
+  "#e8833a",
+  "#e05c6e",
+  "#4fb3a5",
+  "#8f6ce0",
+  "#d9b64a",
+  "#b06ac9",
+  "#e0785f",
+  "#4aa3df",
+  "#7bbf5a",
+  "#c96a9b",
+  "#7f8f9c",
+  "#c2a35a",
+  "#5fb0c9",
+];
+
+export interface ArchNode {
+  id: string;
+  path: string;
+  /** Short display name (basename). */
+  label: string;
+  language: string;
+  lines: number;
+  symbols: number;
+  imports: number;
+  dependents: number;
+  community: number;
+  color: string;
+  isEntrypoint: boolean;
+  /** Rendered node size. */
+  val: number;
+  index: number;
+}
+
+export interface ArchLink {
+  source: string;
+  target: string;
+}
+
+export interface ArchCommunity {
+  id: number;
+  label: string;
+  count: number;
+  color: string;
+}
+
+export interface ArchitectureGraph {
+  nodes: ArchNode[];
+  links: ArchLink[];
+  communities: ArchCommunity[];
+}
+
+/**
+ * Human label for a cluster: the directory most of its members live in (full
+ * path, so "src/components/dashboards" beats a generic "src/components").
+ */
+function clusterLabel(paths: string[]): string {
+  const counts = new Map<string, number>();
+  for (const p of paths) {
+    const parts = p.split("/");
+    const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "(root)";
+    counts.set(dir, (counts.get(dir) || 0) + 1);
+  }
+  let best = "(root)";
+  let bestCount = -1;
+  counts.forEach((count, dir) => {
+    // Most members wins; ties go to the shallower (more general) directory.
+    if (
+      count > bestCount ||
+      (count === bestCount && dir.split("/").length < best.split("/").length)
+    ) {
+      best = dir;
+      bestCount = count;
+    }
+  });
+  return best;
+}
+
+/**
+ * Shapes the resolved file graph into a renderable architecture map: nodes
+ * sized by weight/consequence, coloured by dependency community (Louvain), and
+ * links carrying the resolved imports.
+ */
+export function buildArchitectureGraph(
+  files: IndexFileEntry[],
+  graph: CodeGraph,
+  entrypoints: string[] = []
+): ArchitectureGraph {
+  const communityOf = new Map<string, number>();
+  const nodeGraph = new Graph({ type: "undirected", multi: false });
+
+  for (const file of files) {
+    if (!nodeGraph.hasNode(file.path)) nodeGraph.addNode(file.path);
+  }
+  const links: ArchLink[] = [];
+  graph.importsOf.forEach((targets, source) => {
+    for (const target of targets) {
+      if (source === target) continue;
+      if (!nodeGraph.hasNode(source) || !nodeGraph.hasNode(target)) continue;
+      if (nodeGraph.hasEdge(source, target)) continue;
+      try {
+        nodeGraph.addEdge(source, target);
+        links.push({ source, target });
+      } catch {
+        /* duplicate / invalid edge — the adjacency already covers it */
+      }
+    }
+  });
+
+  try {
+    // A low resolution merges micro-clusters into recognisable subsystems,
+    // which is what makes the map readable rather than confetti.
+    const mapping = louvain(nodeGraph, { resolution: 0.6 });
+    Object.entries(mapping).forEach(([node, community]) => {
+      communityOf.set(node, community as number);
+    });
+  } catch {
+    // Dendrogram too large / disconnected: fall back to directory clustering.
+  }
+
+  // Louvain cannot cluster a file that has no edges — it would become a
+  // one-file "community" and flood the legend. Group those by directory, which
+  // is the only signal left, and keep them in the same id space.
+  const isolatedByDirectory = new Map<string, number>();
+  let nextCommunityId =
+    communityOf.size > 0 ? Math.max(...communityOf.values()) + 1 : 0;
+  for (const file of files) {
+    if (nodeGraph.degree(file.path) > 0) continue;
+    const parts = file.path.split("/");
+    // Directory only — never let the filename become the cluster key.
+    const dir =
+      parts.length > 1
+        ? parts.slice(0, Math.min(3, parts.length - 1)).join("/")
+        : "(root)";
+    if (!isolatedByDirectory.has(dir)) {
+      isolatedByDirectory.set(dir, nextCommunityId++);
+    }
+    communityOf.set(file.path, isolatedByDirectory.get(dir)!);
+  }
+
+  const entrySet = new Set(entrypoints);
+  const membersByCommunity = new Map<number, string[]>();
+  // Stable directory-keyed fallback when Louvain cannot run.
+  const dirCommunities = new Map<string, number>();
+  const communityForDirectory = (path: string): number => {
+    const dir = path.includes("/") ? path.split("/").slice(0, 2).join("/") : "(root)";
+    if (!dirCommunities.has(dir)) dirCommunities.set(dir, dirCommunities.size);
+    return dirCommunities.get(dir)!;
+  };
+  const nodes: ArchNode[] = files.map((file, index) => {
+    const community = communityOf.get(file.path) ?? communityForDirectory(file.path);
+    if (!membersByCommunity.has(community)) membersByCommunity.set(community, []);
+    membersByCommunity.get(community)!.push(file.path);
+
+    const imports = graph.importsOf.get(file.path)?.length || 0;
+    const dependents = graph.dependentsOf.get(file.path)?.length || 0;
+    return {
+      id: file.path,
+      path: file.path,
+      label: file.path.split("/").pop() || file.path,
+      language: file.language,
+      lines: file.lines,
+      symbols: file.symbolCount,
+      imports,
+      dependents,
+      community,
+      color: COMMUNITY_PALETTE[community % COMMUNITY_PALETTE.length],
+      isEntrypoint: entrySet.has(file.path),
+      val: Math.sqrt(Math.max(2, file.lines)) * 0.55 + Math.min(dependents, 30) * 0.5 + 2,
+      index,
+    };
+  });
+
+  const communities: ArchCommunity[] = [...membersByCommunity.entries()]
+    .map(([id, members]) => ({
+      id,
+      label: clusterLabel(members),
+      count: members.length,
+      color: COMMUNITY_PALETTE[id % COMMUNITY_PALETTE.length],
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  // Two clusters can share a directory (a big folder split in two), which makes
+  // the legend ambiguous — disambiguate with a stable ordinal.
+  const labelSeen = new Map<string, number>();
+  for (const community of communities) {
+    const seen = (labelSeen.get(community.label) || 0) + 1;
+    labelSeen.set(community.label, seen);
+    if (seen > 1) community.label = `${community.label} (${seen})`;
+  }
+
+  return { nodes, links, communities };
+}
+
+/**
+ * A precise, instant description of a file's role, derived only from indexed
+ * facts (no model call): what imports it, what it imports, what it defines.
+ * Returns short bullets ready to render.
+ */
+export function describeFileRole(
+  file: IndexFileEntry,
+  graph: CodeGraph,
+  entrypoints: string[] = []
+): string[] {
+  const imports = graph.importsOf.get(file.path)?.length || 0;
+  const dependents = graph.dependentsOf.get(file.path)?.length || 0;
+  const lines: string[] = [];
+
+  if (entrypoints.includes(file.path)) {
+    lines.push("Application entry point — the app boots from here.");
+  }
+
+  if (dependents >= 10) {
+    lines.push(`Widely shared module — ${dependents} files import it, so changes ripple widely.`);
+  } else if (dependents >= 3) {
+    lines.push(`Shared building block — ${dependents} files import it.`);
+  } else if (dependents > 0) {
+    lines.push(`Used by ${dependents} file${dependents === 1 ? "" : "s"}.`);
+  }
+
+  if (dependents === 0 && imports === 0) {
+    lines.push("Self-contained — nothing imports it and it imports nothing.");
+  } else if (dependents === 0 && imports >= 3) {
+    lines.push(`Leaf module — pulls in ${imports} files and nothing imports it.`);
+  } else if (imports === 0 && dependents > 0) {
+    lines.push("Foundation module — it imports nothing but others depend on it.");
+  }
+
+  if (file.symbolCount === 0) {
+    lines.push("Holds no top-level symbols (configuration, styles or assets).");
+  } else {
+    lines.push(`Defines ${file.symbolCount} top-level symbol${file.symbolCount === 1 ? "" : "s"}.`);
+  }
+
+  const language = file.language || "unknown";
+  lines.push(`${language} · ${file.lines} lines`);
+  return lines;
 }

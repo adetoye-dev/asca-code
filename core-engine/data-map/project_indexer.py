@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -106,6 +107,30 @@ class FileIndex:
 
 def compute_file_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
+def write_json_atomic(target: Path, payload: Any) -> None:
+    """Write JSON via a temp file + rename so readers never see a partial file.
+
+    The bridge (and any concurrent watcher-triggered incremental update) reads
+    this file while it may be rewritten. A plain ``write_text`` is not atomic:
+    two overlapping writers interleave and leave concatenated JSON behind, which
+    silently breaks the whole index. ``os.replace`` is atomic on POSIX/Windows.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_path = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, indent=2))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, target)
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 def extract_imports(content: str, language: str) -> list[str]:
@@ -780,7 +805,7 @@ def index_entire_project(project_root_str: str) -> dict[str, Any]:
     acsa_dir = project_root / ".acsa"
     try:
         acsa_dir.mkdir(parents=True, exist_ok=True)
-        (acsa_dir / "index.json").write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+        write_json_atomic(acsa_dir / "index.json", index_data)
         logger.info("Saved index to %s", acsa_dir / "index.json")
     except Exception as exc:
         logger.warning("Failed to save .acsa/index.json: %s", exc)
@@ -862,7 +887,7 @@ def update_file_incremental(project_root_str: str, relative_path: str) -> Option
     }
 
     try:
-        index_file.write_text(json.dumps(existing_index, indent=2), encoding="utf-8")
+        write_json_atomic(index_file, existing_index)
         logger.info("Incrementally updated %s in index", relative_path)
     except Exception as exc:
         logger.warning("Failed to save incremental index: %s", exc)

@@ -41,6 +41,8 @@ export interface IndexFileEntry {
   path: string;
   language: string;
   lines: number;
+  /** Content hash from the indexer, used to invalidate cached summaries. */
+  hash: string;
   symbolCount: number;
   /** Raw module specifiers as recorded by the indexer. */
   importSpecifiers: string[];

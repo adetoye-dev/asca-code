@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "verify": "npm run typecheck && npm test",
     "test": "python3 -m unittest discover -s tests -t .",
     "test:verbose": "python3 -m unittest discover -s tests -t . -v",
@@ -23,9 +23,12 @@
     "clsx": "^2.1.1",
     "dockview": "^8.2.0",
     "dockview-react": "^8.2.0",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
     "lucide-react": "^1.43.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.29.1",
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {

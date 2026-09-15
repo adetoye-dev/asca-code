@@ -110,3 +110,32 @@ class BuildDependencyGraphTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AtomicIndexWriteTests(unittest.TestCase):
+    """The index is read while it is rewritten; partial reads broke everything."""
+
+    def test_write_json_atomic_round_trips_and_leaves_no_temp_files(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / ".acsa" / "index.json"
+            payload = {"files": {"a.ts": {"line_count": 3}}, "total_symbols": 1}
+            pi.write_json_atomic(target, payload)
+
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), payload)
+            leftovers = [p.name for p in target.parent.iterdir() if p.name != "index.json"]
+            self.assertEqual(leftovers, [], f"temp files left behind: {leftovers}")
+
+    def test_write_json_atomic_overwrites_existing_document_cleanly(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "index.json"
+            # A larger document overwritten by a smaller one must not leave
+            # trailing bytes (which is exactly how the file got corrupted).
+            pi.write_json_atomic(target, {"n": list(range(500))})
+            pi.write_json_atomic(target, {"n": [1]})
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"n": [1]})

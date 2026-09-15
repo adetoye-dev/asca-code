@@ -18,6 +18,10 @@ import { exec, execFile, execFileSync, spawn, type ChildProcess } from "child_pr
 import { createRequire } from "module";
 
 const _bridgeRequire = createRequire(import.meta.url);
+// NOTE: Node caches ESM/CJS modules for the lifetime of the process, and Vite's
+// config reload reuses that process — so edits to graph_manager.js (e.g. adding
+// an edge type) only take effect after a FULL dev-server restart, not just the
+// automatic "server restarted" that a change to this file triggers.
 const { ProjectDependencyGraph } = _bridgeRequire("./core-engine/data-map/graph_manager.js");
 
 export interface FileNode {
@@ -245,6 +249,8 @@ let activeGraphRoot = "";
 let activeProjectWatcher: fs.FSWatcher | null = null;
 let activeWatchedPath: string = "";
 const activeWatchTimers = new Map<string, NodeJS.Timeout>();
+/** Serialises incremental index writes so two indexer runs never overlap. */
+let indexWriteQueue: Promise<void> = Promise.resolve();
 let activeProjectGeneration = 0;
 
 function setupProjectWatcher(projectRoot: string): void {
@@ -306,22 +312,44 @@ function incrementalUpdateFile(projectRoot: string, relativePath: string): void 
   const root = resolveProjectRoot(projectRoot);
   const requestGeneration = activeProjectGeneration;
   const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
-  execFile(
-    "python3",
-    [indexerScript, "--project-root", root, "--file", relativePath, "--json"],
-    { timeout: 15000 },
-    (error) => {
-      if (!error && requestGeneration === activeProjectGeneration && activeWatchedPath === root) {
-        try {
-          const indexPath = path.join(root, ".acsa", "index.json");
-          if (fs.existsSync(indexPath)) {
-            activeProjectIndex = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-            console.log(`[indexer] Incremental sync complete for ${relativePath} (${activeProjectIndex.total_symbols} symbols)`);
-          }
-        } catch {}
-      }
-    }
-  );
+  // Serialise incremental updates: saving several files at once used to spawn
+  // overlapping indexer processes that all read and rewrote index.json, which
+  // corrupted the file (concatenated JSON) and lost whichever write came first.
+  indexWriteQueue = indexWriteQueue
+    .catch(() => {})
+    .then(
+      () =>
+        new Promise<void>((resolve) => {
+          execFile(
+            "python3",
+            [indexerScript, "--project-root", root, "--file", relativePath, "--json"],
+            { timeout: 15000 },
+            (error) => {
+              if (
+                !error &&
+                requestGeneration === activeProjectGeneration &&
+                activeWatchedPath === root
+              ) {
+                try {
+                  const indexPath = path.join(root, ".acsa", "index.json");
+                  if (fs.existsSync(indexPath)) {
+                    activeProjectIndex = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+                    console.log(
+                      `[indexer] Incremental sync complete for ${relativePath} (${activeProjectIndex.total_symbols} symbols)`
+                    );
+                  }
+                } catch (parseErr: any) {
+                  console.warn(
+                    `[indexer] Incremental update left an unreadable index (${parseErr?.message}); it will be rebuilt on next sync.`
+                  );
+                  activeProjectIndex = null;
+                }
+              }
+              resolve();
+            }
+          );
+        })
+    );
 }
 
 async function syncProjectIndex(projectRoot: string): Promise<any> {
@@ -482,6 +510,33 @@ function looksLikeCleanReview(raw: string): boolean {
 }
 
 
+/**
+ * Renders a file with a real line-number gutter (`NNNN| code`, the `cat -n`
+ * shape) so the model can cite exact lines instead of counting them itself.
+ * Models reliably collapse to a single guessed line when handed raw code, which
+ * is why every finding used to land on the same line.
+ */
+function numberLinesForReview(
+  content: string,
+  maxChars = 12000
+): { text: string; firstLine: number; lastLine: number } {
+  const lines = String(content).split("\n");
+  const out: string[] = [];
+  let used = 0;
+  let firstLine = 0;
+  let lastLine = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const rendered = `${String(i + 1).padStart(4)}| ${lines[i]}`;
+    if (used + rendered.length + 1 > maxChars) break;
+    if (firstLine === 0) firstLine = i + 1;
+    out.push(rendered);
+    used += rendered.length + 1;
+    lastLine = i + 1;
+  }
+  return { text: out.join("\n"), firstLine, lastLine };
+}
+
+
 function extractReviewIssues(raw: string): any[] {
   if (!raw) return [];
   let text = raw.trim();
@@ -508,25 +563,79 @@ function extractReviewIssues(raw: string): any[] {
   }
   if (!parsed) return [];
 
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed.issues)
-    ? parsed.issues
-    : [];
+  // Models of every size invent their own envelope. Accept the common ones
+  // rather than throwing away an otherwise useful review.
+  const LIST_KEYS = ["issues", "findings", "comments", "problems", "reviewItems", "items", "results"];
+  let list: any[] = [];
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else if (parsed && typeof parsed === "object") {
+    for (const key of LIST_KEYS) {
+      if (Array.isArray(parsed[key])) {
+        list = parsed[key];
+        break;
+      }
+    }
+    if (list.length === 0) {
+      // Single-issue shapes such as {"review": {...}} or {"code": "...", "review": "..."}
+      const nested = parsed.review && typeof parsed.review === "object" ? parsed.review : parsed;
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) list = [nested];
+    }
+  }
+
+  const numberFrom = (value: any): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+    if (typeof value === "string") {
+      // Accepts "172", "L172", "line 172", and gutter-prefixed code such as "172| code".
+      const match = value.match(/\b(\d{1,6})\b/);
+      if (match) return parseInt(match[1], 10);
+    }
+    return null;
+  };
+  const textFrom = (obj: any, keys: string[]): string => {
+    for (const key of keys) {
+      const value = obj?.[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (value && typeof value === "object") {
+        const inner = textFrom(value, ["message", "title", "summary", "text", "detail"]);
+        if (inner) return inner;
+      }
+    }
+    return "";
+  };
+
   const severities = new Set(["error", "warning", "info"]);
   const out: any[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const rawLine = Number(item.line ?? item.line_number ?? 0);
-    const severity = severities.has(String(item.severity || "").toLowerCase())
-      ? String(item.severity).toLowerCase()
+    const rawLine =
+      numberFrom(item.line) ??
+      numberFrom(item.line_number) ??
+      numberFrom(item.lineNumber) ??
+      numberFrom(item.start_line) ??
+      numberFrom(item.startLine) ??
+      numberFrom(item.location) ??
+      numberFrom(item.lines) ??
+      // Last resort: the model often echoes the gutter-prefixed line it means.
+      numberFrom(item.code) ??
+      0;
+    const severityRaw = String(item.severity || item.level || item.type || "").toLowerCase();
+    const severity = severities.has(severityRaw)
+      ? severityRaw
+      : severityRaw.includes("err")
+      ? "error"
+      : severityRaw.includes("warn")
+      ? "warning"
       : "info";
+    const title = textFrom(item, ["title", "message", "summary", "issue", "review", "text"]);
+    const detail = textFrom(item, ["detail", "description", "why", "explanation", "review", "message"]);
+    const suggestion = textFrom(item, ["suggestion", "fix", "recommendation", "resolution"]);
     out.push({
       line: Number.isFinite(rawLine) && rawLine > 0 ? Math.floor(rawLine) : 1,
       severity,
-      title: String(item.title || item.message || "Issue").slice(0, 160),
-      detail: String(item.detail || item.description || "").slice(0, 600),
-      suggestion: item.suggestion ? String(item.suggestion).slice(0, 600) : "",
+      title: (title || "Issue").slice(0, 160),
+      detail: detail.slice(0, 600),
+      suggestion: suggestion.slice(0, 600),
     });
     if (out.length >= 25) break;
   }
@@ -590,18 +699,23 @@ async function pickBestLocalOllamaModel(baseUrl = "http://127.0.0.1:11434"): Pro
     const data: any = await res.json();
     const models: string[] = (data.models || []).map((m: any) => m.name).filter(Boolean);
     if (!models.length) return null;
+    // Rank by capability: purpose-built code models first, then raw parameter
+    // count. The version number is only a small tiebreaker — previously it
+    // scored up to +40 and let a 6.7B model outrank a 7B coder model.
     const score = (name: string) => {
       const s = name.toLowerCase();
       let value = 0;
-      if (/(coder|code|dev|synth)/.test(s)) value += 50;
-      if (/qwen/.test(s)) value += 25;
-      else if (/deepseek/.test(s)) value += 24;
-      else if (/codestral|mistral/.test(s)) value += 22;
-      else if (/llama/.test(s)) value += 20;
+      if (/(coder|code|dev|synth)/.test(s)) value += 60;
+      if (/qwen/.test(s)) value += 20;
+      else if (/deepseek/.test(s)) value += 18;
+      else if (/codestral|mistral/.test(s)) value += 16;
+      else if (/llama/.test(s)) value += 10;
+      // Parameter count is the best proxy for reasoning ability once a model
+      // is already a code model.
       const size = s.match(/(\d+(?:\.\d+)?)b/);
-      if (size) value += Math.min(parseFloat(size[1]), 70) * 0.5;
-      const version = s.match(/(\d+(?:\.\d+)?)/);
-      if (version) value += Math.min(parseFloat(version[1]), 40);
+      if (size) value += Math.min(parseFloat(size[1]), 40) * 2;
+      const version = s.match(/^(?:[a-z]+)?(\d+(?:\.\d+)?)/);
+      if (version) value += Math.min(parseFloat(version[1]), 9);
       return value;
     };
     return [...models].sort((a, b) => score(b) - score(a))[0];
@@ -1398,6 +1512,7 @@ export function realFilesystemPlugin(): Plugin {
               path: filePath,
               language: f?.language || "",
               lines: f?.line_count || 0,
+              hash: f?.content_hash || "",
               symbolCount: Array.isArray(f?.symbols) ? f.symbols.length : 0,
               importSpecifiers: Array.isArray(f?.imports) ? f.imports.filter((s: any) => typeof s === "string") : [],
             }));
@@ -2899,12 +3014,20 @@ export function realFilesystemPlugin(): Plugin {
               baseUrl = resolved.baseUrl;
               const fallbackNote = resolved.note;
 
-              const clipped = String(content).length > 12000 ? String(content).slice(0, 12000) : String(content);
+              const numbered = numberLinesForReview(String(content), 12000);
+              const totalLines = String(content).split("\n").length;
+              const isPartial = numbered.lastLine < totalLines;
               const systemPrompt =
                 "You are a meticulous senior code reviewer. Analyse the provided file and report concrete issues: bugs, logic errors, edge cases, security problems, and worthwhile refactors. " +
-                'Respond with ONLY a JSON object of the shape {"issues":[{"line":<number>,"severity":"error|warning|info","title":"<short>","detail":"<why>","suggestion":"<concrete fix>"}]}. ' +
-                "Use the 1-based line number in the file. Report at most 12 issues, most important first. If the file is clean, return {\"issues\":[]}. No prose, no markdown fences.";
-              const userPrompt = `File: ${reviewPath}${language ? ` (${language})` : ""}\n\n\`\`\`\n${clipped}\n\`\`\`\n\nReturn the JSON review object.`;
+                'Respond with ONLY a JSON object whose top-level key is exactly "issues": {"issues":[{"line":<number>,"severity":"error|warning|info","title":"<short>","detail":"<why>","suggestion":"<concrete fix>"}]}. ' +
+                'Example of the exact shape expected (illustrative only): {"issues":[{"line":42,"severity":"warning","title":"Missing null check","detail":"provider can be undefined here","suggestion":"Guard with if (!provider) return;"}]}. ' +
+                "The file is given with its real line numbers in a left gutter formatted 'NNNN| code'. Set `line` to the exact number shown in that gutter for the code you are describing. " +
+                "Never invent line numbers and never cite a line that is not shown. Different findings normally sit on different lines; only repeat a line when two findings genuinely concern that one line. " +
+                "Report at most 12 issues, most important first. If the file is clean, return {\"issues\":[]}. No prose, no markdown fences.";
+              const excerptNote = isPartial
+                ? `Only lines ${numbered.firstLine}-${numbered.lastLine} of ${totalLines} are shown (the file was truncated). Report issues only within that range.`
+                : `The whole file (${totalLines} lines) is shown.`;
+              const userPrompt = `File: ${reviewPath}${language ? ` (${language})` : ""}\n${excerptNote}\n\n${numbered.text}\n\nReturn the JSON review object.`;
               const requestSignal = AbortSignal.timeout(180000);
               const effectiveModel = model || (provider === "ollama" ? "qwen2.5-coder:7b" : "");
               let raw = "";
@@ -2975,11 +3098,38 @@ export function realFilesystemPlugin(): Plugin {
                 Math.round(raw.length / 4),
                 Date.now() - reviewStartedAt
               );
-              const issues = extractReviewIssues(raw);
+              // Drop citations that point outside the excerpt we actually sent
+              // (the model cannot have seen that code) and de-duplicate exact
+              // repeats, so the inline threads cannot stack on a phantom line.
+              const visibleLines = new Set<number>();
+              for (let n = numbered.firstLine; n <= numbered.lastLine; n++) visibleLines.add(n);
+              const seen = new Set<string>();
+              const issues = extractReviewIssues(raw).filter((issue: any) => {
+                if (!visibleLines.has(issue.line)) return false;
+                const key = `${issue.line}|${issue.title}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
               const warning =
                 issues.length === 0 && !looksLikeCleanReview(raw)
                   ? "The model returned a response that could not be parsed as review findings."
                   : "";
+              if (warning) {
+                console.warn(
+                  `[review] Unparseable response from ${provider}/${effectiveModel} (${raw.length} chars): ${raw.slice(0, 400)}`
+                );
+              } else if (issues.length === 0) {
+                console.warn(
+                  `[review] Model reported no findings for ${reviewPath} (${numbered.lastLine}/${totalLines} lines sent).`
+                );
+              } else {
+                console.log(
+                  `[review] ${issues.length} finding(s) for ${reviewPath} on lines ${issues
+                    .map((i: any) => i.line)
+                    .join(", ")}`
+                );
+              }
               res.setHeader("Content-Type", "application/json");
               res.end(
                 JSON.stringify({

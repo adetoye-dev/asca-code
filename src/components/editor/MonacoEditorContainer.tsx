@@ -149,6 +149,8 @@ export function MonacoEditorContainer({
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewNote, setReviewNote] = useState("");
+  /** Provider/model that produced the last review, so degradation is visible. */
+  const [reviewModel, setReviewModel] = useState("");
   const [reviewClean, setReviewClean] = useState(false);
   const [fixingIndex, setFixingIndex] = useState<number | null>(null);
   // Findings render as collapsible threads anchored at their line (CodeRabbit
@@ -220,7 +222,16 @@ export function MonacoEditorContainer({
       setExpandedFindings(new Set());
       setReviewIssues(result.issues);
       setReviewNote(result.note || "");
-      if (result.warning) setReviewError(result.warning);
+      setReviewModel(result.model ? `${result.provider || ""}/${result.model}` : "");
+      if (result.warning) {
+        // An unparseable response almost always means a small local model was
+        // used; say so instead of leaving the user guessing.
+        setReviewError(
+          `${result.warning} ${result.model ? `Model: ${result.model}.` : ""}${
+            result.note ? ` ${result.note}` : ""
+          } A larger local or cloud model is needed for structured review output.`
+        );
+      }
       const hasFindings = result.issues.length > 0;
       setReviewClean(!hasFindings && !result.warning);
       if (!hasFindings && !result.warning) {
@@ -619,6 +630,14 @@ export function MonacoEditorContainer({
           )}
           <span>{isReviewing ? "Reviewing…" : reviewClean ? "✓ Clean" : "Review"}</span>
         </button>
+        {!isReviewing && reviewModel && (
+          <span
+            className="px-1.5 py-1 rounded-md text-[10px] font-mono bg-zinc-800/85 border border-zinc-700/70 text-zinc-400"
+            title={`Review ran on ${reviewModel}`}
+          >
+            {reviewModel.split("/").pop()}
+          </span>
+        )}
         {!isReviewing && reviewIssues.length > 0 && (
           <button
             type="button"

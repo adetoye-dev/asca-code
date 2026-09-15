@@ -1360,6 +1360,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     <CodeMapDashboard
                       projectRoot={activeProject.path}
                       projectName={activeProject.name}
+                      aiSettings={aiSettings}
                       onOpenFile={(path, line) => {
                         setFullPage(null);
                         handleOpenFileAtLocation(path, line);
