@@ -434,6 +434,44 @@ fn create_project_template(
 
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
 
+/// Name of the frozen engine executable shipped as a Tauri sidecar.
+///
+/// Tauri strips the target-triple suffix when bundling, so at runtime it sits
+/// next to the app executable under this plain name.
+const ENGINE_BIN_NAME: &str = "acsa-engine";
+
+/// Locate the frozen engine binary, if this build shipped one.
+fn resolve_engine_bin(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Where Tauri places external binaries on macOS and Linux.
+            candidates.push(dir.join(ENGINE_BIN_NAME));
+        }
+    }
+    if let Some(resources) = resource_dir {
+        candidates.push(resources.join(ENGINE_BIN_NAME));
+        candidates.push(resources.join("binaries").join(ENGINE_BIN_NAME));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// How to run an engine subcommand: the frozen binary when present, otherwise
+/// the source tree through the system interpreter.
+///
+/// Returning `(program, leading_args)` keeps both paths identical at the call
+/// site — the fallback simply prepends `python3 <entry point>`.
+fn engine_invocation(resource_dir: Option<&Path>, subcommand: &str) -> (PathBuf, Vec<String>) {
+    if let Some(bin) = resolve_engine_bin(resource_dir) {
+        return (bin, vec![subcommand.to_string()]);
+    }
+    let entry = resolve_engine_dir(resource_dir).join("acsa_engine.py");
+    (
+        PathBuf::from("python3"),
+        vec![entry.to_string_lossy().to_string(), subcommand.to_string()],
+    )
+}
+
 /// Locate the bundled Python engine.
 ///
 /// Order matters: a packaged app must read the copy shipped in its own resource
@@ -498,23 +536,29 @@ async fn run_generation_pipeline(
     }
     sliders.validate()?;
 
-    let engine_dir = resolve_engine_dir(app_handle.path().resource_dir().ok().as_deref());
-    let manager_path = engine_dir.join("manager.py");
-
-    if !manager_path.exists() {
-        return Err(format!(
-            "Orchestrator not found at: {}. Ensure core-engine is properly installed.",
-            manager_path.display()
-        ));
+    // Prefer the frozen sidecar (no interpreter needed) and fall back to the
+    // source tree for development checkouts.
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (engine_program, engine_leading_args) = engine_invocation(resource_dir.as_deref(), "manager");
+    if engine_program == PathBuf::from("python3") {
+        let manager_path = resolve_engine_dir(resource_dir.as_deref()).join("manager.py");
+        if !manager_path.exists() {
+            return Err(format!(
+                "Orchestrator not found at: {}. Ensure core-engine is properly installed.",
+                manager_path.display()
+            ));
+        }
     }
 
     let app_for_blocking = app_handle.clone();
     let active_child = state.active_child.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<PipelineResult, String> {
-        let mut cmd = Command::new("python3");
-        cmd.arg(&manager_path)
-            .arg(&prompt)
+        let mut cmd = Command::new(&engine_program);
+        for arg in &engine_leading_args {
+            cmd.arg(arg);
+        }
+        cmd.arg(&prompt)
             .arg("--project-root")
             .arg(&project_root)
             .arg("--scale")

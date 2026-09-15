@@ -85,7 +85,10 @@
       "appimage": {
         "bundleMediaFramework": false
       }
-    }
+    },
+    "externalBin": [
+      "binaries/acsa-engine"
+    ]
   },
   "plugins": {
     "shell": {

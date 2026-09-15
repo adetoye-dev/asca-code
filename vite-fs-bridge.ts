@@ -254,7 +254,53 @@ let indexWriteQueue: Promise<void> = Promise.resolve();
 let activeProjectGeneration = 0;
 
 /**
+ * Resolve how to run an engine subcommand.
+ *
+ * The packaged app ships a frozen `acsa-engine` sidecar so no Python interpreter
+ * is required on the user's machine. This mirrors the Rust resolution: use that
+ * binary when one is available (built into `.tauri/binaries`, or pointed at with
+ * `ACSA_ENGINE_BIN`), otherwise run the source entry point through `python3`.
+ *
+ * Discovery is opt-in during development (`ACSA_USE_FROZEN_ENGINE=1` or an
+ * explicit `ACSA_ENGINE_BIN`) — otherwise a stale sidecar left in
+ * `.tauri/binaries` would silently shadow every live source edit.
+ */
+function engineInvocation(
+  subcommand: string,
+  args: string[] = []
+): { program: string; args: string[] } {
+  const candidates: string[] = [];
+  const explicit = (process.env.ACSA_ENGINE_BIN || "").trim();
+  if (explicit) candidates.push(explicit);
+  if (process.env.ACSA_USE_FROZEN_ENGINE === "1") {
+    try {
+      const dir = path.resolve(".tauri", "binaries");
+      for (const name of fs.readdirSync(dir)) {
+        if (name.startsWith("acsa-engine-")) candidates.push(path.join(dir, name));
+      }
+    } catch {
+      /* no built sidecar */
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return { program: candidate, args: [subcommand, ...args] };
+      }
+    } catch {
+      /* unreadable candidate; try the next */
+    }
+  }
+  return {
+    program: "python3",
+    args: [path.resolve("core-engine", "acsa_engine.py"), subcommand, ...args],
+  };
+}
+
+/**
  * Run a command against the app database.
+ *
+ * (See `engineInvocation` for how the engine is located.)
  *
  * The schema is owned by `core-engine/app_db.py` so the browser bridge and the
  * packaged Tauri app cannot drift apart; both go through this one CLI. Request
@@ -262,11 +308,11 @@ let activeProjectGeneration = 0;
  * implementation.
  */
 function dbCommand<T = any>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const cli = path.resolve("core-engine", "db_cli.py");
+  const { program, args } = engineInvocation("db", [command, JSON.stringify(payload)]);
   return new Promise((resolve, reject) => {
     execFile(
-      "python3",
-      [cli, command, JSON.stringify(payload)],
+      program,
+      args,
       { timeout: 20000, maxBuffer: 8 * 1024 * 1024, env: process.env },
       (error, stdout) => {
         const lastLine = (stdout || "").trim().split("\n").pop() || "";
@@ -422,12 +468,12 @@ async function syncProjectIndex(projectRoot: string): Promise<any> {
     activeProjectGraph = new ProjectDependencyGraph();
     activeGraphRoot = root;
   }
-  const indexerScript = path.resolve("core-engine/data-map/project_indexer.py");
+  const indexer = engineInvocation("index", ["--project-root", root, "--json"]);
 
   return new Promise((resolve) => {
     execFile(
-      "python3",
-      [indexerScript, "--project-root", root, "--json"],
+      indexer.program,
+      indexer.args,
       { maxBuffer: 10 * 1024 * 1024, timeout: 30000 },
       (error, stdout, stderr) => {
         if (error) {
@@ -1029,9 +1075,17 @@ export function realFilesystemPlugin(): Plugin {
 
             const ptyScript = path.resolve(process.cwd(), "scripts/pty_bridge.py");
             if (fs.existsSync(ptyScript)) {
+              const pty = engineInvocation("pty", [
+                "--cwd",
+                targetCwd,
+                "--cols",
+                String(cols),
+                "--rows",
+                String(rows),
+              ]);
               terminalProc = spawn(
-                "python3",
-                [ptyScript, "--cwd", targetCwd, "--cols", String(cols), "--rows", String(rows)],
+                pty.program,
+                pty.args,
                 {
                   cwd: targetCwd,
                   stdio: ["pipe", "pipe", "pipe"],
@@ -4561,10 +4615,7 @@ export function realFilesystemPlugin(): Plugin {
             };
 
             const rootDir = resolveProjectRoot(projectRoot || process.cwd());
-            const managerScript = path.resolve("core-engine/manager.py");
-
-            const args = [
-              managerScript,
+            const args: string[] = [
               "--task",
               prompt,
               "--project-root",
@@ -4629,7 +4680,8 @@ export function realFilesystemPlugin(): Plugin {
               stream: "stdout",
             });
 
-            const pyProc = spawn("python3", args, {
+            const engine = engineInvocation("manager", args);
+            const pyProc = spawn(engine.program, engine.args, {
               cwd: process.cwd(),
               env: {
                 ...process.env,

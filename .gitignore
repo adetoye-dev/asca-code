@@ -130,3 +130,6 @@ tmp*
 acsa.db
 acsa.db-wal
 acsa.db-shm
+
+# Frozen engine sidecar (built by scripts/build_engine_sidecar.sh; 10 MB+)
+.tauri/binaries/
