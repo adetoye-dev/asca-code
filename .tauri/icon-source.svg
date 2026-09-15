@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Source artwork for the desktop app icon. `npx tauri icon .tauri/icon-source.svg`
+     regenerates .tauri/icons/. macOS wants a full-bleed rounded square with no
+     transparency, so the glyph sits on a squircle plate here, while the runtime
+     logo (public/logos/acsa.svg) stays a transparent mark like every other brand
+     in public/logos/. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="acsa-mark" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#0B0B0D"/>
+  <path fill="url(#acsa-mark)" fill-rule="evenodd" transform="translate(153.6 153.6) scale(0.7)" d="M512 150 L914 874 L738 874 L667 712 L357 712 L286 874 L110 874 Z M512 360 L619 604 L405 604 Z"/>
+</svg>

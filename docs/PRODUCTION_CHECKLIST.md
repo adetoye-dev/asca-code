@@ -41,7 +41,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | --- | --- | --- |
 | Bundles and launches | **[done]** | `tauri build` produces an `.app` that starts and finds its engine in `Contents/Resources`. |
 | Engine shipped with the app | **[done]** | `bundle.resources` plus resource-dir resolution. |
-| Icons | **[partial]** | Valid generated placeholders; needs real brand art. |
+| Icons | **[done]** | `.tauri/icon-source.svg` generates the platform set; the titlebar/watermark logo is `public/logos/acsa.svg`. Hand-authored stand-in — swap in final art when ready. |
 | Python runtime | **[done]** | The engine is frozen into a single ~10 MB `acsa-engine` sidecar (`scripts/build_engine_sidecar.sh`) and resolved by the Rust and bridge spawn paths. No interpreter needed on the user's machine. |
 | Code signing / notarisation | **[partial]** | Hardened runtime and entitlements are configured and `release.yml` imports the certificate, notarises, and verifies the ticket — but it needs an Apple Developer certificate, so no signed build has been produced yet. |
 | Auto-update | **[open]** | Documented end to end in `RELEASING.md`; needs a signing key and a release host. |
@@ -85,4 +85,4 @@ Anything marked open is a real gap for shipping to someone else's machine.
 4. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
 5. **Backup/restore** and **OS keychain** for credentials.
 6. **Accessibility audit**.
-7. **Real brand artwork** — the app icon is still a generated placeholder.
+7. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in; drop the real logo over `.tauri/icon-source.svg` and `public/logos/acsa.svg`.

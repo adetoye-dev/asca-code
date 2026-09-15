@@ -10,8 +10,8 @@ that only the maintainer can make).
   `ACSA Code.app` and it launches.
 - The Python engine ships inside the bundle and is found at runtime:
   `Contents/Resources/core-engine`, resolved via `app.path().resource_dir()`.
-- `scripts/generate_placeholder_icon.py` regenerates the placeholder icons if
-  the set is ever lost.
+- `.tauri/icon-source.svg` is the icon artwork; re-run `tauri icon` against it
+  (step 1) if the generated set is ever lost.
 
 Verify a build before shipping:
 
@@ -24,16 +24,25 @@ ls "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-engine"
 # expect: [ACSA Code] started. Engine dir: ".../Contents/Resources/core-engine"
 ```
 
-## 1. Replace the placeholder icon — **[blocked: needs brand art]**
+## 1. Icon artwork — **[done]**
 
-_Not a licensing issue: `LICENSE` and `THIRD-PARTY-NOTICES.md` are generated and
-shipped inside the bundle. The icon below is purely cosmetic._
-
-`tauri icon` produced the required set, but the artwork is a generic placeholder.
+`.tauri/icon-source.svg` holds the artwork: the ACSA mark on a rounded-square
+plate (macOS wants a full-bleed square with no transparency). Regenerate the
+platform set from it whenever the art changes:
 
 ```bash
-npx tauri icon path/to/brand-1024x1024.png --output .tauri/icons
+npx tauri icon .tauri/icon-source.svg --output .tauri/icons
+# then delete `android/`, `ios/`, `Square*.png` and `StoreLogo.png` — this app
+# bundles macOS, Linux and Windows only, so those variants are unused.
 ```
+
+The logo shown in the titlebar and the dock watermark is `public/logos/acsa.svg`
+— a transparent version of the same mark, so it sits next to the other provider
+logos. Both files are hand-authored vectors.
+
+_The mark is a clean stand-in, not the owner's final artwork: the asset it
+replaced was a 300 KB bitmap trace that rendered as an empty box. Swap in the
+real logo by overwriting these two paths._
 
 ## 2. Ship a Python runtime — **[done]**
 
