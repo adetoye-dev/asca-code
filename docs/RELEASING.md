@@ -76,30 +76,58 @@ ticket. What it needs is the certificate and the repository secrets.
 Requires a paid Apple Developer Program membership. Apple issues **Developer ID
 Application** certificates only to members.
 
-1. Keychain Access → Certificate Assistant → *Request a Certificate From a
-   Certificate Authority* → save the CSR to disk (Keychain Access → *Saved to
-   disk*, 2048-bit RSA).
+1. **On the Mac that will sign**, Keychain Access → Certificate Assistant →
+   *Request a Certificate From a Certificate Authority*, and choose **Saved to
+   disk**. This is the step that generates the private key: it stays in your
+   `login` keychain and never leaves this machine.
 2. developer.apple.com → Certificates, Identifiers & Profiles → **+** →
    *Developer ID Application* → upload the CSR → download the `.cer`.
-3. Double-click the `.cer` to install it, then in Keychain Access select the
-   certificate **and its private key**, right-click → *Export* → `.p12`, and set
-   a password.
+3. Double-click the `.cer`, set the **Keychain** dropdown to **login** (it
+   defaults to iCloud), and *Add*. Then in Keychain Access click the
+   certificate's disclosure triangle so the certificate **and its private key**
+   are both selected, right-click → *Export* → `.p12`, and set a password.
+
+   Check the identity really formed before exporting — the `.cer` is only the
+   public half and cannot sign anything on its own:
+
+   ```bash
+   security find-identity -v -p codesigning
+   # want: "1 valid identities found" plus
+   # "Developer ID Application: Your Name (TEAMID)"
+   # "0 valid identities found" => the private key is missing; redo step 1 here.
+   ```
+
 4. Base64 it for CI:
 
    ```bash
    base64 -i DeveloperID.p12 | pbcopy     # paste into APPLE_CERTIFICATE
    ```
 
-5. Note the exact identity string, which is what `APPLE_SIGNING_IDENTITY` wants:
-
-   ```bash
-   security find-identity -v -p codesigning
-   # "Developer ID Application: Your Name (TEAMID)"
-   ```
+5. Copy the identity string verbatim from the step-3 output — that exact text,
+   including the `(TEAMID)` suffix, is what `APPLE_SIGNING_IDENTITY` wants.
 
 6. Notarisation needs an **app-specific password** (appleid.apple.com → Sign-In
    and Security → App-Specific Passwords), not your Apple ID password. The Team
    ID is the 10-character code in the membership details.
+
+#### Traps that cost us a detour
+
+- **The Keychain dropdown defaults to iCloud.** Pick **login** every time. An
+  import targeting iCloud fails with `-25294` (`errSecNoSuchKeychain`), and once
+  a copy of the certificate exists outside `login.keychain-db`, every later
+  import there is refused as
+  `SecKeychainItemImport: The specified item already exists in the keychain` —
+  while `security find-certificate -a -p ~/Library/Keychains/login.keychain-db`
+  still shows nothing. Delete the stray copy first (Keychain Access → select the
+  iCloud keychain → search the certificate name → delete), then import into
+  `login`.
+- **A `.cer` from a different machine is useless.** Only the public half lives
+  in the file. If the CSR was not made on this Mac, the certificate imports but
+  reports no identity, and `codesign`/CI cannot use it.
+- **Apple will issue several certs for the same name, and they collide.** They
+  share a common name, so they overwrite each other as keychain items. Keep the
+  one issued under **Developer ID Certification Authority G2** (five years) and
+  revoke the rest in the portal — an older **G1** cert expires within a year.
 
 ### 3b. Add the repository secrets
 
