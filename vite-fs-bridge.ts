@@ -2468,7 +2468,9 @@ export function realFilesystemPlugin(): Plugin {
 
           // ── POST /api/ai/test-connection ────────────────────────────────────
           if (pathname === "/api/ai/usage" && req.method === "GET") {
-            const usageRoot = resolveProjectRoot(process.cwd());
+            const usageRoot = resolveProjectRoot(
+              parsedUrl.searchParams.get("projectRoot") || process.cwd()
+            );
             const usagePath = path.join(usageRoot, ".acsa", "usage.jsonl");
             const rows: any[] = [];
             if (fs.existsSync(usagePath)) {
@@ -4489,7 +4491,7 @@ export function realFilesystemPlugin(): Plugin {
 
           if (pathname === "/api/mcp/tools" && req.method === "POST") {
             const body = await parseJsonBody(req);
-            const { id, config: inlineConfig, projectRoot } = body;
+            const { id, config: inlineConfig, projectRoot, action = "list-tools", tool = "", arguments: toolArguments = {} } = body;
             const root = resolveProjectRoot(projectRoot || process.cwd());
             let serverConfig = inlineConfig;
             if (!serverConfig && id) {
@@ -4506,27 +4508,45 @@ export function realFilesystemPlugin(): Plugin {
               return;
             }
             const mcpScript = path.resolve("core-engine/mcp_client.py");
-            execFile(
-              "python3",
-              [mcpScript, "--config", JSON.stringify(serverConfig), "--action", "list-tools"],
-              { timeout: 30000, maxBuffer: 4 * 1024 * 1024 },
-              (error, stdout) => {
-                res.setHeader("Content-Type", "application/json");
-                if (error && !stdout) {
-                  res.end(JSON.stringify({ ok: false, error: error.message, tools: [] }));
-                  return;
-                }
-                try {
-                  const lastLine = (stdout || "").trim().split("\n").pop() || "{}";
-                  const parsed = JSON.parse(lastLine);
-                  res.end(
-                    JSON.stringify({ ok: Boolean(parsed.ok), tools: parsed.tools || [], error: parsed.error })
-                  );
-                } catch {
-                  res.end(JSON.stringify({ ok: false, tools: [], error: "Could not parse MCP response" }));
-                }
+            const child = spawn("python3", [
+              mcpScript,
+              "--config-stdin",
+              "--action",
+              action === "call-tool" ? "call-tool" : "list-tools",
+              ...(action === "call-tool" ? ["--tool", tool, "--args", JSON.stringify(toolArguments)] : []),
+            ], { cwd: process.cwd() });
+            let stdout = "";
+            let stderr = "";
+            let responseSent = false;
+            const timeoutId = setTimeout(() => child.kill("SIGTERM"), 30000);
+            child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+            child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+            child.on("close", (code) => {
+              if (responseSent) return;
+              responseSent = true;
+              clearTimeout(timeoutId);
+              res.setHeader("Content-Type", "application/json");
+              if (code !== 0 && !stdout) {
+                res.end(JSON.stringify({ ok: false, error: stderr.trim() || `MCP client exited with code ${code}`, tools: [] }));
+                return;
               }
-            );
+              try {
+                const lastLine = stdout.trim().split("\n").pop() || "{}";
+                const parsed = JSON.parse(lastLine);
+                res.end(JSON.stringify({ ...parsed, ok: Boolean(parsed.ok), tools: parsed.tools || [] }));
+              } catch {
+                res.end(JSON.stringify({ ok: false, tools: [], error: "Could not parse MCP response" }));
+              }
+            });
+            child.on("error", (error) => {
+              if (responseSent) return;
+              responseSent = true;
+              clearTimeout(timeoutId);
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, tools: [], error: error.message }));
+            });
+            child.stdin.write(JSON.stringify(serverConfig));
+            child.stdin.end();
             return;
           }
 

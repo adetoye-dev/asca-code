@@ -9,7 +9,7 @@ Stdlib only. Used by the dev-server bridge (list/call tools) and available to
 the agent so installed MCP servers become first-class tools.
 
 CLI:
-    python3 mcp_client.py --config '<json>' --action list-tools
+    python3 mcp_client.py --config-stdin --action list-tools < config.json
     python3 mcp_client.py --config '<json>' --action call-tool --tool NAME --args '{}'
 """
 
@@ -215,7 +215,9 @@ def _build_client(config: dict[str, Any], timeout: float) -> McpStdioClient:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MCP stdio client")
-    parser.add_argument("--config", required=True, help="JSON MCP server config")
+    config_group = parser.add_mutually_exclusive_group(required=True)
+    config_group.add_argument("--config", help="JSON MCP server config")
+    config_group.add_argument("--config-stdin", action="store_true", help="Read JSON MCP server config from stdin")
     parser.add_argument("--action", required=True, choices=["list-tools", "call-tool"])
     parser.add_argument("--tool", default="")
     parser.add_argument("--args", default="{}")
@@ -223,7 +225,8 @@ def main() -> int:
     parsed = parser.parse_args()
 
     try:
-        config = json.loads(parsed.config)
+        config_text = os.sys.stdin.read() if parsed.config_stdin else parsed.config
+        config = json.loads(config_text)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": f"Invalid config JSON: {exc}"}))
         return 1

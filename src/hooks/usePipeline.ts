@@ -138,8 +138,8 @@ function hydrateAiSettings(settings: AISettings): AISettings {
     return {
       ...settings,
       model: settings.model || cfg.selectedModel || "",
-      apiKey: settings.apiKey || cfg.apiKey || "",
-      baseUrl: settings.baseUrl || cfg.baseUrl || "",
+      apiKey: cfg.apiKey ?? settings.apiKey ?? "",
+      baseUrl: cfg.baseUrl ?? settings.baseUrl ?? "",
     };
   } catch {
     return settings;

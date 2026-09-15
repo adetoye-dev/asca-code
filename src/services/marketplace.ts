@@ -373,10 +373,16 @@ export async function installMcpServer(
     return { ok: false, error: "Not an MCP server" };
   }
   try {
+    const config = { ...item.mcpConfig };
+    if (item.id === "acsa-workspace") {
+      const root = projectRoot.replace(/[\\/]+$/, "");
+      config.args = [`${root}/core-engine/mcp_servers/workspace_server.py`];
+      config.env = { ...(config.env || {}), ACSA_MCP_ROOT: projectRoot };
+    }
     const res = await fetch("/api/mcp/servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: item.id, config: item.mcpConfig, projectRoot }),
+      body: JSON.stringify({ id: item.id, config, projectRoot }),
     });
     const data = await res.json().catch(() => ({}));
     return { ok: Boolean(data.ok), error: data.error };

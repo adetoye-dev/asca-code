@@ -2252,6 +2252,13 @@ def _maybe_route_to_local(config: ProjectConfig, user_request: str) -> ProjectCo
         config.llm_provider,
         config.llm_model,
     )
+    emit_step(
+        "Cost Routing",
+        f"Routed this short request to local model '{local_model}' "
+        f"instead of {config.llm_provider}/{config.llm_model}. "
+        f"Set {ROUTE_SIMPLE_TO_LOCAL_ENV}=0 to disable.",
+        "done",
+    )
     config.llm_provider = "ollama"
     config.llm_model = local_model
     config.llm_base_url = "http://127.0.0.1:11434"

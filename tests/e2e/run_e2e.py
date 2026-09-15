@@ -78,7 +78,7 @@ def run_scenario(name: str, setup, task: str, verify) -> bool:
         verify(root)
         print(f"[{name}] PASS ({elapsed:.0f}s)")
         return True
-    except AssertionError as exc:
+    except Exception as exc:
         print(f"[{name}] FAIL: {exc}")
         for p in sorted(root.rglob("*.py")):
             if ".acsa" in p.parts:
@@ -122,6 +122,11 @@ def verify_edit(root: Path) -> None:
     try:
         mod.multiply("x", 3)
         raise AssertionError("multiply('x', 3) did not raise TypeError")
+    except TypeError:
+        pass
+    try:
+        mod.multiply(2, "x")
+        raise AssertionError("multiply(2, 'x') did not raise TypeError")
     except TypeError:
         pass
     _assert_usage_recorded(root)
@@ -179,11 +184,15 @@ def verify_newproject(root: Path) -> None:
         assert mod.greet("world") == "Hello, world", "greet() returns the wrong string"
     finally:
         sys.path.pop(0)
-    main_src = main.read_text(encoding="utf-8")
-    assert ("import greet" in main_src) or ("from utils import" in main_src), (
-        "main.py does not import greet from utils"
+    proc = subprocess.run(
+        [sys.executable, str(main)],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    assert "greet(" in main_src, "main.py never calls greet()"
+    assert proc.returncode == 0, f"main.py exited with {proc.returncode}: {proc.stderr}"
+    assert "Hello, world" in proc.stdout, f"main.py produced unexpected output: {proc.stdout!r}"
     _assert_usage_recorded(root)
 
 

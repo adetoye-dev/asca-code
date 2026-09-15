@@ -266,7 +266,8 @@ export function MonacoEditorContainer({
       });
       if (result.ok && result.replacement && result.replacement.trim()) {
         editor.executeEdits("acsa-fix", [{ range, text: result.replacement }]);
-        setReviewIssues((prev) => prev.filter((_, i) => i !== index));
+        setReviewIssues([]);
+        monaco.editor.setModelMarkers(model, "acsa-review", []);
       }
     } finally {
       setFixingIndex(null);

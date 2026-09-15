@@ -860,6 +860,7 @@ def run_command(project_root: str, command: str = "", timeout_seconds: int = 60,
             cwd=str(root),
             capture_output=True,
             text=True,
+            env={**os.environ, "CI": "1"} if argv[:2] == ["npm", "test"] else None,
             timeout=timeout_seconds,
         )
         elapsed = round(time.monotonic() - start_t, 2)
@@ -930,6 +931,7 @@ def run_tests(project_root: str, timeout_seconds: int = 180, **kwargs: Any) -> s
             cwd=str(root),
             capture_output=True,
             text=True,
+            env={**os.environ, "CI": "1"} if argv == ["npm", "test"] else None,
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
@@ -977,11 +979,17 @@ def _run_mcp_client(config: dict[str, Any], action: str, tool: str = "",
                     arguments: Optional[dict[str, Any]] = None,
                     timeout: int = 60) -> dict[str, Any]:
     script = Path(__file__).resolve().parent / "mcp_client.py"
-    argv = [sys.executable, str(script), "--config", json.dumps(config), "--action", action]
+    argv = [sys.executable, str(script), "--config-stdin", "--action", action]
     if tool:
         argv += ["--tool", tool, "--args", json.dumps(arguments or {})]
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            argv,
+            input=json.dumps(config),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"MCP server timed out after {timeout}s"}
     except Exception as exc:  # noqa: BLE001
