@@ -308,7 +308,8 @@ def consume_openai_delta(choice: dict, emit_token: Callable[[str], None]) -> tup
     no tool ran, and the run never progressed. Surface the thought so it is
     visible on the thought channel while the answer keeps its own channel.
     """
-    delta = choice.get("delta") or {}
+    # `delta` for streamed responses, `message` for a single non-streamed body.
+    delta = choice.get("delta") or choice.get("message") or {}
     thought = delta.get("reasoning_content") or delta.get("reasoning") or ""
     if thought:
         emit_thought(thought)
@@ -326,6 +327,60 @@ def report_token_limit_hit(max_tokens: int) -> None:
         f"\n⚠️ The response hit the output token limit ({max_tokens}) and was cut off. "
         "Split the work into smaller steps.\n"
     )
+
+
+def accumulate_tool_call_delta(acc: dict[int, dict[str, str]], delta_tool_calls: list[dict]) -> None:
+    """Fold one streamed `delta.tool_calls` fragment into `acc` by index.
+
+    OpenAI-compatible providers stream tool calls as a sparse sequence of
+    fragments: the name arrives on the first chunk and the JSON arguments dribble
+    in across many. Everything after the first fragment carries only `index`, so
+    the fragments must be joined per index rather than per chunk.
+    """
+    for fragment in delta_tool_calls or []:
+        if not isinstance(fragment, dict):
+            continue
+        try:
+            index = int(fragment.get("index", 0))
+        except (TypeError, ValueError):
+            index = 0
+        slot = acc.setdefault(index, {"name": "", "arguments": ""})
+        function = fragment.get("function") or {}
+        name = function.get("name")
+        if name:
+            slot["name"] = str(name)
+        args = function.get("arguments")
+        if args:
+            slot["arguments"] += str(args)
+
+
+def render_native_tool_calls(calls: list[dict[str, str]]) -> str:
+    """Render native tool calls as JSON for the existing text-protocol parser.
+
+    Keeping a single downstream representation means the observation loop,
+    duplicate-call guard, permission gate and syntax gate all work unchanged.
+    JSON (rather than the XML convention) is used because it round-trips file
+    content exactly, and both `_extract_json_tool_objects` and the
+    thought-cleaner already handle it.
+    """
+    rendered: list[str] = []
+    for call in calls:
+        name = str(call.get("name") or "").strip()
+        if not name:
+            continue
+        raw_args = call.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw_args)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Dropping native tool call '%s': arguments were not valid JSON", name)
+            continue
+        if not isinstance(arguments, dict):
+            arguments = {"value": arguments}
+        emit_thought(f"\n→ {name}\n")
+        rendered.append(
+            "```json\n" + json.dumps({"name": name, "arguments": arguments}) + "\n```"
+        )
+    return "\n".join(rendered)
 
 
 def request_user_permission(command: str, description: str = "", timeout: float = 120.0) -> bool:
@@ -389,6 +444,7 @@ def _call_llm(
     images: Optional[list[str]] = None,
     stream_target: str = "chunk",  # "chunk" | "thought" | "none"
     token_callback: Optional[Callable[[str], None]] = None,
+    tools: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[str]:
     """Send a completion request to the chosen LLM provider (Ollama, OpenAI API, local).
 
@@ -820,6 +876,7 @@ def _call_llm(
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream,
+        **({"tools": tools, "tool_choice": "auto"} if tools else {}),
     }).encode("utf-8")
 
     start = time.monotonic()
@@ -829,6 +886,7 @@ def _call_llm(
     try:
         req = urllib.request.Request(endpoint_url, data=payload, headers=headers, method="POST")
         full_tokens: list[str] = []
+        native_calls: dict[int, dict[str, str]] = {}
         finish_reason = ""
         with opener.open(req, timeout=timeout) as resp:
             for line_bytes in resp:
@@ -841,7 +899,11 @@ def _call_llm(
                     data = json.loads(line_str)
                     choices = data.get("choices", [])
                     if choices:
-                        token, finish = consume_openai_delta(choices[0], emit_token)
+                        choice = choices[0]
+                        accumulate_tool_call_delta(
+                            native_calls, (choice.get("delta") or {}).get("tool_calls") or []
+                        )
+                        token, finish = consume_openai_delta(choice, emit_token)
                         if finish:
                             finish_reason = finish
                         if token:
@@ -853,7 +915,12 @@ def _call_llm(
         logger.info("LLM response received from %s in %.0fms", endpoint_url, elapsed)
         if finish_reason == "length":
             report_token_limit_hit(max_tokens)
-        return "".join(full_tokens) if full_tokens else None
+        text = "".join(full_tokens)
+        if native_calls:
+            ordered = [native_calls[k] for k in sorted(native_calls)]
+            logger.info("Model returned %d native tool call(s)", len(ordered))
+            text = (text + "\n" if text.strip() else "") + render_native_tool_calls(ordered)
+        return text if text.strip() else None
     except urllib.error.HTTPError as http_exc:
         err_body = ""
         try:
@@ -2413,6 +2480,27 @@ def _pick_best_local_ollama_model(base_url: str = "http://127.0.0.1:11434") -> O
         return None
 
 
+def _agent_tool_schemas(config: ProjectConfig) -> Optional[list[dict[str, Any]]]:
+    """Native function-calling schemas for the agent loop, or None to opt out.
+
+    Cloud OpenAI-compatible providers honour the `tools` parameter, so the model
+    can use its real tool-call channel instead of being asked to imitate a
+    private XML convention it may simply ignore. Local Ollama is left on the text
+    protocol by default: `tools` support depends on the model and server version,
+    and the text path is the one covered by the end-to-end suite. Override with
+    ACSA_NATIVE_TOOLS=0 (never) or =1 (even for Ollama).
+    """
+    override = os.environ.get("ACSA_NATIVE_TOOLS", "").strip()
+    if override == "0":
+        return None
+    provider = (config.llm_provider or "").lower()
+    if provider == "ollama" and override != "1":
+        return None
+    if provider in ("deterministic", "local"):
+        return None
+    return agent_tools.openai_tool_schemas()
+
+
 def _maybe_route_to_local(config: ProjectConfig, user_request: str) -> ProjectConfig:
     """Route simple, focused mutations to the local worker to cut cloud cost.
 
@@ -2637,6 +2725,7 @@ def orchestrate(
                     max_tokens=AGENT_MAX_TOKENS,
                     images=imgs,
                     stream_target=s_target,
+                    tools=_agent_tool_schemas(config),
                 ),
                 active_file=getattr(config, "active_file", None),
                 reporter=lambda name, detail, status: emit_step(name, detail, status),
@@ -2710,6 +2799,7 @@ def orchestrate(
             max_tokens=AGENT_MAX_TOKENS,
             images=imgs,
             stream_target=s_target,
+            tools=_agent_tool_schemas(config),
         ),
         active_file=getattr(config, "active_file", None),
         reporter=lambda name, detail, status: emit_step(name, detail, status),
@@ -2763,6 +2853,7 @@ def orchestrate(
                             max_tokens=AGENT_MAX_TOKENS,
                             images=imgs,
                             stream_target=s_target,
+                            tools=_agent_tool_schemas(config),
                         ),
                         reporter=lambda name, detail, status: emit_step(f"Repair: {name}", detail, status),
                         chunk_streamer=emit_chunk,

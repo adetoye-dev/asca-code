@@ -1447,3 +1447,52 @@ TOOL_SCHEMAS = [
         },
     },
 ]
+
+
+# Parameters the model should send as JSON numbers rather than strings. Anything
+# else is declared as a string; `normalize_tool_arguments` coerces both.
+_INTEGER_PARAMS = {
+    "start_line",
+    "end_line",
+    "max_depth",
+    "max_results",
+    "limit",
+    "timeout_seconds",
+}
+
+
+def openai_tool_schemas() -> list[dict[str, Any]]:
+    """Translate TOOL_SCHEMAS into OpenAI-style function-calling definitions.
+
+    Handing these to the provider lets the model use its *native* tool-call
+    channel instead of being asked to imitate a private XML convention in prose.
+    Models routinely ignore that convention and answer in their own format
+    (DeepSeek, for one, replies with DSML markup), which the harness then fails
+    to parse at all.
+    """
+    tools: list[dict[str, Any]] = []
+    for spec in TOOL_SCHEMAS:
+        properties: dict[str, Any] = {}
+        for pname, pdesc in (spec.get("parameters") or {}).items():
+            properties[pname] = {
+                "type": "integer" if pname in _INTEGER_PARAMS else "string",
+                "description": str(pdesc),
+            }
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": spec["name"],
+                    "description": spec.get("description", ""),
+                    # Deliberately permissive: the tool layer validates arguments
+                    # and returns a corrective observation, which is a better
+                    # teacher than a schema rejection.
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": [],
+                    },
+                },
+            }
+        )
+    return tools
