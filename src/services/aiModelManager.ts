@@ -370,6 +370,25 @@ export async function hydrateProviders(): Promise<void> {
     // fall back to defaults rather than leaving the UI empty.
   }
 
+  // The chat model selection used to live in `localStorage` too. Carry it into
+  // the database on upgrade, or the user's chosen cloud model silently reverts
+  // to the local default when the old key is removed below.
+  if (!selected) {
+    try {
+      const legacySelection =
+        localStorage.getItem(SELECTED_MODEL_KEY) || localStorage.getItem(DEFAULT_PROVIDER_KEY);
+      if (legacySelection) {
+        const parsed = JSON.parse(legacySelection);
+        if (parsed?.providerId && parsed?.model) {
+          selected = { providerId: parsed.providerId, model: parsed.model };
+          await appStore.setSetting("selected_model", selected);
+        }
+      }
+    } catch {
+      /* storage disabled or unparseable */
+    }
+  }
+
   const nothingStoredYet = Object.keys(stored).length === 0;
   if (legacy && nothingStoredYet) {
     for (const [id, entry] of Object.entries(legacy)) {
