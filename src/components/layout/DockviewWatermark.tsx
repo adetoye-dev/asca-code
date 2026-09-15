@@ -9,6 +9,8 @@ export interface DockviewWatermarkProps {
   onToggleSidebar?: () => void;
   onToggleTerminal?: () => void;
   onToggleAi?: () => void;
+  /** Optional "what do I do next?" slot, e.g. the project setup card. */
+  setupSlot?: React.ReactNode;
   [key: string]: any;
 }
 
@@ -18,6 +20,7 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
   onToggleSidebar,
   onToggleTerminal,
   onToggleAi,
+  setupSlot,
 }) => {
   const handleOpenFile = () => {
     if (onOpenFile) onOpenFile();
@@ -91,6 +94,8 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
       <div className="text-[11px] text-zinc-600 mb-6 font-mono">
         Autonomous AI Engineering Workbench
       </div>
+
+      {setupSlot}
 
       {/* Keyboard Shortcuts List */}
       <div className="flex flex-col gap-1 w-64 max-w-full">

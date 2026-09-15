@@ -29,6 +29,12 @@ import { AssetPreview } from "../editor/AssetPreview";
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { DockviewWatermark } from "./DockviewWatermark";
+import { ProjectSetupCard } from "./ProjectSetupCard";
+import {
+  fetchProjectStatus,
+  runInProjectTerminal,
+  type ProjectStatus,
+} from "../../services/projectSetup";
 import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
 import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
@@ -1050,6 +1056,38 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     [dirtyTabPaths, requestCloseTab]
   );
 
+  // ── Project readiness (fresh scaffold → dependencies not installed) ───────
+  const [projectStatus, setProjectStatus] = useState<ProjectStatus | null>(null);
+  const [setupBusyCommand, setSetupBusyCommand] = useState<string | null>(null);
+
+  const refreshProjectStatus = useCallback(async () => {
+    const status = await fetchProjectStatus(activeProject.path);
+    setProjectStatus(status);
+    return status;
+  }, [activeProject.path]);
+
+  useEffect(() => {
+    void refreshProjectStatus();
+  }, [refreshProjectStatus]);
+
+  const runSetupCommand = useCallback(
+    async (_label: string, command: string) => {
+      setSetupBusyCommand(command);
+      setIsBottomPanelOpen(true);
+      await runInProjectTerminal(activeProject.path, command);
+      // Installing/building is long-running, so poll until the project stops
+      // needing setup (or give up) and let the card re-render on its own.
+      const deadline = Date.now() + 10 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const status = await refreshProjectStatus();
+        if (!status || !status.needsInstall) break;
+      }
+      setSetupBusyCommand(null);
+    },
+    [activeProject.path, refreshProjectStatus]
+  );
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--vscode-sidebar-bg)] text-[var(--vscode-editor-fg)] select-none">
       {/* ── Top IDE Titlebar (Clean, Uncluttered, JetBrains / VS Code Modern UI) ── */}
@@ -1382,6 +1420,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     setIsCenterChatOpen(false);
                     setIsRightPanelOpen((prev) => !prev);
                   }}
+                  setupSlot={
+                    <ProjectSetupCard
+                      status={projectStatus}
+                      busyCommand={setupBusyCommand}
+                      onRun={runSetupCommand}
+                    />
+                  }
                 />
               )}
               onReady={onReady}

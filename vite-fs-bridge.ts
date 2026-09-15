@@ -1569,6 +1569,37 @@ export function realFilesystemPlugin(): Plugin {
             return;
           }
 
+          // ── GET /api/project/status ─────────────────────────────────────────
+          // Lets the UI tell a first-time user that a freshly scaffolded project
+          // still needs its dependencies installed, instead of leaving them in an
+          // editor wondering why nothing runs.
+          if (pathname === "/api/project/status" && req.method === "GET") {
+            const projectRoot = parsedUrl.searchParams.get("projectRoot") || "";
+            const resolved = resolveProjectRoot(projectRoot || process.cwd());
+
+            let hasPackageJson = false;
+            let scripts: Record<string, string> = {};
+            const pkgPath = path.join(resolved, "package.json");
+            if (fs.existsSync(pkgPath)) {
+              hasPackageJson = true;
+              try {
+                scripts = JSON.parse(fs.readFileSync(pkgPath, "utf-8")).scripts || {};
+              } catch {}
+            }
+
+            const hasNodeModules = fs.existsSync(path.join(resolved, "node_modules"));
+            res.end(
+              JSON.stringify({
+                projectRoot: resolved,
+                hasPackageJson,
+                hasNodeModules,
+                needsInstall: hasPackageJson && !hasNodeModules,
+                scripts,
+              })
+            );
+            return;
+          }
+
           // ── GET /api/indexer/map ────────────────────────────────────────────
           // Compact, UI-shaped view of the symbol index: file inventory with
           // import/dependent counts, the most depended-on files, and the
