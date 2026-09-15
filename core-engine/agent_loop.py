@@ -49,6 +49,16 @@ class AgentStep:
     elapsed_s: float = 0.0
 
 
+# Phrases that indicate the model declined rather than acted. Repeating one of
+# these (or an identical reply) with no file edits must not spin the loop.
+_REFUSAL_PHRASES = (
+    "i can't assist", "i cannot assist", "i can't help", "i cannot help",
+    "i'm sorry, but i can't", "i am sorry, but i cannot", "i'm unable to",
+    "i am unable to", "as an ai language model", "i must decline",
+    "i won't be able to", "i will not be able to",
+)
+
+
 # ── Context Compaction ─────────────────────────────────────────────────────
 # Long-running agent conversations would otherwise re-send the entire history
 # every round, ballooning token cost and degrading local-model quality. We keep
@@ -325,6 +335,48 @@ Project Root: {project_root}
 """
 
 
+def _coerce_tool_arguments(container: dict[str, Any]) -> dict[str, Any]:
+    """Pull tool arguments from any of the keys models actually use.
+
+    Models emit `parameters`, `args`, `arguments` (OpenAI style), `input`, ...
+    and sometimes pass the arguments as a JSON *string*. Reading only
+    args/parameters silently produced calls with empty arguments.
+    """
+    for key in (
+        "parameters", "args", "arguments", "input",
+        "tool_input", "function_args", "tool_arguments",
+    ):
+        value = container.get(key)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                continue
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+
+    # Flat form used by several local models:
+    #   {"name": "read_file", "path": "calc.py", "start_line": 1}
+    # i.e. the arguments sit at the top level with no wrapper key.
+    identifier_keys = {
+        "name", "tool", "tool_name", "type", "function", "id",
+        "args", "parameters", "arguments", "input",
+    }
+    flat = {
+        key: value
+        for key, value in container.items()
+        if str(key).lower() not in identifier_keys
+    }
+    return flat
+
+
 def _extract_json_tool_objects(text: str) -> list[dict[str, Any]]:
     """Robustly extract JSON objects containing 'tool' or 'name' using standard json decoder."""
     decoder = json.JSONDecoder()
@@ -363,6 +415,10 @@ def _parse_xml_param_value(val_str: str, param_name: str = "") -> Any:
     """Safely coerce parameter values from XML strings."""
     if param_name in ("search", "replace", "patch", "content", "code"):
         val = val_str
+        # Models frequently emit escaped newlines inside XML parameters
+        # ("a\nb" instead of a real line break), which never matches the file.
+        if "\\n" in val and "\n" not in val:
+            val = val.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
         if val.startswith("\n") and val.endswith("\n") and len(val) > 2:
             val = val[1:-1]
         return val
@@ -544,7 +600,7 @@ def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = Non
         try:
             parsed = json.loads(content)
             name = parsed.get("name") or parsed.get("tool")
-            raw_args = parsed.get("parameters") or parsed.get("args") or {}
+            raw_args = _coerce_tool_arguments(parsed)
             if name:
                 norm_args = agent_tools.normalize_tool_arguments(str(name), raw_args)
                 calls.append((str(name), norm_args))
@@ -554,7 +610,7 @@ def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = Non
     # 5. JSON code blocks and inline JSON objects
     for obj in _extract_json_tool_objects(response_text):
         name = obj.get("tool") or obj.get("name")
-        raw_args = obj.get("args") or obj.get("parameters") or {}
+        raw_args = _coerce_tool_arguments(obj)
         if name:
             norm_args = agent_tools.normalize_tool_arguments(str(name), raw_args)
             calls.append((str(name), norm_args))
@@ -685,11 +741,26 @@ def run_agent_loop(
 
     # Seed with multi-turn conversation memory if available
     if conversation_history:
-        for prev_msg in conversation_history:
-            role = prev_msg.get("role", "user")
-            content = prev_msg.get("content", "")
-            if content and role in ("user", "assistant"):
-                history.append({"role": role, "content": content})
+        # Earlier turns are BACKGROUND ONLY. Injecting them as literal
+        # USER/ASSISTANT turns turns the prompt into a transcript that weaker
+        # models try to *continue* (echoing old, unrelated tasks and replying
+        # "I can't assist with that") instead of acting on the current request.
+        prior_lines: list[str] = []
+        for prev_msg in conversation_history[-6:]:
+            role = str(prev_msg.get("role", "user")).upper()
+            content = " ".join(str(prev_msg.get("content", "")).split())
+            if content and role in ("USER", "ASSISTANT"):
+                prior_lines.append(f"{role}: {content[:400]}")
+        if prior_lines:
+            history.append({
+                "role": "user",
+                "content": (
+                    "[BACKGROUND CONTEXT ONLY - earlier conversation with this user. "
+                    "Do NOT continue, answer or acknowledge these lines; they only show "
+                    "what the user was working on before. Your job is the CURRENT task below.]\n"
+                    + "\n".join(prior_lines)
+                ),
+            })
 
     # Generate execution plan for the objective
     plan_steps = generate_execution_plan(user_request, project_root, repo_map, llm_caller)
@@ -720,6 +791,9 @@ def run_agent_loop(
     # identical edit duplicates the inserted block (observed in the wild: the same
     # guard clause inserted 3x) and silently corrupts the file.
     successful_edit_sigs: dict[str, int] = {}
+
+    consecutive_stalls = 0
+    previous_response = ""
 
     for round_idx in range(1, max_iterations + 1):
         # Compact older history once it grows past the token budget so every
@@ -871,6 +945,9 @@ def run_agent_loop(
                     is_duplicate = True
 
                 tool_start = time.monotonic()
+                missing_edit_args = tool_name in edit_tool_names and not (
+                    norm_args.get("path") or norm_args.get("file") or norm_args.get("target_file")
+                )
                 if is_duplicate:
                     if tool_name in edit_tool_names and call_sig in successful_edit_sigs:
                         observation = (
@@ -886,6 +963,14 @@ def run_agent_loop(
                             f"The requested code and context are ALREADY in your context history above!\n"
                             f"DO NOT repeat read or locate calls. Your next required action is to call `edit_file` to execute your modifications directly on disk."
                         )
+                elif missing_edit_args:
+                    # A call with no path/search cannot do anything. Say so plainly
+                    # and tell the model the exact shape to re-issue.
+                    observation = (
+                        f"Error: {tool_name} was called without usable arguments, so nothing was changed. "
+                        'Re-issue it as {"path": "<relative file path>", '
+                        '"search": "<the exact existing lines>", "replace": "<the new lines>"}.'
+                    )
                 else:
                     try:
                         observation = tool_func(project_root=project_root, **norm_args)
@@ -938,7 +1023,12 @@ def run_agent_loop(
                                 logger.warning("In-loop syntax gate check error: %s", g_err)
 
                 # Status determination
-                is_err = observation.startswith("Error") or "FAILED" in observation or "[SYNTAX VERIFICATION WARNING]" in observation
+                is_err = (
+                    is_duplicate
+                    or observation.startswith("Error")
+                    or "FAILED" in observation
+                    or "[SYNTAX VERIFICATION WARNING]" in observation
+                )
                 status = "failed" if is_err else "done"
                 status_desc = f"Completed in {tool_elapsed}s" if not is_err else "Failed"
                 report(step_name, f"{arg_summary} ({status_desc})", status)
@@ -995,6 +1085,27 @@ def run_agent_loop(
 
         else:
             # No tool call made
+            is_refusal = any(p in response.lower() for p in _REFUSAL_PHRASES)
+            is_repeat = bool(response.strip()) and response.strip() == previous_response.strip()
+            previous_response = response
+
+            if (is_refusal or is_repeat) and not edited_files:
+                consecutive_stalls += 1
+            else:
+                consecutive_stalls = 0
+
+            # Stop instead of burning every remaining round on a model that
+            # refuses, or that keeps repeating itself, without touching a file.
+            if consecutive_stalls >= 2:
+                reason = "refused the request" if is_refusal else "repeated itself without acting"
+                final_answer = (
+                    f"The model {reason} twice in a row and no files were changed. "
+                    "Try a stronger model in the model selector (or a local coding model), "
+                    "or rephrase the task."
+                )
+                report("Agent", final_answer, "failed")
+                break
+
             has_unparsed_tool_markup = bool(
                 re.search(r"<(?:tool_call|invoke|function_call|call|action)\b", response, re.IGNORECASE)
                 or re.search(r"<{5,9}\s*SEARCH", response)

@@ -11,7 +11,7 @@
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, createContext, useContext } from "react";
 import {
   DockviewReact,
   DockviewReadyEvent,
@@ -83,6 +83,24 @@ const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: 
     </div>
   );
 };
+
+/**
+ * Dockview instantiates a panel's component once, from the closure captured when
+ * the panel was created - it does NOT re-render panels with fresh props when the
+ * `components` map is rebuilt. A panel that renders a controlled input from
+ * parent state therefore appears frozen (typing updates state, but the panel
+ * never re-renders, so the field snaps back to empty).
+ *
+ * Context propagates through that captured element, so the panel reads live
+ * values instead of the stale closure.
+ */
+const ChatLiveContext = createContext<Record<string, unknown> | null>(null);
+
+function LiveAiChatPanel() {
+  const liveProps = useContext(ChatLiveContext);
+  if (!liveProps) return null;
+  return <AiAssistantChat {...(liveProps as any)} />;
+}
 
 export function IdeLayout(pipeline: UsePipelineReturn) {
   const {
@@ -690,6 +708,65 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   ];
 
   // ── Dockview Components Dictionary ────────────────────────────────────────
+  const chatLiveProps = {
+    prompt,
+    setPrompt,
+    status,
+    activityLog,
+    projectRoot: activeProject.path,
+    onRunPipeline: (
+      request: string,
+      override?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
+      activePath?: string,
+      code?: string,
+      history?: Array<{ role: string; content: string }>,
+      images?: string[]
+    ) => {
+      if (override) {
+        setAiSettings({
+          ...aiSettings,
+          provider: override.provider as any,
+          model: override.model,
+          apiKey: override.apiKey !== undefined ? override.apiKey : aiSettings.apiKey,
+          baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
+        });
+      }
+      runPipeline(
+        request,
+        override,
+        activePath || activeTabPath || undefined,
+        code || selectedCode || undefined,
+        history,
+        images
+      );
+    },
+    onCancelPipeline: cancelPipeline,
+    isWide: true,
+    activeAiSettings: aiSettings,
+    selectedContext: activeTabPath ? { path: activeTabPath, code: selectedCode } : null,
+    failureDetail: orchestrationResult?.error_detail,
+    orchestrationResult,
+    indexStatus,
+    isIndexing,
+    onSyncIndex: syncIndex,
+    streamingAnswer,
+    streamingThought,
+    agentSteps,
+    pendingPermission,
+    respondToPermission,
+    onClose: () => {
+      const api = dockviewApiRef.current;
+      const panel = api?.getPanel("dock_ai_chat");
+      if (panel) api?.removePanel(panel);
+    },
+    onPopOutWide: () => {
+      const api = dockviewApiRef.current;
+      const panel = api?.getPanel("dock_ai_chat");
+      if (panel) api?.removePanel(panel);
+      setIsRightPanelOpen(true);
+    },
+  };
+
   const components = {
     // Asset Preview Tab
     assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean; projectRoot?: string }>) => (
@@ -801,53 +878,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     ),
 
     // Center Stage AI Assistant Chat Tab (Full Canvas / Wide Omnibar Mode)
-    aiChat: () => (
-      <AiAssistantChat
-        prompt={prompt}
-        setPrompt={setPrompt}
-        status={status}
-        activityLog={activityLog}
-        projectRoot={activeProject.path}
-        onRunPipeline={(request, override, activePath, code, history, images) => {
-          if (override) {
-            setAiSettings({
-              ...aiSettings,
-              provider: override.provider as any,
-              model: override.model,
-              apiKey: override.apiKey !== undefined ? override.apiKey : aiSettings.apiKey,
-              baseUrl: override.baseUrl !== undefined ? override.baseUrl : aiSettings.baseUrl,
-            });
-          }
-          runPipeline(request, override, activePath || activeTabPath || undefined, code || selectedCode || undefined, history, images);
-        }}
-        onCancelPipeline={cancelPipeline}
-        isWide={true}
-        activeAiSettings={aiSettings}
-        selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
-        failureDetail={orchestrationResult?.error_detail}
-        orchestrationResult={orchestrationResult}
-        indexStatus={indexStatus}
-        isIndexing={isIndexing}
-        onSyncIndex={syncIndex}
-        streamingAnswer={streamingAnswer}
-        streamingThought={streamingThought}
-        agentSteps={agentSteps}
-        pendingPermission={pendingPermission}
-        respondToPermission={respondToPermission}
-        onClose={() => {
-          const api = dockviewApiRef.current;
-          const panel = api?.getPanel("dock_ai_chat");
-          if (panel) api?.removePanel(panel);
-        }}
-        onPopOutWide={() => {
-          // Dock back to side tool window
-          const api = dockviewApiRef.current;
-          const panel = api?.getPanel("dock_ai_chat");
-          if (panel) api?.removePanel(panel);
-          setIsRightPanelOpen(true);
-        }}
-      />
-    ),
+    aiChat: () => <LiveAiChatPanel />,
   };
 
   // ── Initialize Default Dockview Layout ────────────────────────────────────
@@ -1254,6 +1285,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
           {/* Dockview Editors & Diff Surface */}
           <div className="flex-1 w-full overflow-hidden relative">
+            <ChatLiveContext.Provider value={chatLiveProps}>
             <DockviewReact
               components={components}
               defaultTabComponent={DockviewCustomTab}
@@ -1275,6 +1307,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
+            </ChatLiveContext.Provider>
           </div>
 
           {/* Dedicated Bottom Panel (Terminal / Output / Problems) */}

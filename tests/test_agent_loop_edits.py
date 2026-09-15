@@ -149,6 +149,130 @@ class SystemPromptTests(unittest.TestCase):
         self.assertIn("MCP TOOLS", rendered)
 
 
+class LoopGuardTests(unittest.TestCase):
+    """The loop must not spin when a model refuses or just repeats itself."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="acsa-guard-"))
+        (self.root / "calc.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8"
+        )
+        self._gate = agent_loop.run_syntax_gate
+        agent_loop.run_syntax_gate = None
+
+    def tearDown(self):
+        agent_loop.run_syntax_gate = self._gate
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_repeated_refusals_stop_the_loop_early(self):
+        def fake_llm(prompt=None, system=None, *args, **kwargs):
+            return "I'm sorry, but I can't assist with that."
+
+        result = agent_loop.run_agent_loop(
+            user_request="Add validation to the add function.",
+            project_root=str(self.root),
+            llm_caller=fake_llm,
+            max_iterations=8,
+        )
+        self.assertLessEqual(result.total_rounds, 3, "must not burn all 8 rounds")
+        self.assertIn("refused", result.answer.lower())
+        self.assertEqual(result.edited_files, [])
+
+    def test_identical_replies_stop_the_loop_early(self):
+        def fake_llm(prompt=None, system=None, *args, **kwargs):
+            return "Here is my plan for the change."
+
+        result = agent_loop.run_agent_loop(
+            user_request="Add validation to the add function.",
+            project_root=str(self.root),
+            llm_caller=fake_llm,
+            max_iterations=8,
+        )
+        self.assertLessEqual(result.total_rounds, 3)
+
+    def test_prior_turns_are_background_context_not_a_transcript(self):
+        prompts = []
+
+        def fake_llm(prompt=None, system=None, *args, **kwargs):
+            prompts.append(prompt or "")
+            return "Done."
+
+        agent_loop.run_agent_loop(
+            user_request="Add a docstring to the add function.",
+            project_root=str(self.root),
+            llm_caller=fake_llm,
+            max_iterations=1,
+            conversation_history=[
+                {"role": "user", "content": "reduce the number of open projects to 3 instead of 5"},
+                {"role": "assistant", "content": "I'm sorry, but I can't assist with that."},
+            ],
+        )
+        first_prompt = prompts[0]
+        self.assertIn("BACKGROUND CONTEXT ONLY", first_prompt)
+        self.assertIn("reduce the number of open projects", first_prompt)
+        # The old assistant turn must not be emitted as its own turn to continue.
+        self.assertEqual(first_prompt.count("--- ASSISTANT ---"), 1)
+
+
+class ToolCallParsingTests(unittest.TestCase):
+    """Models use several argument keys; dropping them yields empty-argument calls."""
+
+    def test_arguments_key_is_parsed(self):
+        raw = '```json\n{"name": "read_file", "arguments": {"path": "calc.py"}}\n```'
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertTrue(calls, calls)
+        self.assertEqual(calls[0][0], "read_file")
+        self.assertEqual(calls[0][1].get("path"), "calc.py")
+
+    def test_arguments_as_json_string_is_parsed(self):
+        raw = '{"name": "edit_file", "arguments": "{\\"path\\": \\"a.py\\"}"}'
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertTrue(calls, calls)
+        self.assertEqual(calls[0][1].get("path"), "a.py")
+
+    def test_flat_tool_object_without_wrapper(self):
+        raw = '```json\n{"name": "read_file", "path": "calc.py", "start_line": 1, "end_line": 3}\n```'
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertTrue(calls, calls)
+        self.assertEqual(calls[0][1].get("path"), "calc.py")
+        self.assertEqual(calls[0][1].get("start_line"), 1)
+
+    def test_flat_edit_object_keeps_search_and_replace(self):
+        raw = ('{"name": "edit_file", "path": "a.py", "search": "x = 1", "replace": "x = 2"}')
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        args = calls[0][1]
+        self.assertEqual(args.get("path"), "a.py")
+        self.assertEqual(args.get("search"), "x = 1")
+        self.assertEqual(args.get("replace"), "x = 2")
+
+    def test_parameters_key_still_works(self):
+        raw = '{"name": "read_file", "parameters": {"path": "calc.py"}}'
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertEqual(calls[0][1].get("path"), "calc.py")
+
+
+class EscapedNewlineTests(unittest.TestCase):
+    """Models sometimes emit a literal backslash-n inside XML parameters."""
+
+    def test_escaped_newlines_in_search_are_unescaped(self):
+        bs = chr(92)  # a single backslash
+        raw = (
+            '<invoke name="edit_file">\n'
+            '  <parameter name="path">calc.py</parameter>\n'
+            f'  <parameter name="search">def f():{bs}n    return 1</parameter>\n'
+            f'  <parameter name="replace">def f():{bs}n    return 2</parameter>\n'
+            "</invoke>"
+        )
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertEqual(calls[0][0], "edit_file")
+        search = calls[0][1]["search"]
+        self.assertIn("\n", search, "should contain a real newline")
+        self.assertNotIn(bs + "n", search, "literal backslash-n must be gone")
+
+
 if __name__ == "__main__":
+
+
+
 
     unittest.main()

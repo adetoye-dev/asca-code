@@ -427,6 +427,28 @@ def _pick_occurrence_by_anchor(
     return occs[distances.index(nearest)][0]
 
 
+def _destructive_edit_reason(original: str, new_content: str) -> str:
+    """Return a reason when an edit would gut the file, else an empty string.
+
+    A model that emits an empty replacement together with a SEARCH block that
+    spans most of the file would otherwise wipe it - silently, and reported as a
+    success. Refusing a catastrophic shrink is far safer than applying it.
+    """
+    original_len = len(original.strip())
+    new_len = len(new_content.strip())
+    if original_len == 0:
+        return ""
+    if new_len == 0:
+        return f"it would empty the file (removing {original_len} characters)"
+    if original_len >= 40 and new_len < original_len * 0.5:
+        removed = original_len - new_len
+        return (
+            f"it would remove {removed} of {original_len} characters "
+            f"({100 - int(new_len * 100 / original_len)}% of the file)"
+        )
+    return ""
+
+
 def edit_file(
     project_root: str,
     path: str = "",
@@ -547,6 +569,13 @@ def edit_file(
         backup = target.with_suffix(target.suffix + ".bak")
         try:
             backup.write_text(content, encoding="utf-8")
+            _block_reason = _destructive_edit_reason(content, new_content)
+            if _block_reason:
+                return (
+                    f"Error: Refused this edit because {_block_reason}. "
+                    "If deleting that much is really intended, make it smaller and explicit, "
+                    "or call write_file with the exact final content."
+                )
             target.write_text(new_content, encoding="utf-8")
             return f"Success: Successfully updated '{path}' (exact match replaced)."
         except Exception as exc:
@@ -593,6 +622,13 @@ def edit_file(
         backup = target.with_suffix(target.suffix + ".bak")
         try:
             backup.write_text(content, encoding="utf-8")
+            _block_reason = _destructive_edit_reason(content, new_content)
+            if _block_reason:
+                return (
+                    f"Error: Refused this edit because {_block_reason}. "
+                    "If deleting that much is really intended, make it smaller and explicit, "
+                    "or call write_file with the exact final content."
+                )
             target.write_text(new_content, encoding="utf-8")
             return f"Success: Successfully updated '{path}' (whitespace-tolerant match replaced)."
         except Exception as exc:
@@ -639,6 +675,13 @@ def edit_file(
             backup = target.with_suffix(target.suffix + ".bak")
             try:
                 backup.write_text(content, encoding="utf-8")
+                _block_reason = _destructive_edit_reason(content, new_content)
+                if _block_reason:
+                    return (
+                        f"Error: Refused this edit because {_block_reason}. "
+                        "If deleting that much is really intended, make it smaller and explicit, "
+                        "or call write_file with the exact final content."
+                    )
                 target.write_text(new_content, encoding="utf-8")
                 return f"Success: Successfully updated '{path}' (normalized fuzzy match replaced)."
             except Exception as exc:

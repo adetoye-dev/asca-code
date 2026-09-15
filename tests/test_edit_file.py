@@ -89,5 +89,40 @@ class EditFileTests(unittest.TestCase):
         self.assertIn("Successfully wrote", result)
 
 
+class DestructiveEditGuardTests(unittest.TestCase):
+    """An edit must never silently gut a file."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="acsa-guard-"))
+        self.file = self.root / "calc.py"
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_refuses_to_empty_a_file(self):
+        original = "def multiply(a, b):\n    return a * b\n"
+        self.file.write_text(original, encoding="utf-8")
+        result = edit_file(
+            project_root=str(self.root),
+            path="calc.py",
+            search="def multiply(a, b):\n    return a * b",
+            replace="",
+        )
+        self.assertTrue(result.startswith("Error"), result)
+        self.assertEqual(self.file.read_text(), original, "file must be untouched")
+
+    def test_small_deletion_is_still_allowed(self):
+        self.file.write_text(
+            "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8\n",
+            encoding="utf-8",
+        )
+        result = edit_file(
+            project_root=str(self.root), path="calc.py", search="b = 2\n", replace=""
+        )
+        self.assertTrue(result.startswith("Success"), result)
+        self.assertNotIn("b = 2", self.file.read_text())
+
+
 if __name__ == "__main__":
+
     unittest.main()
