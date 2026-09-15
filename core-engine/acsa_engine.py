@@ -39,6 +39,13 @@ def _extend_path() -> Path:
         candidate = (root / sub) if sub else root
         if candidate.is_dir() and str(candidate) not in sys.path:
             sys.path.insert(0, str(candidate))
+    # `pty_bridge.py` lives in the repository's scripts/ directory, not in the
+    # engine package. A frozen build has already collected it as a top-level
+    # module; running from source needs this path, or `pty` fails to import and
+    # the integrated terminal exits with "No module named 'pty_bridge'".
+    repo_scripts = root.parent / "scripts"
+    if repo_scripts.is_dir() and str(repo_scripts) not in sys.path:
+        sys.path.insert(0, str(repo_scripts))
     return root
 
 
@@ -53,17 +60,50 @@ COMMANDS: dict[str, tuple[str, str]] = {
 }
 
 
+def _selftest() -> int:
+    """Import every entry point and report what failed.
+
+    Each subcommand is reached through `importlib`, so a module that the runtime
+    cannot see fails only when that subcommand is used — which is how a missing
+    `scripts/` path silently broke the integrated terminal. This makes the whole
+    surface checkable in one call, in both source and frozen mode.
+    """
+    failures: dict[str, str] = {}
+    for name, (module_name, _func) in COMMANDS.items():
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:  # noqa: BLE001 - the report is the point
+            failures[name] = f"{type(exc).__name__}: {exc}"
+    print(
+        json.dumps(
+            {
+                "ok": not failures,
+                "data": {
+                    "root": str(ROOT),
+                    "frozen": bool(getattr(sys, "_MEIPASS", None)),
+                    "checked": sorted(COMMANDS),
+                    "failures": failures,
+                },
+            }
+        )
+    )
+    return 0 if not failures else 1
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "error": f"usage: acsa-engine <{'|'.join(COMMANDS)}> [args...]",
+                    "error": f"usage: acsa-engine <{'|'.join([*COMMANDS, 'selftest'])}> [args...]",
                 }
             )
         )
         return 2
+
+    if argv[0] == "selftest":
+        return _selftest()
 
     name, rest = argv[0], argv[1:]
     entry = COMMANDS.get(name)

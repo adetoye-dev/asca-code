@@ -58,11 +58,17 @@ jobs:
       - name: Build acsa-engine
         run: scripts/build_engine_sidecar.sh
 
+      - name: Every entry point imports (source mode)
+        run: python3 core-engine/acsa_engine.py selftest
+
       - name: Sidecar answers each subcommand
         run: |
           set -euo pipefail
           BIN="$(ls .tauri/binaries/acsa-engine-*)"
           export ACSA_DATA_DIR="$(mktemp -d)"
+          # Fails loudly if the freeze dropped a module — `pty` was silently
+          # missing once and only surfaced when a user opened the terminal.
+          "$BIN" selftest
           "$BIN" db info
           "$BIN" db settings.set '{"key":"ci","value":true}'
           "$BIN" db settings.get | grep -q '"ci": true'
