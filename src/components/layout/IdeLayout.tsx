@@ -11,7 +11,7 @@
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
 
-import { useState, useRef, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   DockviewReact,
   DockviewReadyEvent,
@@ -53,7 +53,7 @@ import type { UsePipelineReturn } from "../../hooks/usePipeline";
 
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
 
-const SPECIAL_PANELS = ["dock_diff", "diff_", "dock_monitor", "dock_ai_manager", "dock_ai_chat"];
+const SPECIAL_PANELS = ["dock_diff", "diff_", "dock_monitor", "dock_ai_manager"];
 
 const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: any; onPointerUp?: any; onPointerLeave?: any }) => {
   const { api, onPointerDown, onPointerUp, onPointerLeave } = props;
@@ -67,7 +67,6 @@ const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: 
   const filePath = (props.params as any)?.filePath || api.id;
   const renderIcon = () => {
     if (api.id.startsWith("diff_") || api.id === "dock_diff") return <Icon icon={GitCompare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
-    if (api.id === "dock_ai_chat") return <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
     if (api.id === "dock_monitor") return <Icon icon={Cpu} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
     if (api.id === "dock_ai_manager") return <Icon icon={Settings} className="w-3.5 h-3.5 text-amber-400 shrink-0 mr-1.5" />;
     return <FileIcon fileName={title || filePath} className="w-3.5 h-3.5 shrink-0 mr-1.5" />;
@@ -83,24 +82,6 @@ const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: 
     </div>
   );
 };
-
-/**
- * Dockview instantiates a panel's component once, from the closure captured when
- * the panel was created - it does NOT re-render panels with fresh props when the
- * `components` map is rebuilt. A panel that renders a controlled input from
- * parent state therefore appears frozen (typing updates state, but the panel
- * never re-renders, so the field snaps back to empty).
- *
- * Context propagates through that captured element, so the panel reads live
- * values instead of the stale closure.
- */
-const ChatLiveContext = createContext<Record<string, unknown> | null>(null);
-
-function LiveAiChatPanel() {
-  const liveProps = useContext(ChatLiveContext);
-  if (!liveProps) return null;
-  return <AiAssistantChat {...(liveProps as any)} />;
-}
 
 export function IdeLayout(pipeline: UsePipelineReturn) {
   const {
@@ -200,6 +181,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(true);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+  // Full-canvas chat surface ("Open in Center Stage"). Rendered as an overlay
+  // over the editor grid so it has no dockview tab chrome of its own.
+  const [isCenterChatOpen, setIsCenterChatOpen] = useState(false);
   const [activeDockPanelId, setActiveDockPanelId] = useState<string | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
@@ -221,6 +205,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   const handleOpenFileAtLocation = useCallback(
     async (filePath: string, lineNumber?: number, column?: number) => {
+      // Leaving the full-canvas chat to look at a file: dismiss the overlay so
+      // the editor is actually visible.
+      setIsCenterChatOpen(false);
       const fileName = filePath.split(/[/\\]/).pop() || filePath;
       await openFile({
         name: fileName,
@@ -236,6 +223,16 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           ts: Date.now(),
         });
       }
+    },
+    [openFile]
+  );
+
+  // Opening a file from the explorer / quick-open while the full-canvas chat is
+  // up should reveal the editor instead of loading it behind the overlay.
+  const openFileAndExitFullChat = useCallback(
+    (file: Parameters<typeof openFile>[0]) => {
+      setIsCenterChatOpen(false);
+      return openFile(file);
     },
     [openFile]
   );
@@ -343,18 +340,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setIsRightPanelOpen(false);
     // When opening full chat mode, also close the terminal/bottom panel section
     setIsBottomPanelOpen(false);
-    const api = dockviewApiRef.current;
-    if (!api) return;
-    const existing = api.getPanel("dock_ai_chat");
-    if (!existing) {
-      api.addPanel({
-        id: "dock_ai_chat",
-        component: "aiChat",
-        title: "AI Assistant",
-      });
-    } else {
-      existing.api.setActive();
-    }
+    setIsCenterChatOpen(true);
   };
 
   // ── Listen for Programmatic Open AI Manager Requests ──────────────────────
@@ -369,6 +355,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // ── Listen for Programmatic Start Coding with Ollama Requests ─────────────
   useEffect(() => {
     const handleStartCoding = () => {
+      setIsCenterChatOpen(false);
       setIsRightPanelOpen(true);
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent("acsa:focus-ai-chat-input"));
@@ -390,7 +377,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     };
     const handleToggleSidebar = () => setIsSidebarOpen((prev) => !prev);
     const handleToggleTerminal = () => setIsBottomPanelOpen((prev) => !prev);
-    const handleToggleAi = () => setIsRightPanelOpen((prev) => !prev);
+    const handleToggleAi = () => {
+      // Any "AI Assistant" affordance targets the docked assistant; leaving the
+      // full-canvas overlay first keeps the two surfaces from fighting.
+      setIsCenterChatOpen(false);
+      setIsRightPanelOpen((prev) => !prev);
+    };
 
     window.addEventListener("acsa:open-file-search", handleOpenFileSearch);
     window.addEventListener("acsa:open-command-palette", handleOpenCommandPalette);
@@ -479,7 +471,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       // Cmd+L / Ctrl+L: send the current editor selection to Chat/Ask
       if (isCmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        setIsRightPanelOpen((prev) => !prev);
+        if (isCenterChatOpen) {
+          // Full-canvas chat is a focused mode: Cmd+L returns to the side dock.
+          setIsCenterChatOpen(false);
+          setIsRightPanelOpen(true);
+        } else {
+          setIsRightPanelOpen((prev) => !prev);
+        }
         window.setTimeout(() => window.dispatchEvent(new CustomEvent("acsa:ai-workflow", { detail: "chat" })), 0);
         return;
       }
@@ -707,8 +705,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
   ];
 
-  // ── Dockview Components Dictionary ────────────────────────────────────────
-  const chatLiveProps = {
+  // ── Full-Canvas Chat Props ────────────────────────────────────────────────
+  // Rendered as an overlay above the editor grid (see the center-stage render
+  // below), so it is a normal React child and always receives fresh props.
+  const centerChatProps = {
     prompt,
     setPrompt,
     status,
@@ -754,15 +754,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     agentSteps,
     pendingPermission,
     respondToPermission,
-    onClose: () => {
-      const api = dockviewApiRef.current;
-      const panel = api?.getPanel("dock_ai_chat");
-      if (panel) api?.removePanel(panel);
-    },
+    onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
-      const api = dockviewApiRef.current;
-      const panel = api?.getPanel("dock_ai_chat");
-      if (panel) api?.removePanel(panel);
+      // Leave full canvas and dock the assistant back to the side tool window.
+      setIsCenterChatOpen(false);
       setIsRightPanelOpen(true);
     },
   };
@@ -876,9 +871,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         }}
       />
     ),
-
-    // Center Stage AI Assistant Chat Tab (Full Canvas / Wide Omnibar Mode)
-    aiChat: () => <LiveAiChatPanel />,
   };
 
   // ── Initialize Default Dockview Layout ────────────────────────────────────
@@ -900,7 +892,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     event.api.onDidActivePanelChange((e) => {
       const panelId = (e as any)?.panel?.id || (e as any)?.id;
       setActiveDockPanelId(panelId || null);
-      if (panelId === "dock_ai_chat" || panelId === "dock_monitor" || panelId === "dock_ai_manager") {
+      if (panelId === "dock_monitor" || panelId === "dock_ai_manager") {
         setIsBottomPanelOpen(false);
       }
       if (panelId && !SPECIAL_PANELS.some((p) => panelId.startsWith(p))) {
@@ -1065,21 +1057,19 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
           </button>
 
-          {/* AI Chat Button (Toggles Right AI Panel) */}
+          {/* AI Chat Button: toggles the docked assistant, or leaves full-canvas chat */}
           <button
             type="button"
             onClick={() => {
-              const api = dockviewApiRef.current;
-              const centerPanel = api?.getPanel("dock_ai_chat");
-              if (centerPanel) {
-                api?.removePanel(centerPanel);
+              if (isCenterChatOpen) {
+                setIsCenterChatOpen(false);
                 setIsRightPanelOpen(true);
               } else {
                 setIsRightPanelOpen((prev) => !prev);
               }
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              isRightPanelOpen || dockviewApiRef.current?.getPanel("dock_ai_chat")
+              isRightPanelOpen || isCenterChatOpen
                 ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
                 : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
             }`}
@@ -1236,7 +1226,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               projectPath={activeProject.path}
               files={projectFiles}
               activeFilePath={activeTabPath}
-              onSelectFile={openFile}
+              onSelectFile={openFileAndExitFullChat}
               onCreateFile={createFileOrFolder}
               onDeleteFile={deleteFile}
               onRefresh={refreshProjectFiles}
@@ -1285,7 +1275,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
           {/* Dockview Editors & Diff Surface */}
           <div className="flex-1 w-full overflow-hidden relative">
-            <ChatLiveContext.Provider value={chatLiveProps}>
             <DockviewReact
               components={components}
               defaultTabComponent={DockviewCustomTab}
@@ -1301,13 +1290,26 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                   }}
                   onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
                   onToggleTerminal={() => setIsBottomPanelOpen((prev) => !prev)}
-                  onToggleAi={() => setIsRightPanelOpen((prev) => !prev)}
+                  onToggleAi={() => {
+                    setIsCenterChatOpen(false);
+                    setIsRightPanelOpen((prev) => !prev);
+                  }}
                 />
               )}
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
-            </ChatLiveContext.Provider>
+
+            {/* Full-Canvas AI Assistant — a true overlay with no dockview tab
+                chrome. Only one assistant surface is ever mounted: opening this
+                closes the side dock and vice versa. z-50 keeps it above the
+                editor's own floating chrome (Review button etc.); global modals
+                render later in the DOM at the same level, so they stay on top. */}
+            {isCenterChatOpen && (
+              <div className="absolute inset-0 z-50 bg-[#141416]">
+                <AiAssistantChat {...centerChatProps} />
+              </div>
+            )}
           </div>
 
           {/* Dedicated Bottom Panel (Terminal / Output / Problems) */}
@@ -1415,7 +1417,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         onClose={() => setIsCommandPaletteOpen(false)}
         commands={commands}
         files={projectFiles}
-        onOpenFile={openFile}
+        onOpenFile={openFileAndExitFullChat}
         initialMode={paletteMode}
       />
     </div>

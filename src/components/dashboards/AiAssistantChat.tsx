@@ -1190,17 +1190,6 @@ Click to re-index project.`}
 
                           {isModelMenuOpen && renderModelMenu(true)}
                         </div>
-
-                        {/* Dual-Engine Hybrid Pill */}
-                        <div
-                          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900/60 border border-zinc-800 text-[11px] font-mono text-zinc-400 select-none"
-                          title="Hybrid Architecture: Cloud Brain plans and orchestrates; Local Worker executes code edits locally at $0 cost"
-                        >
-                          <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
-                            ⚡ Worker: {localWorker} ($0)
-                          </span>
-                        </div>
                       </div>
 
                       <button
@@ -1787,14 +1776,6 @@ Click to re-index project.`}
                     {isModelMenuOpen && renderModelMenu(false)}
                   </div>
 
-                  {/* Local Worker status indicator in bottom bar */}
-                  {/* <div
-                    className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-900/60 border border-zinc-800/80 text-[10px] font-mono text-emerald-400 select-none"
-                    title={`Autonomous Local Worker: ${localWorker} ($0 local inference)`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
-                    <span>⚡ {localWorker.split(":")[0]} ($0)</span>
-                  </div> */}
                 </div>
 
                 {/* Right: Send / Stop icon button */}
