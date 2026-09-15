@@ -20,7 +20,7 @@ import {
   IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
-import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot, GitCompare, X } from "lucide-react";
+import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot, GitCompare, X, Network } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
@@ -44,6 +44,7 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { CommandPalette, CommandItem } from "../modals/CommandPalette";
 import { PerformanceDashboard } from "../dashboards/PerformanceDashboard";
 import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
+import { CodeMapDashboard } from "../dashboards/CodeMapDashboard";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
 import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
@@ -53,7 +54,22 @@ import type { UsePipelineReturn } from "../../hooks/usePipeline";
 
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
 
-const SPECIAL_PANELS = ["dock_diff", "diff_", "dock_monitor", "dock_ai_manager"];
+const SPECIAL_PANELS = ["dock_diff", "diff_"];
+
+/** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
+type FullPageId = "monitor" | "aiManager" | "codeMap";
+
+const FULL_PAGE_TITLES: Record<FullPageId, string> = {
+  monitor: "Host Health & Performance",
+  aiManager: "AI Models & Providers",
+  codeMap: "Code Map",
+};
+
+const FULL_PAGE_ICONS: Record<FullPageId, typeof Cpu> = {
+  monitor: Activity,
+  aiManager: Cpu,
+  codeMap: Network,
+};
 
 const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: any; onPointerUp?: any; onPointerLeave?: any }) => {
   const { api, onPointerDown, onPointerUp, onPointerLeave } = props;
@@ -67,8 +83,6 @@ const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: 
   const filePath = (props.params as any)?.filePath || api.id;
   const renderIcon = () => {
     if (api.id.startsWith("diff_") || api.id === "dock_diff") return <Icon icon={GitCompare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
-    if (api.id === "dock_monitor") return <Icon icon={Cpu} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
-    if (api.id === "dock_ai_manager") return <Icon icon={Settings} className="w-3.5 h-3.5 text-amber-400 shrink-0 mr-1.5" />;
     return <FileIcon fileName={title || filePath} className="w-3.5 h-3.5 shrink-0 mr-1.5" />;
   };
 
@@ -184,7 +198,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // Full-canvas chat surface ("Open in Center Stage"). Rendered as an overlay
   // over the editor grid so it has no dockview tab chrome of its own.
   const [isCenterChatOpen, setIsCenterChatOpen] = useState(false);
-  const [activeDockPanelId, setActiveDockPanelId] = useState<string | null>(null);
+  // Full-page surfaces (Host Health, AI Models, Code Map). Also overlays, for
+  // the same reason: a dockview tab would leak tab chrome into a full page.
+  const [fullPage, setFullPage] = useState<FullPageId | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [gitBranch, setGitBranch] = useState("main");
@@ -208,6 +224,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       // Leaving the full-canvas chat to look at a file: dismiss the overlay so
       // the editor is actually visible.
       setIsCenterChatOpen(false);
+      setFullPage(null);
       const fileName = filePath.split(/[/\\]/).pop() || filePath;
       await openFile({
         name: fileName,
@@ -227,11 +244,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     [openFile]
   );
 
-  // Opening a file from the explorer / quick-open while the full-canvas chat is
-  // up should reveal the editor instead of loading it behind the overlay.
+  // Opening a file from the explorer / quick-open while a full-surface overlay
+  // is up should reveal the editor instead of loading it behind the overlay.
   const openFileAndExitFullChat = useCallback(
     (file: Parameters<typeof openFile>[0]) => {
       setIsCenterChatOpen(false);
+      setFullPage(null);
       return openFile(file);
     },
     [openFile]
@@ -301,39 +319,19 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     }
   };
 
-  const openMonitorTab = () => {
-    // When opening monitoring tab, also close the terminal/bottom panel
+  // Full-page surfaces reuse the chrome-free overlay so nothing competes with
+  // the editor for tab space. Opening one closes the others.
+  const openFullPage = (page: FullPageId) => {
     setIsBottomPanelOpen(false);
-    const api = dockviewApiRef.current;
-    if (!api) return;
-    const existing = api.getPanel("dock_monitor");
-    if (!existing) {
-      api.addPanel({
-        id: "dock_monitor",
-        component: "monitor",
-        title: "Host Health & Performance",
-      });
-    } else {
-      existing.api.setActive();
-    }
+    setIsCenterChatOpen(false);
+    // A full page wants the whole canvas, so reclaim the side tool window.
+    setIsRightPanelOpen(false);
+    setFullPage((prev) => (prev === page ? null : page));
   };
 
-  const openAiManagerTab = () => {
-    // When opening AI models & providers tab, also close the terminal/bottom panel
-    setIsBottomPanelOpen(false);
-    const api = dockviewApiRef.current;
-    if (!api) return;
-    const existing = api.getPanel("dock_ai_manager");
-    if (!existing) {
-      api.addPanel({
-        id: "dock_ai_manager",
-        component: "aiManager",
-        title: "AI Models & Providers",
-      });
-    } else {
-      existing.api.setActive();
-    }
-  };
+  const openMonitorTab = () => openFullPage("monitor");
+  const openAiManagerTab = () => openFullPage("aiManager");
+  const openCodeMapTab = () => openFullPage("codeMap");
 
   const openAiChatTab = () => {
     // Mutual exclusivity: close right panel when opening center stage tab
@@ -519,6 +517,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTabPath, saveFile]);
 
+  // Escape closes the topmost full-surface overlay (chat / full page).
+  useEffect(() => {
+    if (!isCenterChatOpen && !fullPage) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (fullPage) setFullPage(null);
+      else if (isCenterChatOpen) setIsCenterChatOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isCenterChatOpen, fullPage]);
+
   // ── Commands Dictionary for Command Palette ───────────────────────────────
   const commands: CommandItem[] = [
     {
@@ -673,6 +683,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       action: openAiManagerTab,
     },
     {
+      id: "view.openCodeMap",
+      title: "Code Map: Search Symbols & Inspect Dependency Hubs",
+      category: "View",
+      icon: Network,
+      action: openCodeMapTab,
+    },
+    {
       id: "ai.setupOllama",
       title: "AI: Setup Local AI Engine (Ollama Setup Wizard)",
       category: "AI",
@@ -695,7 +712,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "view.extensions",
-      title: "Show Extensions & Open VSX Marketplace",
+      title: "Show Marketplace: Skills, Tools & MCP Servers",
       category: "View",
       icon: Package,
       action: () => {
@@ -714,6 +731,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     status,
     activityLog,
     projectRoot: activeProject.path,
+    branch: gitBranch,
     onRunPipeline: (
       request: string,
       override?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
@@ -845,32 +863,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       );
     },
 
-    // Wide Performance & Host Health Dashboard
-    monitor: () => (
-      <PerformanceDashboard
-        systemMetrics={systemMetrics}
-        onRefreshMetrics={() => {
-          refreshBranch();
-          systemMetricsService.fetchMetrics();
-        }}
-      />
-    ),
-
-    // Multi-Model AI Management Dashboard
-    aiManager: () => (
-      <AiManagementDashboard
-        onModelSettingsChanged={() => {
-          const def = getDefaultProvider();
-          setAiSettings({
-            ...aiSettings,
-            provider: def.id as any,
-            model: def.selectedModel,
-            apiKey: def.apiKey,
-            baseUrl: def.baseUrl,
-          });
-        }}
-      />
-    ),
   };
 
   // ── Initialize Default Dockview Layout ────────────────────────────────────
@@ -891,10 +883,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     // Listen to panel active and close events
     event.api.onDidActivePanelChange((e) => {
       const panelId = (e as any)?.panel?.id || (e as any)?.id;
-      setActiveDockPanelId(panelId || null);
-      if (panelId === "dock_monitor" || panelId === "dock_ai_manager") {
-        setIsBottomPanelOpen(false);
-      }
       if (panelId && !SPECIAL_PANELS.some((p) => panelId.startsWith(p))) {
         selectTab(panelId);
       }
@@ -904,7 +892,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       if (panel && panel.id && !SPECIAL_PANELS.some((p) => panel.id.startsWith(p))) {
         closeTab(panel.id);
       }
-      setActiveDockPanelId((prev) => (prev === panel?.id ? null : prev));
     });
   }, [openTabs, selectTab, closeTab, refreshBranch, refreshProjectFiles]);
 
@@ -1157,12 +1144,26 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             title="Verification Gauntlet & Host Telemetry (Opens Full Page)"
             onClick={openMonitorTab}
             className={`p-2 rounded-lg transition-all ${
-              activeDockPanelId === "dock_monitor"
+              fullPage === "monitor"
                 ? "bg-white/10 text-emerald-400 rounded-md"
                 : "text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/60"
             }`}
           >
             <Icon icon={Activity} className="w-4 h-4" />
+          </button>
+
+          {/* Code Map & Symbol Index (Opens Full Page Dashboard) */}
+          <button
+            type="button"
+            title="Code Map: symbols, dependency hubs & entrypoints (Opens Full Page)"
+            onClick={openCodeMapTab}
+            className={`p-2 rounded-lg transition-all ${
+              fullPage === "codeMap"
+                ? "bg-white/10 text-purple-300 rounded-md"
+                : "text-zinc-400 hover:text-purple-300 hover:bg-zinc-800/60"
+            }`}
+          >
+            <Icon icon={Network} className="w-4 h-4" />
           </button>
 
           {/* Model Management & Providers (Opens Full Page Dashboard) */}
@@ -1171,7 +1172,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             title="AI Models & Providers (Opens Full Page)"
             onClick={openAiManagerTab}
             className={`p-2 rounded-lg transition-all ${
-              activeDockPanelId === "dock_ai_manager"
+              fullPage === "aiManager"
                 ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
             }`}
@@ -1310,6 +1311,64 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                 <AiAssistantChat {...centerChatProps} />
               </div>
             )}
+
+            {/* Full-page surfaces (Host Health, AI Models, Code Map). Rendered
+                as overlays for the same reason as the chat: no tab chrome. */}
+            {fullPage && (
+              <div className="absolute inset-0 z-50 bg-[#141416] flex flex-col">
+                <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Icon icon={FULL_PAGE_ICONS[fullPage]} className="w-4 h-4 text-zinc-300" />
+                    <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">
+                      {FULL_PAGE_TITLES[fullPage]}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFullPage(null)}
+                    title="Close (Esc)"
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                  >
+                    <Icon icon={X} className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                  {fullPage === "monitor" && (
+                    <PerformanceDashboard
+                      systemMetrics={systemMetrics}
+                      onRefreshMetrics={() => {
+                        refreshBranch();
+                        systemMetricsService.fetchMetrics();
+                      }}
+                    />
+                  )}
+                  {fullPage === "aiManager" && (
+                    <AiManagementDashboard
+                      onModelSettingsChanged={() => {
+                        const def = getDefaultProvider();
+                        setAiSettings({
+                          ...aiSettings,
+                          provider: def.id as any,
+                          model: def.selectedModel,
+                          apiKey: def.apiKey,
+                          baseUrl: def.baseUrl,
+                        });
+                      }}
+                    />
+                  )}
+                  {fullPage === "codeMap" && (
+                    <CodeMapDashboard
+                      projectRoot={activeProject.path}
+                      projectName={activeProject.name}
+                      onOpenFile={(path, line) => {
+                        setFullPage(null);
+                        handleOpenFileAtLocation(path, line);
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Dedicated Bottom Panel (Terminal / Output / Problems) */}
@@ -1333,6 +1392,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
+              branch={gitBranch}
               onRunPipeline={(request, override, activePath, code, history, images) => {
                 if (override) {
                   setAiSettings({

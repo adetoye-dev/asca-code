@@ -57,6 +57,8 @@ interface AiAssistantChatProps {
   ) => void;
   onCancelPipeline: () => void;
   projectRoot?: string;
+  /** Current git branch of the active project (shown on the hero welcome screen). */
+  branch?: string;
   onClose?: () => void;
   onPopOutWide?: () => void;
   isWide?: boolean;
@@ -99,6 +101,7 @@ export function AiAssistantChat({
   onRunPipeline,
   onCancelPipeline,
   projectRoot = "",
+  branch = "",
   onClose,
   onPopOutWide,
   isWide = false,
@@ -1039,7 +1042,7 @@ Click to re-index project.`}
                       </div>
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
                         <Icon icon={GitBranch} className="w-3 h-3 text-emerald-400" />
-                        <span className="font-mono text-[11px]">main</span>
+                        <span className="font-mono text-[11px]">{branch || "—"}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
                       </div>
                     </div>

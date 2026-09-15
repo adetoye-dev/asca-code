@@ -1364,6 +1364,67 @@ export function realFilesystemPlugin(): Plugin {
             return;
           }
 
+          // ── GET /api/indexer/map ────────────────────────────────────────────
+          // Compact, UI-shaped view of the symbol index: file inventory with
+          // import/dependent counts, the most depended-on files, and the
+          // architecture landmarks. Built from the on-disk index so it works
+          // even when this process has not synced yet.
+          if (pathname === "/api/indexer/map" && req.method === "GET") {
+            const projectRootParam = parsedUrl.searchParams.get("projectRoot") || "";
+            const resolved = resolveProjectRoot(projectRootParam || process.cwd());
+            let indexData = activeProjectIndex;
+            if (!indexData) {
+              const indexPath = path.join(resolved, ".acsa", "index.json");
+              if (fs.existsSync(indexPath)) {
+                try {
+                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+                } catch {}
+              }
+            }
+            if (!indexData) {
+              indexData = await syncProjectIndex(resolved);
+            }
+            if (!indexData) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ indexed: false, error: "No symbol index available" }));
+              return;
+            }
+
+            const filesObj: Record<string, any> = indexData.files || {};
+            // Raw module specifiers per file. File→file edges are resolved
+            // client-side (the index graph only carries file→own-symbol and
+            // file→external-package edges, so it cannot express imports).
+            const files = Object.entries(filesObj).map(([filePath, f]: [string, any]) => ({
+              path: filePath,
+              language: f?.language || "",
+              lines: f?.line_count || 0,
+              symbolCount: Array.isArray(f?.symbols) ? f.symbols.length : 0,
+              importSpecifiers: Array.isArray(f?.imports) ? f.imports.filter((s: any) => typeof s === "string") : [],
+            }));
+
+            const arch = indexData.architecture || {};
+            const profile = indexData.profile || null;
+            res.end(
+              JSON.stringify({
+                indexed: true,
+                updatedAt: indexData.updated_at || null,
+                totalSymbols: indexData.total_symbols || 0,
+                totalFiles: files.length,
+                profile,
+                architecture: {
+                  archetype: profile?.archetype || arch.archetype || "",
+                  mode: profile?.mode || arch.mode || "",
+                  scaleTier: profile?.scale_tier || "",
+                  ecosystems: profile?.ecosystems || arch.ecosystems || [],
+                  entrypoints: arch.entrypoints || [],
+                  landmarks: arch.landmarks_summary || {},
+                },
+                files,
+              })
+            );
+            return;
+          }
+
           // ── GET & HEAD /api/fs/raw ─────────────────────────────────────────
           if (pathname === "/api/fs/raw" && (req.method === "GET" || req.method === "HEAD")) {
             const rawPath = parsedUrl.searchParams.get("path") || "";
