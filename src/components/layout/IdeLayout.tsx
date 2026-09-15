@@ -11,7 +11,7 @@
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext, lazy, Suspense } from "react";
 import {
   DockviewReact,
   DockviewReadyEvent,
@@ -25,9 +25,6 @@ import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
 
-import { MonacoEditorContainer } from "../editor/MonacoEditorContainer";
-import { MonacoDiffContainer } from "../editor/MonacoDiffContainer";
-import { BottomPanel } from "../panels/BottomPanel";
 import { AssetPreview } from "../editor/AssetPreview";
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -43,9 +40,6 @@ import { SettingsModal } from "../SettingsModal";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { CommandPalette, CommandItem } from "../modals/CommandPalette";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { PerformanceDashboard } from "../dashboards/PerformanceDashboard";
-import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
-import { CodeMapDashboard } from "../dashboards/CodeMapDashboard";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
 import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
@@ -56,6 +50,36 @@ import type { UsePipelineReturn } from "../../hooks/usePipeline";
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
 
 const SPECIAL_PANELS = ["dock_diff", "diff_"];
+
+/* ── Lazily-loaded heavy surfaces ─────────────────────────────────────────
+   Monaco (~1.5 MB) and the terminal/graph stacks dominate the bundle but are
+   not needed to paint the workbench. Splitting them keeps first paint cheap;
+   each defers until the surface is actually opened. */
+const MonacoEditorContainer = lazy(() =>
+  import("../editor/MonacoEditorContainer").then((m) => ({ default: m.MonacoEditorContainer }))
+);
+const MonacoDiffContainer = lazy(() =>
+  import("../editor/MonacoDiffContainer").then((m) => ({ default: m.MonacoDiffContainer }))
+);
+const BottomPanel = lazy(() =>
+  import("../panels/BottomPanel").then((m) => ({ default: m.BottomPanel }))
+);
+const PerformanceDashboard = lazy(() =>
+  import("../dashboards/PerformanceDashboard").then((m) => ({ default: m.PerformanceDashboard }))
+);
+const AiManagementDashboard = lazy(() =>
+  import("../dashboards/AiManagementDashboard").then((m) => ({ default: m.AiManagementDashboard }))
+);
+const CodeMapDashboard = lazy(() =>
+  import("../dashboards/CodeMapDashboard").then((m) => ({ default: m.CodeMapDashboard }))
+);
+
+/** Fallback shown while a lazily-loaded surface chunk arrives. */
+const SurfaceFallback = ({ label }: { label: string }) => (
+  <div className="h-full w-full flex items-center justify-center text-zinc-500 text-xs bg-[var(--vscode-editor-bg)]">
+    Loading {label}…
+  </div>
+);
 
 /** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
 type FullPageId = "monitor" | "aiManager" | "codeMap";
@@ -834,19 +858,21 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         );
       }
       return (
-        <MonacoEditorContainer
-          path={tab.path}
-          content={tab.content}
-          onChange={(newVal) => updateTabContent(tab.path, newVal)}
-          onSave={saveFile}
-          aiSettings={aiSettings}
-          themeId={themeId}
-          targetLine={targetEditorLine?.path === tab.path ? targetEditorLine.line : undefined}
-          targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
-          revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
-          onSelectionChange={setSelectedCode}
-          projectRoot={activeProject.path}
-        />
+        <Suspense fallback={<SurfaceFallback label="editor" />}>
+          <MonacoEditorContainer
+            path={tab.path}
+            content={tab.content}
+            onChange={(newVal) => updateTabContent(tab.path, newVal)}
+            onSave={saveFile}
+            aiSettings={aiSettings}
+            themeId={themeId}
+            targetLine={targetEditorLine?.path === tab.path ? targetEditorLine.line : undefined}
+            targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
+            revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
+            onSelectionChange={setSelectedCode}
+            projectRoot={activeProject.path}
+          />
+        </Suspense>
       );
     },
 
@@ -858,6 +884,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       const path = isGit ? (props.params?.filePath ?? "git.diff") : "patch.diff";
 
       return (
+        <Suspense fallback={<SurfaceFallback label="diff viewer" />}>
         <MonacoDiffContainer
           originalContent={original}
           modifiedContent={modified}
@@ -898,6 +925,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             setCurrentDiff("");
           }}
         />
+        </Suspense>
       );
     },
 
@@ -1393,6 +1421,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                   </button>
                 </div>
                 <div className="flex-1 min-h-0">
+                  <Suspense fallback={<SurfaceFallback label={FULL_PAGE_TITLES[fullPage]} />}>
                   {fullPage === "monitor" && (
                     <PerformanceDashboard
                       systemMetrics={systemMetrics}
@@ -1427,12 +1456,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                       }}
                     />
                   )}
+                  </Suspense>
                 </div>
               </div>
             )}
           </div>
 
           {/* Dedicated Bottom Panel (Terminal / Output / Problems) */}
+          <Suspense fallback={null}>
           <BottomPanel
             isOpen={isBottomPanelOpen}
             onClose={() => setIsBottomPanelOpen(false)}
@@ -1442,6 +1473,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             status={status}
             orchestrationResult={orchestrationResult}
           />
+          </Suspense>
         </div>
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
