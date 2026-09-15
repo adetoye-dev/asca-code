@@ -11,7 +11,7 @@
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 import {
   DockviewReact,
   DockviewReadyEvent,
@@ -42,6 +42,7 @@ import { ProjectModal } from "../ProjectModal";
 import { SettingsModal } from "../SettingsModal";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { CommandPalette, CommandItem } from "../modals/CommandPalette";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { PerformanceDashboard } from "../dashboards/PerformanceDashboard";
 import { AiManagementDashboard } from "../dashboards/AiManagementDashboard";
 import { CodeMapDashboard } from "../dashboards/CodeMapDashboard";
@@ -71,9 +72,27 @@ const FULL_PAGE_ICONS: Record<FullPageId, typeof Cpu> = {
   codeMap: Network,
 };
 
+/**
+ * Tab-chrome state shared with dockview's tab headers. Dockview renders tab
+ * headers outside the normal React parent chain, so we publish dirtiness and
+ * the close-request handler through a context rather than panel params.
+ */
+interface TabChrome {
+  /** Paths of tabs with unsaved in-memory edits. */
+  dirty: ReadonlySet<string>;
+  /** Close a tab, confirming first when it has unsaved edits. */
+  requestClose: (close: () => void, title: string, isDirty: boolean) => void;
+}
+
+const TabChromeContext = createContext<TabChrome>({
+  dirty: new Set(),
+  requestClose: (close) => close(),
+});
+
 const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: any; onPointerUp?: any; onPointerLeave?: any }) => {
   const { api, onPointerDown, onPointerUp, onPointerLeave } = props;
   const [title, setTitle] = useState(api.title);
+  const tabChrome = useContext(TabChromeContext);
 
   useEffect(() => {
     const disposable = api.onDidTitleChange((event) => setTitle(event.title));
@@ -81,16 +100,35 @@ const DockviewCustomTab = (props: IDockviewPanelHeaderProps & { onPointerDown?: 
   }, [api]);
 
   const filePath = (props.params as any)?.filePath || api.id;
+  const isDirty = tabChrome.dirty.has(filePath) || tabChrome.dirty.has(api.id);
   const renderIcon = () => {
     if (api.id.startsWith("diff_") || api.id === "dock_diff") return <Icon icon={GitCompare} className="w-3.5 h-3.5 text-zinc-400 shrink-0 mr-1.5" />;
     return <FileIcon fileName={title || filePath} className="w-3.5 h-3.5 shrink-0 mr-1.5" />;
   };
 
   return (
-    <div data-testid="dockview-dv-default-tab" className="dv-default-tab flex items-center h-full px-2 cursor-pointer select-none" onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerLeave}>
+    <div data-testid="dockview-dv-default-tab" className={`dv-default-tab group flex items-center h-full px-2 cursor-pointer select-none${isDirty ? " is-dirty" : ""}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerLeave={onPointerLeave}>
       {renderIcon()}
       <span className="dv-default-tab-content truncate text-xs font-medium">{title}</span>
-      <button type="button" className="dv-default-tab-action ml-1 p-0.5 rounded hover:bg-white/10" aria-label="Close tab" onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.close(); }} onPointerDown={(e) => e.stopPropagation()}>
+      {isDirty && (
+        <span
+          className="acsa-tab-dirty ml-1 shrink-0 group-hover:opacity-0"
+          title="Unsaved changes"
+          aria-label="Unsaved changes"
+          data-testid="tab-dirty-indicator"
+        />
+      )}
+      <button
+        type="button"
+        className="dv-default-tab-action ml-1 p-0.5 rounded hover:bg-white/10"
+        aria-label={isDirty ? `Close tab (unsaved changes in ${title})` : "Close tab"}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          tabChrome.requestClose(() => api.close(), title || filePath, isDirty);
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <Icon icon={X} className="w-3 h-3 text-zinc-400 hover:text-zinc-200" />
       </button>
     </div>
@@ -964,6 +1002,26 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     }
   }, [currentDiff]);
 
+  // Publish tab dirtiness + the guarded close handler to the dockview headers.
+  const dirtyTabPaths = useMemo(
+    () => new Set(openTabs.filter((t) => t.isDirty).map((t) => t.path)),
+    [openTabs]
+  );
+  const [pendingTabClose, setPendingTabClose] = useState<{ title: string } | null>(null);
+  const pendingTabCloseFnRef = useRef<null | (() => void)>(null);
+  const requestCloseTab = useCallback((close: () => void, title: string, isDirty: boolean) => {
+    if (!isDirty) {
+      close();
+      return;
+    }
+    pendingTabCloseFnRef.current = close;
+    setPendingTabClose({ title });
+  }, []);
+  const tabChrome = useMemo(
+    () => ({ dirty: dirtyTabPaths, requestClose: requestCloseTab }),
+    [dirtyTabPaths, requestCloseTab]
+  );
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--vscode-sidebar-bg)] text-[var(--vscode-editor-fg)] select-none">
       {/* ── Top IDE Titlebar (Clean, Uncluttered, JetBrains / VS Code Modern UI) ── */}
@@ -1276,6 +1334,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
           {/* Dockview Editors & Diff Surface */}
           <div className="flex-1 w-full overflow-hidden relative">
+            <TabChromeContext.Provider value={tabChrome}>
             <DockviewReact
               components={components}
               defaultTabComponent={DockviewCustomTab}
@@ -1300,6 +1359,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
+            </TabChromeContext.Provider>
 
             {/* Full-Canvas AI Assistant — a true overlay with no dockview tab
                 chrome. Only one assistant surface is ever mounted: opening this
@@ -1480,6 +1540,31 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         files={projectFiles}
         onOpenFile={openFileAndExitFullChat}
         initialMode={paletteMode}
+      />
+
+      {/* Closing a tab with unsaved edits asks first — a styled modal rather
+          than window.confirm so it never blocks the renderer. */}
+      <ConfirmDialog
+        isOpen={pendingTabClose !== null}
+        title="Close unsaved file?"
+        message={
+          <>
+            <span className="font-medium text-zinc-300">{pendingTabClose?.title}</span> has changes that
+            aren't saved to disk. Closing it will discard those changes.
+          </>
+        }
+        confirmText="Discard & close"
+        cancelText="Keep editing"
+        onConfirm={() => {
+          const fn = pendingTabCloseFnRef.current;
+          pendingTabCloseFnRef.current = null;
+          setPendingTabClose(null);
+          fn?.();
+        }}
+        onCancel={() => {
+          pendingTabCloseFnRef.current = null;
+          setPendingTabClose(null);
+        }}
       />
     </div>
   );

@@ -68,6 +68,26 @@
   background-color: rgba(255, 255, 255, 0.15) !important;
 }
 
+/* ── Unsaved-changes indicator on editor tabs ─────────────────────────────
+   VS Code behaviour: a dirty tab shows a dot; hovering it swaps the dot for
+   the close (✕) button so the two never sit side by side. Dockview keeps the
+   ✕ visible on the active tab, so we hide it for dirty tabs until hover. */
+.acsa-tab-dirty {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: var(--dv-activegroup-visiblepanel-tab-color, #e4e4e7);
+  transition: opacity 120ms ease;
+}
+
+.dv-tab .dv-default-tab.is-dirty .dv-default-tab-action {
+  visibility: hidden;
+}
+.dv-tab:hover .dv-default-tab.is-dirty .dv-default-tab-action,
+.dv-tab .dv-default-tab.is-dirty:focus-within .dv-default-tab-action {
+  visibility: visible;
+}
+
 @layer base {
   body {
     @apply bg-zinc-950 text-zinc-100 antialiased selection:bg-zinc-700/60 selection:text-white font-sans;
