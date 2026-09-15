@@ -8,9 +8,12 @@
  * 4. Cmd+S / Ctrl+S keyboard shortcuts to save to physical disk.
  */
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
+import { ChevronDown, ChevronRight, Sparkles, X } from "lucide-react";
+import { Icon } from "../ui/Icon";
 import { registerAiInlineCompletions, executeInlineEdit } from "../../services/aiAutocomplete";
 import { reviewFile, isReviewableFile, type ReviewIssue } from "../../services/aiReview";
 import { configureMonacoTypeScript } from "../../services/monacoTsConfig";
@@ -148,7 +151,17 @@ export function MonacoEditorContainer({
   const [reviewNote, setReviewNote] = useState("");
   const [reviewClean, setReviewClean] = useState(false);
   const [fixingIndex, setFixingIndex] = useState<number | null>(null);
-  const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
+  // Findings render as collapsible threads anchored at their line (CodeRabbit
+  // style) instead of one panel listing everything. Each entry maps a finding
+  // index to a Monaco view zone + its DOM node; heights are measured, not guessed.
+  const [expandedFindings, setExpandedFindings] = useState<Set<number>>(new Set());
+  const [findingCursor, setFindingCursor] = useState(0);
+  const reviewZoneIdsRef = useRef<Map<number, string>>(new Map());
+  const reviewZoneNodesRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const reviewZoneHeightsRef = useRef<Map<number, number>>(new Map());
+  /** Measured height of a collapsed thread, reused for still-unmeasured ones. */
+  const collapsedZoneHeightRef = useRef<number | null>(null);
+  const [zoneEpoch, setZoneEpoch] = useState(0);
 
   const clearReviewMarkers = () => {
     const editor = editorRef.current;
@@ -158,6 +171,31 @@ export function MonacoEditorContainer({
       monaco.editor.setModelMarkers(model, "acsa-review", []);
     }
   };
+
+  /** Removes every inline finding thread from the editor. */
+  const clearReviewZones = useCallback(() => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.changeViewZones((accessor) => {
+        reviewZoneIdsRef.current.forEach((zoneId) => {
+          try {
+            accessor.removeZone(zoneId);
+          } catch {}
+        });
+      });
+    }
+    reviewZoneIdsRef.current.clear();
+    reviewZoneNodesRef.current.clear();
+    reviewZoneHeightsRef.current.clear();
+  }, []);
+
+  /** Drops all review state (findings, squiggles, inline threads). */
+  const clearReview = useCallback(() => {
+    clearReviewZones();
+    clearReviewMarkers();
+    setReviewIssues([]);
+    setExpandedFindings(new Set());
+  }, [clearReviewZones]);
 
   const handleReviewFile = async () => {
     const editor = editorRef.current;
@@ -173,22 +211,27 @@ export function MonacoEditorContainer({
         settings: settingsRef.current,
       });
       if (!result.ok) {
-        setReviewIssues([]);
+        clearReview();
         setReviewNote("");
         setReviewError(result.error || "Review failed.");
-        setIsReviewPanelOpen(true);
-        clearReviewMarkers();
         return;
       }
+      clearReviewZones();
+      setExpandedFindings(new Set());
       setReviewIssues(result.issues);
       setReviewNote(result.note || "");
       if (result.warning) setReviewError(result.warning);
-      // Only intrude on the editor when there is actually something to review.
       const hasFindings = result.issues.length > 0;
-      setIsReviewPanelOpen(hasFindings || Boolean(result.warning));
       setReviewClean(!hasFindings && !result.warning);
       if (!hasFindings && !result.warning) {
         window.setTimeout(() => setReviewClean(false), 3500);
+      }
+      // Findings render inline at their line, so bring the first one into view
+      // (otherwise a review of a long file looks like it did nothing).
+      if (hasFindings) {
+        setFindingCursor(0);
+        const firstIssue = result.issues[0];
+        window.setTimeout(() => revealFinding(firstIssue.line, 0), 80);
       }
 
       const model = editor.getModel();
@@ -266,13 +309,209 @@ export function MonacoEditorContainer({
       });
       if (result.ok && result.replacement && result.replacement.trim()) {
         editor.executeEdits("acsa-fix", [{ range, text: result.replacement }]);
-        setReviewIssues([]);
-        monaco.editor.setModelMarkers(model, "acsa-review", []);
+        // Line numbers of the other findings are no longer valid after this
+        // edit, so drop them (and their inline threads) instead of acting on
+        // stale offsets.
+        clearReview();
+        setReviewNote("Applied a fix. Run Review again for the updated file.");
       }
     } finally {
       setFixingIndex(null);
     }
   };
+
+  // ── Inline finding threads (Monaco view zones) ────────────────────────
+  const toggleFinding = (index: number) => {
+    setExpandedFindings((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  /**
+   * Scrolls to a finding and opens its thread. Takes the line directly rather
+   * than an index so it can be called right after a review completes, before
+   * the new findings are visible to any callback closure.
+   */
+  const revealFinding = useCallback((line: number, index?: number) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || !line) return;
+    const target = Math.min(Math.max(1, line), model.getLineCount());
+    editor.revealLineInCenter(target);
+    editor.setPosition({ lineNumber: target, column: 1 });
+    if (index !== undefined) {
+      setExpandedFindings((prev) => new Set(prev).add(index));
+    }
+  }, []);
+
+  const dismissFinding = (index: number) => {
+    setReviewIssues((prev) => prev.filter((_, i) => i !== index));
+    setExpandedFindings((prev) => {
+      const next = new Set<number>();
+      prev.forEach((i) => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
+  };
+
+  /** Cheap first guess; the real height is measured once the card renders. */
+  const estimateFindingHeight = (issue: ReviewIssue, expanded: boolean): number => {
+    if (!expanded) return collapsedZoneHeightRef.current ?? 38;
+    const chars = (issue.detail?.length || 0) + (issue.suggestion?.length || 0);
+    return 38 + 150 + Math.ceil(chars / 55) * 15;
+  };
+
+  /**
+   * Monaco owns the DOM node for a view zone, so the node must exist before the
+   * render that portals the card into it (creating it in an effect would happen
+   * one render too late and the portal would never mount).
+   */
+  const ensureReviewZoneNode = (index: number): HTMLDivElement => {
+    let node = reviewZoneNodesRef.current.get(index);
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "acsa-review-zone";
+      reviewZoneNodesRef.current.set(index, node);
+    }
+    return node;
+  };
+
+  const applyReviewZones = useCallback(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const lineCount = model.getLineCount();
+    editor.changeViewZones((accessor) => {
+      reviewZoneIdsRef.current.forEach((zoneId) => {
+        try {
+          accessor.removeZone(zoneId);
+        } catch {}
+      });
+      reviewZoneIdsRef.current.clear();
+
+      const liveIndexes = new Set(reviewIssues.map((_, index) => index));
+      reviewZoneNodesRef.current.forEach((_, index) => {
+        if (!liveIndexes.has(index)) reviewZoneNodesRef.current.delete(index);
+      });
+
+      reviewIssues.forEach((issue, index) => {
+        const node = ensureReviewZoneNode(index);
+        const line = Math.min(Math.max(1, issue.line || 1), lineCount);
+        const height =
+          reviewZoneHeightsRef.current.get(index) ??
+          estimateFindingHeight(issue, expandedFindings.has(index));
+        const zoneId = accessor.addZone({
+          afterLineNumber: line,
+          heightInPx: height,
+          domNode: node,
+        });
+        reviewZoneIdsRef.current.set(index, zoneId);
+      });
+
+    });
+  }, [reviewIssues, expandedFindings, collapsedZoneHeightRef]);
+
+  /**
+   * Measures the cards Monaco has actually laid out and records their height.
+   * Runs on the next frame after zones are added (Monaco attaches the node
+   * during its own render) and again on scroll, so a card that scrolls into
+   * view is sized correctly too.
+   */
+  const measureVisibleZones = useCallback(() => {
+    let changed = false;
+    reviewZoneNodesRef.current.forEach((node, index) => {
+      if (!node.isConnected || node.style.display === "none") return;
+      const card = node.firstElementChild as HTMLElement | null;
+      if (!card) return;
+      const measured = Math.ceil(card.getBoundingClientRect().height) + 6;
+      if (measured <= 8) return; // not laid out yet
+      const previous = reviewZoneHeightsRef.current.get(index);
+      if (previous === undefined || Math.abs(previous - measured) > 2) {
+        reviewZoneHeightsRef.current.set(index, measured);
+        if (!expandedFindings.has(index)) collapsedZoneHeightRef.current = measured;
+        changed = true;
+      }
+    });
+    return changed;
+  }, [expandedFindings]);
+
+  // Re-run whenever findings/expansion change; a late measurement also bumps
+  // zoneEpoch to re-apply with the corrected heights.
+  useEffect(() => {
+    applyReviewZones();
+    const frame = window.requestAnimationFrame(() => {
+      if (measureVisibleZones()) setZoneEpoch((epoch) => epoch + 1);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [applyReviewZones, measureVisibleZones, zoneEpoch, path]);
+
+  // Zones scrolled into view were never measurable while hidden; size them now.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    let timer: number | undefined;
+    const subscription = editor.onDidScrollChange(() => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (measureVisibleZones()) setZoneEpoch((epoch) => epoch + 1);
+      }, 120);
+    });
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      subscription.dispose();
+    };
+  }, [measureVisibleZones]);
+
+  // Highlight each finding's line and let the gutter glyph toggle its thread.
+  const decorationIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!editor || !monaco || !model) return;
+    const lineCount = model.getLineCount();
+
+    decorationIdsRef.current = editor.deltaDecorations(
+      decorationIdsRef.current,
+      reviewIssues.map((issue) => {
+        const line = Math.min(Math.max(1, issue.line || 1), lineCount);
+        return {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: `acsa-review-line acsa-review-line-${issue.severity}`,
+          },
+        };
+      })
+    );
+
+    const subscription = editor.onMouseDown((event) => {
+      if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+      const line = event.target.position?.lineNumber;
+      if (!line) return;
+      const index = reviewIssues.findIndex(
+        (issue) => Math.min(Math.max(1, issue.line || 1), lineCount) === line
+      );
+      if (index >= 0) toggleFinding(index);
+    });
+    return () => subscription.dispose();
+  }, [reviewIssues]);
+
+  useEffect(() => {
+    return () => {
+      const editor = editorRef.current;
+      if (editor && decorationIdsRef.current.length) {
+        editor.deltaDecorations(decorationIdsRef.current, []);
+        decorationIdsRef.current = [];
+      }
+      clearReviewZones();
+    };
+  }, [clearReviewZones]);
 
   // Escape always closes the inline prompt, even when the editor has focus.
   useEffect(() => {
@@ -287,16 +526,10 @@ export function MonacoEditorContainer({
 
   // Drop stale findings and markers when the editor switches files.
   useEffect(() => {
-    setReviewIssues([]);
+    clearReview();
     setReviewError("");
     setReviewNote("");
-    setIsReviewPanelOpen(false);
-    const monaco = monacoRef.current;
-    const model = editorRef.current?.getModel();
-    if (monaco && model) {
-      monaco.editor.setModelMarkers(model, "acsa-review", []);
-    }
-  }, [path]);
+  }, [path, clearReview]);
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     // The TypeScript contribution (and its worker) only exists once a JS/TS
@@ -385,108 +618,144 @@ export function MonacoEditorContainer({
             <span>🔍</span>
           )}
           <span>{isReviewing ? "Reviewing…" : reviewClean ? "✓ Clean" : "Review"}</span>
-          {!isReviewing && reviewIssues.length > 0 && (
-            <span className="px-1 rounded bg-amber-500/20 text-amber-300 font-mono">
-              {reviewIssues.length}
-            </span>
-          )}
         </button>
-        {isReviewPanelOpen && (
+        {!isReviewing && reviewIssues.length > 0 && (
           <button
             type="button"
-            onClick={() => setIsReviewPanelOpen(false)}
+            title="Jump to the next finding"
+            onClick={() => {
+              const index = findingCursor % reviewIssues.length;
+              revealFinding(reviewIssues[index]?.line, index);
+              setFindingCursor((cursor) => cursor + 1);
+            }}
+            className="px-1.5 py-1 rounded-md text-[11px] font-mono bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 backdrop-blur-sm transition-colors"
+          >
+            {reviewIssues.length} ↓
+          </button>
+        )}
+        {reviewIssues.length > 0 && (
+          <button
+            type="button"
+            onClick={clearReview}
+            title="Clear all review findings"
             className="px-2 py-1 rounded-md text-[11px] bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
           >
-            Hide
+            Clear
           </button>
         )}
       </div>
 
-      {/* ── Review Findings Panel ────────────────────────────────── */}
-      {isReviewPanelOpen && (
-        <div className="absolute bottom-3 right-3 z-40 w-[300px] max-w-[80%] max-h-[42%] overflow-y-auto rounded-lg bg-[#18181b]/92 backdrop-blur-xl border border-amber-500/30 shadow-xl p-2 space-y-1">
-          <div className="flex items-center justify-between px-1 pb-1 border-b border-white/[0.06]">
-            <span className="text-[11px] font-semibold text-amber-300">ACSA Review</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-zinc-500 font-mono">
-                {reviewIssues.length} finding(s)
-              </span>
+      {/* ── Review status (errors / notes) ───────────────────────── */}
+      {(reviewError || reviewNote) && (
+        <div
+          className={`absolute top-11 right-3 z-40 max-w-[320px] px-2.5 py-1.5 rounded-md text-[11px] leading-snug backdrop-blur-sm border ${
+            reviewError
+              ? "bg-red-500/10 border-red-500/30 text-red-300"
+              : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+          }`}
+        >
+          {reviewError || reviewNote}
+        </div>
+      )}
+
+      {/* ── Inline finding threads, anchored at each finding's line ── */}
+      {reviewIssues.map((issue, index) => {
+        const node = ensureReviewZoneNode(index);
+        const expanded = expandedFindings.has(index);
+        return createPortal(
+          <div className="acsa-review-card-wrap absolute inset-x-0 top-0 h-full">
+            <div
+              className={`acsa-review-card rounded-lg border shadow-lg overflow-hidden font-sans ${
+                issue.severity === "error"
+                  ? "border-red-500/40 bg-[#1b1315]"
+                  : issue.severity === "warning"
+                  ? "border-amber-500/40 bg-[#1b1710]"
+                  : "border-sky-500/40 bg-[#111820]"
+              }`}
+            >
               <button
                 type="button"
-                onClick={() => setIsReviewPanelOpen(false)}
-                title="Dismiss"
-                className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-white/10 transition-colors"
+                onClick={() => toggleFinding(index)}
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left hover:bg-white/[0.04] transition-colors"
+                title={expanded ? "Collapse" : "Expand"}
               >
-                ✕
-              </button>
-            </div>
-          </div>
-          {reviewError && <div className="text-[11px] text-red-300 px-1">{reviewError}</div>}
-          {reviewNote && (
-            <div className="text-[10px] text-amber-300/90 px-1 leading-snug">{reviewNote}</div>
-          )}
-          {!reviewError && reviewIssues.length === 0 && (
-            <div className="text-[11px] text-emerald-300 px-1">
-              No issues found — this file looks clean.
-            </div>
-          )}
-          {reviewIssues.map((issue, index) => (
-            <div
-              key={index}
-              className="w-full px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors"
-            >
-              <div
-                className="cursor-pointer"
-                onClick={() => {
-                  const editor = editorRef.current;
-                  if (editor) {
-                    const line = Math.max(1, issue.line || 1);
-                    editor.revealLineInCenter(line);
-                    editor.setPosition({ lineNumber: line, column: 1 });
-                    editor.focus();
-                  }
-                }}
-              >
-              <div className="flex items-center gap-1.5">
                 <span
-                  className={`text-[10px] font-mono px-1 rounded ${
+                  className={`text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${
                     issue.severity === "error"
-                      ? "bg-red-500/20 text-red-300"
+                      ? "bg-red-500/25 text-red-300"
                       : issue.severity === "warning"
-                      ? "bg-amber-500/20 text-amber-300"
-                      : "bg-sky-500/20 text-sky-300"
+                      ? "bg-amber-500/25 text-amber-300"
+                      : "bg-sky-500/25 text-sky-300"
                   }`}
                 >
                   {issue.severity}
                 </span>
-                <span className="text-[10px] text-zinc-500 font-mono">L{issue.line}</span>
-                <span className="text-[11px] font-semibold text-zinc-200 truncate">
+                <span className="text-[10px] text-zinc-500 font-mono shrink-0">L{issue.line}</span>
+                <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-zinc-200">
                   {issue.title}
                 </span>
-              </div>
-              {issue.detail && (
-                <div className="text-[10px] text-zinc-400 mt-0.5 leading-snug">{issue.detail}</div>
-              )}
-              {issue.suggestion && (
-                <div className="text-[10px] text-emerald-300/90 mt-0.5 leading-snug">
-                  Fix: {issue.suggestion}
+                <Icon
+                  icon={expanded ? ChevronDown : ChevronRight}
+                  size="xs"
+                  className="text-zinc-400 shrink-0"
+                />
+                <span
+                  role="button"
+                  tabIndex={0}
+                  title="Dismiss this finding"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dismissFinding(index);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.stopPropagation();
+                      dismissFinding(index);
+                    }
+                  }}
+                  className="p-0.5 rounded text-zinc-500 hover:text-zinc-200 hover:bg-white/10 shrink-0"
+                >
+                  <Icon icon={X} size="xs" />
+                </span>
+              </button>
+              {expanded && (
+                <div className="px-2.5 pb-2 space-y-1.5 border-t border-white/[0.06] pt-1.5">
+                  {issue.detail && (
+                    <p className="text-[11px] text-zinc-400 leading-snug whitespace-pre-wrap m-0">
+                      {issue.detail}
+                    </p>
+                  )}
+                  {issue.suggestion && (
+                    <p className="text-[11px] text-emerald-300/90 leading-snug whitespace-pre-wrap m-0">
+                      Fix: {issue.suggestion}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      disabled={fixingIndex !== null}
+                      onClick={() => handleFixIssue(issue, index)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                    >
+                      <Icon icon={Sparkles} size="xs" />
+                      {fixingIndex === index ? "Fixing…" : "Fix with AI"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => dismissFinding(index)}
+                      className="px-2 py-0.5 rounded text-[10px] bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
-              </div>
-              <div className="flex items-center gap-1.5 mt-1">
-                <button
-                  type="button"
-                  disabled={fixingIndex !== null}
-                  onClick={() => handleFixIssue(issue, index)}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
-                >
-                  {fixingIndex === index ? "Fixing…" : "Fix with AI"}
-                </button>
-              </div>
             </div>
-          ))}
-        </div>
-      )}
+          </div>,
+          node,
+          `finding-${index}`
+        );
+      })}
 
       {/* Click-away backdrop so the inline prompt can always be dismissed */}
       {isInlinePromptOpen && (

@@ -138,3 +138,34 @@
 .xterm-terminal-container .xterm-screen {
   padding: 0 !important;
 }
+
+/* ── Inline review threads (ACSA Review) ─────────────────────────────────
+   Findings render inside Monaco view zones so the thread sits exactly where
+   the issue is and pushes the code down, instead of stacking in a side panel. */
+.acsa-review-zone {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.acsa-review-card-wrap {
+  /* Tailwind provides absolute inset-x-0 top-0 h-full; the card itself is
+     absolutely laid out so its natural height stays measurable. */
+  pointer-events: auto;
+}
+
+.acsa-review-card {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+/* Subtle whole-line tint so a finding's line is findable while scrolled away. */
+.monaco-editor .acsa-review-line {
+  background: rgba(244, 63, 94, 0.08);
+}
+.monaco-editor .acsa-review-line-warning {
+  background: rgba(245, 158, 11, 0.08);
+}
+.monaco-editor .acsa-review-line-info {
+  background: rgba(56, 189, 248, 0.07);
+}
