@@ -96,8 +96,10 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.deepseek.com/v1",
-    selectedModel: "deepseek-reasoner",
-    availableModels: ["deepseek-reasoner", "deepseek-chat"],
+    // Flash-first: the cheap/fast tier is the default for everyday work and for
+    // editor AI; the frontier tier stays available in the picker.
+    selectedModel: "deepseek-flash",
+    availableModels: ["deepseek-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
     speedBadge: "Thinking",
   },
   xai: {
@@ -459,6 +461,18 @@ export interface EditorAiConfig {
 }
 
 /**
+ * Editor AI runs on every hover-free interaction (review, inline edit, explain),
+ * so it defaults to the provider's cheap/fast tier when one exists — "flash",
+ * "mini", "haiku", … — instead of the flagship. Falls back to the caller's
+ * choice, then the first listed model.
+ */
+export function pickFastVariant(models: string[], fallback = ""): string {
+  const list = (models || []).filter(Boolean);
+  const swift = list.find((m) => /(flash|mini|small|lite|fast|haiku|turbo|instant|nano)/i.test(m));
+  return swift || fallback || list[0] || "";
+}
+
+/**
  * Resolves the model that editor AI features (review, inline edit, Code Map
  * explanations) should use.
  *
@@ -482,7 +496,7 @@ export function resolveEditorAiConfig(
     if (hasUsableKey(cfg?.apiKey)) {
       return {
         provider: active.providerId,
-        model: active.model,
+        model: pickFastVariant(cfg.availableModels || [], active.model),
         apiKey: cfg.apiKey || "",
         baseUrl: cfg.baseUrl || "",
         source: "selected",
@@ -497,7 +511,7 @@ export function resolveEditorAiConfig(
     if (cfg && cfg.category === "cloud" && hasUsableKey(cfg.apiKey)) {
       return {
         provider: cfg.id,
-        model: cfg.selectedModel || cfg.availableModels?.[0] || "",
+        model: pickFastVariant(cfg.availableModels || [], cfg.selectedModel || ""),
         apiKey: cfg.apiKey || "",
         baseUrl: cfg.baseUrl || "",
         source: "configured",

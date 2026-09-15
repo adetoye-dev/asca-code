@@ -511,6 +511,71 @@ function looksLikeCleanReview(raw: string): boolean {
 
 
 /**
+ * Models routinely answer an "edit this block" request with far more than the
+ * block — the whole file, or the surrounding context echoed back. Applying that
+ * over a small range replaces the file with garbage (the reported "review broke
+ * my file"), so every replacement is cleaned and sanity-checked here, and again
+ * in the editor before it is applied.
+ */
+function sanitizeInlineReplacement(params: {
+  replacement: string;
+  selectedCode: string;
+  surroundingPrefix: string;
+  surroundingSuffix: string;
+}): { replacement: string; reason: string } {
+  const selected = String(params.selectedCode || "").replace(/\r\n/g, "\n");
+  let replacement = String(params.replacement || "").replace(/\r\n/g, "\n").trim();
+
+  // 1. Unwrap a fenced block, discarding any prose around it.
+  const fenced = replacement.match(/```[a-zA-Z0-9_+-]*\n([\s\S]*?)```/);
+  if (fenced) replacement = fenced[1].trim();
+  else replacement = replacement.replace(/^```[a-zA-Z0-9_+-]*\n?/, "").replace(/\n?```\s*$/, "").trim();
+
+  // 2. If the model echoed context, keep only the edited region.
+  const prefix = String(params.surroundingPrefix || "").replace(/\r\n/g, "\n");
+  const suffix = String(params.surroundingSuffix || "").replace(/\r\n/g, "\n");
+  const prefixTail = prefix.slice(-160).trim();
+  if (prefixTail.length >= 60) {
+    const at = replacement.indexOf(prefixTail);
+    if (at > 0) replacement = replacement.slice(at + prefixTail.length).replace(/^\n+/, "");
+  }
+  const suffixHead = suffix.slice(0, 160).trim();
+  if (suffixHead.length >= 60) {
+    const at = replacement.indexOf(suffixHead);
+    if (at >= 0) replacement = replacement.slice(0, at).replace(/\n+$/, "");
+  }
+  replacement = replacement.trim();
+
+  if (!replacement) {
+    return { replacement: "", reason: "the model returned no usable code" };
+  }
+
+  // 3. Refuse implausible growth: the edit was requested for a small range, so
+  // a much larger answer is a rewritten file, not an edit.
+  const selectedLines = Math.max(1, selected.split("\n").length);
+  const producedLines = replacement.split("\n").length;
+  const ceiling = Math.max(selectedLines * 3, selectedLines + 60);
+  if (producedLines > ceiling) {
+    return {
+      replacement: "",
+      reason: `the model returned ${producedLines} lines for a ${selectedLines}-line edit, so it was not applied`,
+    };
+  }
+
+  // 4. Trim a trailing prose/explanation block the model added after the code.
+  const proseTail = replacement.match(/\n\s*\n\s*(?:Explanation|Note|This|The (?:code|change|edit|fix)|Changes?:)[\s\S]{40,}$/i);
+  if (proseTail && proseTail.index !== undefined) {
+    const trimmed = replacement.slice(0, proseTail.index).trimEnd();
+    if (trimmed && trimmed.split("\n").length >= Math.max(1, selectedLines - 5)) {
+      replacement = trimmed;
+    }
+  }
+
+  return { replacement, reason: "" };
+}
+
+
+/**
  * Renders a file with a real line-number gutter (`NNNN| code`, the `cat -n`
  * shape) so the model can cite exact lines instead of counting them itself.
  * Models reliably collapse to a single guessed line when handed raw code, which
@@ -3262,13 +3327,19 @@ export function realFilesystemPlugin(): Plugin {
                 replacement = (data.choices?.[0]?.message?.content || "").trim();
               }
 
-              if (replacement.startsWith("```")) {
-                replacement = replacement.replace(/^```[a-zA-Z0-9_-]*\n?/, "").replace(/\n?```$/, "");
-              }
-
               res.setHeader("Content-Type", "application/json");
               if (!replacement) throw new Error("The provider returned an empty replacement.");
-              res.end(JSON.stringify({ ok: true, replacement }));
+              const cleaned = sanitizeInlineReplacement({
+                replacement,
+                selectedCode,
+                surroundingPrefix,
+                surroundingSuffix,
+              });
+              if (!cleaned.replacement) {
+                res.end(JSON.stringify({ ok: false, reason: cleaned.reason, replacement: "" }));
+                return;
+              }
+              res.end(JSON.stringify({ ok: true, replacement: cleaned.replacement, reason: cleaned.reason }));
               return;
             } catch (err: any) {
               res.setHeader("Content-Type", "application/json");

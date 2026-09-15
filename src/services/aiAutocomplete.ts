@@ -232,6 +232,38 @@ export interface InlineEditResult {
   reason?: string;
 }
 
+/**
+ * Last line of defence before an AI replacement is applied to the editor.
+ *
+ * The bridge already cleans and bounds the replacement, but that guard must
+ * never be the only one: a replacement far larger than the range it replaces
+ * rewrites the file (the reported "review broke my file"). Returns a reason
+ * when the replacement must not be applied.
+ */
+export function validateReplacement(
+  replacement: string,
+  replacedCode: string
+): { ok: boolean; reason: string } {
+  const next = (replacement || "").replace(/\r\n/g, "\n").trim();
+  if (!next) return { ok: false, reason: "The model returned no usable code." };
+  if (next.includes("```")) {
+    return { ok: false, reason: "The model wrapped its answer in a code fence; nothing was applied." };
+  }
+  const replacedLines = Math.max(1, (replacedCode || "").split("\n").length);
+  const producedLines = next.split("\n").length;
+  const ceiling = Math.max(replacedLines * 3, replacedLines + 60);
+  if (producedLines > ceiling) {
+    return {
+      ok: false,
+      reason: `The model returned ${producedLines} lines for a ${replacedLines}-line edit, so it was not applied.`,
+    };
+  }
+  if (next === (replacedCode || "").replace(/\r\n/g, "\n").trim()) {
+    return { ok: false, reason: "The model returned the code unchanged." };
+  }
+  return { ok: true, reason: "" };
+}
+
 export async function executeInlineEdit({
   instruction,
   selectedCode,

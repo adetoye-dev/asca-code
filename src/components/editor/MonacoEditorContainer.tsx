@@ -12,14 +12,25 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
-import { ChevronDown, ChevronRight, Sparkles, X } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, Sparkles, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
-import { registerAiInlineCompletions, executeInlineEdit } from "../../services/aiAutocomplete";
+import {
+  registerAiInlineCompletions,
+  executeInlineEdit,
+  validateReplacement,
+} from "../../services/aiAutocomplete";
 import { reviewFile, isReviewableFile, type ReviewIssue } from "../../services/aiReview";
 import { configureMonacoTypeScript } from "../../services/monacoTsConfig";
 import { applyMonacoTheme } from "../../services/themeManager";
 import { getAutoSelectedLocalWorker, resolveEditorAiConfig } from "../../services/aiModelManager";
 import type { AISettings } from "../SettingsModal";
+
+/**
+ * Upper bound for a single inline review thread. A card is never this tall, so
+ * anything larger is a measurement bug — clamping it keeps one bad number from
+ * pushing the whole file off screen.
+ */
+const MAX_REVIEW_CARD_HEIGHT = 2400;
 
 interface MonacoEditorContainerProps {
   path: string;
@@ -81,6 +92,8 @@ export function MonacoEditorContainer({
   const [isInlinePromptOpen, setIsInlinePromptOpen] = useState(false);
   const [inlinePrompt, setInlinePrompt] = useState("");
   const [isInlineLoading, setIsInlineLoading] = useState(false);
+  /** Surfaced when an AI edit is refused (e.g. an implausible replacement). */
+  const [inlineError, setInlineError] = useState("");
   const inlineAbortControllerRef = useRef<AbortController | null>(null);
 
   const handleInlineSubmit = async () => {
@@ -135,12 +148,19 @@ export function MonacoEditorContainer({
         });
       }
       if (!result.ok) {
-        if (result.reason) console.warn(result.reason);
+        setInlineError(result.reason || "Inline edit failed.");
         return;
       }
       const replacement = result.replacement;
 
       if (replacement && monacoRef.current) {
+        // Guard the selection too: a runaway answer would be inserted at the
+        // cursor and wreck the file.
+        const verdict = validateReplacement(replacement, codeToEdit);
+        if (!verdict.ok) {
+          setInlineError(verdict.reason);
+          return;
+        }
         const editRange = selectedCode.length > 0
           ? selection
           : new monacoRef.current.Range(
@@ -152,6 +172,7 @@ export function MonacoEditorContainer({
         editor.executeEdits("acsa-inline", [{ range: editRange, text: replacement }]);
         setIsInlinePromptOpen(false);
         setInlinePrompt("");
+        setInlineError("");
         editor.focus();
       }
     } catch (err) {
@@ -316,6 +337,7 @@ export function MonacoEditorContainer({
     inlineAbortControllerRef.current = null;
     setIsInlinePromptOpen(false);
     setIsInlineLoading(false);
+    setInlineError("");
     editorRef.current?.focus();
   };
 
@@ -371,12 +393,24 @@ export function MonacoEditorContainer({
         });
       }
       if (result.ok && result.replacement && result.replacement.trim()) {
+        // Never let a runaway answer (e.g. the whole file) land on a 21-line
+        // range — that is what mangled the file. Validate first, and say why
+        // when it is refused.
+        const verdict = validateReplacement(result.replacement, selectedCode);
+        if (!verdict.ok) {
+          setReviewError(verdict.reason);
+          setReviewNote("");
+          return;
+        }
         editor.executeEdits("acsa-fix", [{ range, text: result.replacement }]);
         // Line numbers of the other findings are no longer valid after this
         // edit, so drop them (and their inline threads) instead of acting on
         // stale offsets.
         clearReview();
+        setReviewError("");
         setReviewNote("Applied a fix. Run Review again for the updated file.");
+      } else if (!result.ok && result.reason) {
+        setReviewError(result.reason);
       }
     } finally {
       setFixingIndex(null);
@@ -426,7 +460,7 @@ export function MonacoEditorContainer({
   const estimateFindingHeight = (issue: ReviewIssue, expanded: boolean): number => {
     if (!expanded) return collapsedZoneHeightRef.current ?? 38;
     const chars = (issue.detail?.length || 0) + (issue.suggestion?.length || 0);
-    return 38 + 150 + Math.ceil(chars / 55) * 15;
+    return Math.min(MAX_REVIEW_CARD_HEIGHT, 38 + 150 + Math.ceil(chars / 55) * 15);
   };
 
   /**
@@ -465,9 +499,13 @@ export function MonacoEditorContainer({
       reviewIssues.forEach((issue, index) => {
         const node = ensureReviewZoneNode(index);
         const line = Math.min(Math.max(1, issue.line || 1), lineCount);
-        const height =
-          reviewZoneHeightsRef.current.get(index) ??
-          estimateFindingHeight(issue, expandedFindings.has(index));
+        const stored = reviewZoneHeightsRef.current.get(index);
+        const height = Math.min(
+          stored && stored <= MAX_REVIEW_CARD_HEIGHT
+            ? stored
+            : estimateFindingHeight(issue, expandedFindings.has(index)),
+          MAX_REVIEW_CARD_HEIGHT
+        );
         const zoneId = accessor.addZone({
           afterLineNumber: line,
           heightInPx: height,
@@ -489,10 +527,20 @@ export function MonacoEditorContainer({
     let changed = false;
     reviewZoneNodesRef.current.forEach((node, index) => {
       if (!node.isConnected || node.style.display === "none") return;
-      const card = node.firstElementChild as HTMLElement | null;
+      // Measure the card itself, never the wrapper. The wrapper is absolutely
+      // positioned and full-height, so measuring it returned the zone's own
+      // height — and adding the gap each pass turned the measurement into a
+      // feedback loop that grew a zone to ~90,000px and pushed the file off
+      // screen.
+      const card =
+        (node.querySelector(".acsa-review-card") as HTMLElement | null) ||
+        (node.firstElementChild as HTMLElement | null);
       if (!card) return;
       const measured = Math.ceil(card.getBoundingClientRect().height) + 6;
       if (measured <= 8) return; // not laid out yet
+      // A single thread is never this tall; ignore anything implausible rather
+      // than letting it ratchet.
+      if (measured > MAX_REVIEW_CARD_HEIGHT) return;
       const previous = reviewZoneHeightsRef.current.get(index);
       if (previous === undefined || Math.abs(previous - measured) > 2) {
         reviewZoneHeightsRef.current.set(index, measured);
@@ -634,6 +682,7 @@ export function MonacoEditorContainer({
 
     // Register Cmd+K / Ctrl+K inline edit prompt
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+      setInlineError("");
       setIsInlinePromptOpen(true);
     });
 
@@ -736,7 +785,7 @@ export function MonacoEditorContainer({
         const node = ensureReviewZoneNode(index);
         const expanded = expandedFindings.has(index);
         return createPortal(
-          <div className="acsa-review-card-wrap absolute inset-x-0 top-0 h-full">
+          <div className="acsa-review-card-wrap absolute inset-x-0 top-0">
             <div
               className={`acsa-review-card rounded-lg border shadow-lg overflow-hidden font-sans ${
                 issue.severity === "error"
@@ -894,6 +943,12 @@ export function MonacoEditorContainer({
               Cancel
             </button>
           </div>
+          {inlineError && (
+            <div className="mt-1.5 flex items-start gap-1.5 px-1 text-[11px] text-amber-300">
+              <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
+              <span className="leading-snug">{inlineError}</span>
+            </div>
+          )}
         </div>
       )}
 
