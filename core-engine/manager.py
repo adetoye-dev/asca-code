@@ -107,6 +107,9 @@ CONTEXT_CARD_MAX_TOKENS = 2000
 LLM_DEFAULT_HOST = "127.0.0.1"
 LLM_DEFAULT_PORT = 8080
 LLM_REQUEST_TIMEOUT = 180
+# Agent rounds emit whole files inside a tool call, so a 2.5k cap truncates the
+# call mid-argument and the edit never lands (or worse, lands half-written).
+AGENT_MAX_TOKENS = int(os.environ.get("ACSA_AGENT_MAX_TOKENS", "8192"))
 
 
 # ── Data Structures ──────────────────────────────────────────────────────────
@@ -293,6 +296,36 @@ def emit_chunk(token: str) -> None:
         sys.stdout.flush()
     except Exception:
         pass
+
+
+def consume_openai_delta(choice: dict, emit_token: Callable[[str], None]) -> tuple[str, str]:
+    """Apply one OpenAI-compatible streamed choice; return (answer_text, finish_reason).
+
+    Reasoning models — DeepSeek's reasoner, Qwen "thinking" modes, the o-series —
+    stream their chain-of-thought in a separate delta field (`reasoning_content`,
+    sometimes `reasoning`) and the real answer in `content`. Ignoring the former
+    made a long reasoning phase look like a hung request: the UI showed nothing,
+    no tool ran, and the run never progressed. Surface the thought so it is
+    visible on the thought channel while the answer keeps its own channel.
+    """
+    delta = choice.get("delta") or {}
+    thought = delta.get("reasoning_content") or delta.get("reasoning") or ""
+    if thought:
+        emit_thought(thought)
+    return delta.get("content") or "", choice.get("finish_reason") or ""
+
+
+def report_token_limit_hit(max_tokens: int) -> None:
+    """Surface a `finish_reason == "length"` stop instead of hiding it.
+
+    A response cut off by the output limit can contain half a tool call — an
+    unterminated <parameter> holding a whole file — which must never be applied.
+    """
+    logger.warning("LLM response hit the max_tokens limit (%d); output is truncated", max_tokens)
+    emit_thought(
+        f"\n⚠️ The response hit the output token limit ({max_tokens}) and was cut off. "
+        "Split the work into smaller steps.\n"
+    )
 
 
 def request_user_permission(command: str, description: str = "", timeout: float = 120.0) -> bool:
@@ -530,6 +563,7 @@ def _call_llm(
                 try:
                     retry_req = urllib.request.Request(chat_url, data=fallback_payload, headers=headers, method="POST")
                     fallback_tokens: list[str] = []
+                    finish_reason = ""
                     with local_opener.open(retry_req, timeout=timeout) as resp:
                         for line_bytes in resp:
                             line_str = line_bytes.decode("utf-8").strip()
@@ -547,6 +581,8 @@ def _call_llm(
                             except json.JSONDecodeError:
                                 continue
                     if fallback_tokens:
+                        if finish_reason == "length":
+                            report_token_limit_hit(max_tokens)
                         return "".join(fallback_tokens)
                 except Exception as retry_exc:
                     logger.warning("Ollama text-only retry failed: %s", retry_exc)
@@ -572,6 +608,7 @@ def _call_llm(
         try:
             req = urllib.request.Request(v1_url, data=v1_payload, headers=headers, method="POST")
             full_tokens: list[str] = []
+            finish_reason = ""
             with local_opener.open(req, timeout=timeout) as resp:
                 for line_bytes in resp:
                     line_str = line_bytes.decode("utf-8").strip()
@@ -583,8 +620,9 @@ def _call_llm(
                         data = json.loads(line_str)
                         choices = data.get("choices", [])
                         if choices:
-                            delta = choices[0].get("delta", {})
-                            token = delta.get("content", "")
+                            token, finish = consume_openai_delta(choices[0], emit_token)
+                            if finish:
+                                finish_reason = finish
                             if token:
                                 full_tokens.append(token)
                                 emit_token(token)
@@ -593,6 +631,8 @@ def _call_llm(
             elapsed = (time.monotonic() - start) * 1000
             logger.info("Ollama /v1/chat/completions responded in %.0fms", elapsed)
             if full_tokens:
+                if finish_reason == "length":
+                    report_token_limit_hit(max_tokens)
                 return "".join(full_tokens)
         except Exception as exc:
             err_str = str(exc)
@@ -789,6 +829,7 @@ def _call_llm(
     try:
         req = urllib.request.Request(endpoint_url, data=payload, headers=headers, method="POST")
         full_tokens: list[str] = []
+        finish_reason = ""
         with opener.open(req, timeout=timeout) as resp:
             for line_bytes in resp:
                 line_str = line_bytes.decode("utf-8").strip()
@@ -800,8 +841,9 @@ def _call_llm(
                     data = json.loads(line_str)
                     choices = data.get("choices", [])
                     if choices:
-                        delta = choices[0].get("delta", {})
-                        token = delta.get("content", "")
+                        token, finish = consume_openai_delta(choices[0], emit_token)
+                        if finish:
+                            finish_reason = finish
                         if token:
                             full_tokens.append(token)
                             emit_token(token)
@@ -809,6 +851,8 @@ def _call_llm(
                     continue
         elapsed = (time.monotonic() - start) * 1000
         logger.info("LLM response received from %s in %.0fms", endpoint_url, elapsed)
+        if finish_reason == "length":
+            report_token_limit_hit(max_tokens)
         return "".join(full_tokens) if full_tokens else None
     except urllib.error.HTTPError as http_exc:
         err_body = ""
@@ -863,8 +907,7 @@ def _call_llm(
                             data = json.loads(line_str)
                             choices = data.get("choices", [])
                             if choices:
-                                delta = choices[0].get("delta", {})
-                                token = delta.get("content", "")
+                                token, _finish = consume_openai_delta(choices[0], emit_token)
                                 if token:
                                     full_tokens.append(token)
                                     emit_token(token)
@@ -2313,20 +2356,41 @@ ROUTE_SIMPLE_TO_LOCAL_ENV = "ACSA_ROUTE_SIMPLE_TO_LOCAL"
 
 
 def _is_simple_mutation_request(user_request: str) -> bool:
-    """Conservative heuristic for tasks a small local model can handle."""
+    """Conservative heuristic for tasks a small local worker can handle.
+
+    Misclassifying here silently downgrades the model for real feature work —
+    a full build routed to a 6.7B local model stalls or produces poor code — so
+    the bar is high: a single, short, single-target instruction. Any hint of
+    multiple requirements (lists, commas, extra clauses) or of feature-sized
+    work keeps the request on the model the user actually selected.
+    """
     text = (user_request or "").strip()
-    if not text or len(text) > 240:
+    if not text or len(text) > 200:
         return False
     if classify_intent(text) != "mutation":
         return False
+
+    lower = text.lower()
+
+    # Several requirements are never a "simple" single change.
+    if "\n" in text or ";" in text or "," in text:
+        return False
+    if len(re.findall(r"[.!?](?:\s|$)", text)) > 1:
+        return False
+    if re.search(r"\band\b|\bthen\b|\bplus\b|\balso\b", lower):
+        return False
+
     complex_terms = (
         "architecture", "microservice", "scaffold", "full-stack", "new project",
         "refactor", "migrate", "everywhere", "across the codebase", "codebase",
         "pipeline", "database schema", "api design", "system design",
         "multi-file", "all files", "deep research", "review the whole",
+        # Feature-sized work: small models write this badly.
+        "build", "implement", "app", "application", "manager", "dashboard",
+        "component", "page", "form", "game", "feature", "endpoint", "cli",
+        "screen", "view", "system", "tests", "test",
     )
-    lower = text.lower()
-    return not any(term in lower for term in complex_terms)
+    return not any(re.search(rf"\b{re.escape(term)}\b", lower) for term in complex_terms)
 
 
 def _pick_best_local_ollama_model(base_url: str = "http://127.0.0.1:11434") -> Optional[str]:
@@ -2462,7 +2526,7 @@ def orchestrate(
                     host=config.llm_host,
                     port=config.llm_port,
                     system_instruction=system_instruction,
-                    max_tokens=2500,
+                    max_tokens=AGENT_MAX_TOKENS,
                 ),
                 project_root=config.project_root,
                 reporter=lambda role, detail, status: emit_step(f"Subagent: {role.capitalize()}", detail, status),
@@ -2570,7 +2634,7 @@ def orchestrate(
                     host=config.llm_host,
                     port=config.llm_port,
                     system_instruction=sys_inst,
-                    max_tokens=2500,
+                    max_tokens=AGENT_MAX_TOKENS,
                     images=imgs,
                     stream_target=s_target,
                 ),
@@ -2643,7 +2707,7 @@ def orchestrate(
             host=config.llm_host,
             port=config.llm_port,
             system_instruction=sys_inst,
-            max_tokens=2500,
+            max_tokens=AGENT_MAX_TOKENS,
             images=imgs,
             stream_target=s_target,
         ),
@@ -2696,7 +2760,7 @@ def orchestrate(
                             host=config.llm_host,
                             port=config.llm_port,
                             system_instruction=sys_inst,
-                            max_tokens=2500,
+                            max_tokens=AGENT_MAX_TOKENS,
                             images=imgs,
                             stream_target=s_target,
                         ),

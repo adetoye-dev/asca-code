@@ -245,6 +245,32 @@ class TaskRoutingTests(unittest.TestCase):
         self.assertFalse(manager._is_simple_mutation_request("refactor the entire codebase"))
         self.assertFalse(manager._is_simple_mutation_request("x" * 300))
 
+    def test_feature_builds_are_never_treated_as_simple(self):
+        # A feature-sized build routed to a small local model stalls or writes
+        # poor code, so these must keep the model the user selected.
+        self.assertFalse(
+            manager._is_simple_mutation_request(
+                "Build a task manager in src/App.tsx: an input to add tasks, a list "
+                "where each task can be toggled complete and deleted, and a live count "
+                "of remaining tasks. Keep it to that one file and use Tailwind classes."
+            )
+        )
+        self.assertFalse(manager._is_simple_mutation_request("Implement a todo app"))
+        self.assertFalse(
+            manager._is_simple_mutation_request(
+                "Create a new file utils.py containing a function add(a, b) that returns a + b."
+            )
+        )
+
+    def test_localized_edits_still_route_to_local(self):
+        for request in (
+            "rename helper to add_one",
+            "add a null check for user",
+            "fix the typo in the docstring",
+        ):
+            with self.subTest(request=request):
+                self.assertTrue(manager._is_simple_mutation_request(request))
+
     def test_cloud_simple_request_routes_to_local(self):
         cfg = self._config("deepseek", "deepseek-v4-pro")
         with mock.patch.object(
