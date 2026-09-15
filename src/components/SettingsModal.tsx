@@ -15,7 +15,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Bot, Search, Layers, ChevronRight, ExternalLink, EyeOff, ArrowRight, Check, Pin, Cpu, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
+import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 
@@ -34,13 +34,8 @@ export interface AISettings {
   enableLigatures?: boolean;
   tabSize?: number;
   insertSpaces?: boolean;
-  formatOnSave?: boolean;
   wordWrap?: boolean;
-  shellPath?: string;
   terminalFontSize?: number;
-  copyOnSelect?: boolean;
-  gitExecutablePath?: string;
-  gitDefaultBranch?: string;
 }
 
 export interface SettingsModalProps {
@@ -52,6 +47,8 @@ export interface SettingsModalProps {
   onApplyTheme?: (themeId: string) => void;
   initialTab?: string;
   projectName?: string;
+  /** Open the real Marketplace panel (Skills, MCP servers, tooling). */
+  onOpenMarketplace?: () => void;
 }
 
 interface TreeNode {
@@ -62,135 +59,37 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
+/**
+ * Only sections that render real, wired controls.
+ *
+ * This used to mirror a JetBrains nav almost one-for-one, and most of those
+ * entries opened an empty pane ("Keymap", "Languages & Frameworks", "Database",
+ * "Diagrams", …) while "Agents", "Plugins" and "MCP" rendered hardcoded fake
+ * lists — an installer whose buttons only toggled local state, and servers that
+ * did not exist. A settings tree that lies is worse than a short one: anything
+ * not listed here either has no implementation yet or lives in the Marketplace.
+ */
 const SETTINGS_TREE: TreeNode[] = [
   {
     id: "appearance-group",
     label: "Appearance & Behavior",
-    children: [
-      { id: "appearance", label: "Appearance" },
-      { id: "system-settings", label: "System Settings" },
-    ],
+    children: [{ id: "appearance", label: "Appearance" }],
   },
-  { id: "keymap", label: "Keymap" },
   {
     id: "editor-group",
     label: "Editor",
     children: [
       { id: "editor-font", label: "Font" },
       { id: "editor-code-style", label: "Code Style" },
-      { id: "editor-general", label: "General" },
     ],
   },
-  { id: "plugins", label: "Plugins" },
+  { id: "terminal", label: "Terminal" },
   {
-    id: "vcs-group",
-    label: "Version Control",
-    children: [{ id: "git", label: "Git", hasExternalBadge: true }],
+    id: "ai-assistant-group",
+    label: "AI Assistant",
+    children: [{ id: "providers", label: "Providers & API keys" }],
   },
-  { id: "build-exec", label: "Build, Execution, Deployment" },
-  { id: "languages", label: "Languages & Frameworks" },
-  {
-    id: "tools-group",
-    label: "Tools",
-    children: [
-      { id: "actions-on-save", label: "Actions on Save" },
-      {
-        id: "ai-assistant-group",
-        label: "AI Assistant",
-        children: [
-          { id: "agents", label: "Agents" },
-          { id: "providers", label: "Providers & API keys", hasExternalBadge: true },
-          { id: "mcp", label: "Model Context Protocol (MCP)", hasExternalBadge: true },
-          { id: "prompt-library", label: "Prompt Library", hasExternalBadge: true },
-          { id: "rules", label: "Rules", hasExternalBadge: true },
-          { id: "skills", label: "Skills", hasExternalBadge: true },
-          { id: "trusted-domains", label: "Trusted Domains" },
-        ],
-      },
-      { id: "terminal", label: "Terminal" },
-      { id: "database", label: "Database" },
-      { id: "diagrams", label: "Diagrams" },
-    ],
-  },
-];
-
-interface AIAgentItem {
-  id: string;
-  name: string;
-  version: string;
-  badge?: string;
-  description: string;
-  author: string;
-  authorLink?: string;
-  installed: boolean;
-  isCore?: boolean;
-}
-
-const INITIAL_AGENTS: AIAgentItem[] = [
-  {
-    id: "claude-agent",
-    name: "Claude Agent",
-    version: "v0.73.0",
-    badge: "Bundled",
-    description: "ACP wrapper for Anthropic's Claude",
-    author: "Anthropic +2",
-    installed: true,
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    version: "v1.8.0",
-    badge: "Bundled",
-    description: "ACP adapter for OpenAI's coding assistant",
-    author: "OpenAI +2",
-    installed: true,
-  },
-  {
-    id: "junie",
-    name: "Junie",
-    version: "v3123.3.0",
-    badge: "Bundled",
-    description: "AI Coding Agent by JetBrains",
-    author: "JetBrains",
-    installed: true,
-  },
-  {
-    id: "agoragentic",
-    name: "Agoragentic",
-    version: "v1.3.0",
-    description:
-      "Agent marketplace with 174+ AI capabilities. Browse, invoke, and parse multi-agent pipelines.",
-    author: "ACRE / Agoragentic",
-    installed: false,
-  },
-  {
-    id: "amp",
-    name: "Amp",
-    version: "v0.9.0",
-    description: "ACP wrapper for Amp - the frontier coding agent",
-    author: "tao12345666333",
-    installed: false,
-  },
-  {
-    id: "auggie",
-    name: "Auggie CLI",
-    version: "v0.36.0",
-    description:
-      "Augment Code's powerful software agent, backed by industry-leading semantic retrieval.",
-    author: "Augment Code <support@augmentcode.com>",
-    installed: false,
-  },
-  {
-    id: "deterministic-ast",
-    name: "Offline AST Engine",
-    version: "v2.4.0",
-    badge: "Core",
-    description:
-      "Built-in offline syntax synthesizer & structural diff planner. Zero network latency.",
-    author: "ACSA Code Core",
-    installed: true,
-    isCore: true,
-  },
+  { id: "marketplace", label: "Marketplace" },
 ];
 
 function resolveInitialSection(tab?: string): string {
@@ -207,8 +106,9 @@ export function SettingsModal({
   onSave,
   themeId = "github-dark",
   onApplyTheme,
-  initialTab = "agents",
+  initialTab = "providers",
   projectName = "Practice",
+  onOpenMarketplace,
 }: SettingsModalProps) {
   // Safe settings fallback to avoid undefined access crashes
   const currentSettings = settings || {
@@ -251,21 +151,10 @@ export function SettingsModal({
   const [enableLigatures, setEnableLigatures] = useState(true);
   const [tabSize, setTabSize] = useState<number>(2);
   const [insertSpaces, setInsertSpaces] = useState(true);
-  const [formatOnSave, setFormatOnSave] = useState(true);
   const [wordWrap, setWordWrap] = useState(false);
 
-  // Agents & MCP state
-  const [agents, setAgents] = useState<AIAgentItem[]>(INITIAL_AGENTS);
-  const [agentSearch, setAgentSearch] = useState("");
-  const [passCustomMcp, setPassCustomMcp] = useState(true);
-  const [mcpMode, setMcpMode] = useState("On demand");
-
   // Terminal state
-  const [shellPath, setShellPath] = useState("/bin/zsh");
   const [terminalFontSize, setTerminalFontSize] = useState(13);
-  const [copyOnSelect, setCopyOnSelect] = useState(true);
-  const [gitExecutablePath, setGitExecutablePath] = useState("git");
-  const [gitDefaultBranch, setGitDefaultBranch] = useState("main");
 
   // Tree filter logic (unconditional hook)
   const filteredTree = useMemo(() => {
@@ -312,13 +201,8 @@ export function SettingsModal({
     setEnableLigatures(safeSettings.enableLigatures ?? true);
     setTabSize(safeSettings.tabSize ?? 2);
     setInsertSpaces(safeSettings.insertSpaces ?? true);
-    setFormatOnSave(safeSettings.formatOnSave ?? true);
     setWordWrap(safeSettings.wordWrap ?? false);
-    setShellPath(safeSettings.shellPath || "/bin/zsh");
     setTerminalFontSize(safeSettings.terminalFontSize ?? 13);
-    setCopyOnSelect(safeSettings.copyOnSelect ?? true);
-    setGitExecutablePath(safeSettings.gitExecutablePath || "git");
-    setGitDefaultBranch(safeSettings.gitDefaultBranch || "main");
     setTestStatus("idle");
     setTestMessage("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,13 +282,8 @@ export function SettingsModal({
         enableLigatures,
         tabSize,
         insertSpaces,
-        formatOnSave,
         wordWrap,
-        shellPath,
         terminalFontSize,
-        copyOnSelect,
-        gitExecutablePath,
-        gitDefaultBranch,
       });
     }
   };
@@ -421,13 +300,8 @@ export function SettingsModal({
         enableLigatures,
         tabSize,
         insertSpaces,
-        formatOnSave,
         wordWrap,
-        shellPath,
         terminalFontSize,
-        copyOnSelect,
-        gitExecutablePath,
-        gitDefaultBranch,
       });
     }
     if (onClose) {
@@ -435,48 +309,23 @@ export function SettingsModal({
     }
   };
 
-  const toggleAgent = (agentId: string) => {
-    setAgents((prev) =>
-      prev.map((a) => (a.id === agentId ? { ...a, installed: !a.installed } : a))
-    );
-  };
-
   // Breadcrumb path computation
+  /**
+   * Derive the breadcrumb from the tree so it cannot drift from the nav (it used
+   * to be a parallel switch that still named sections which no longer existed).
+   */
   const getBreadcrumb = (): string[] => {
-    switch (selectedSection) {
-      case "agents":
-        return ["Tools", "AI Assistant", "Agents"];
-      case "providers":
-        return ["Tools", "AI Assistant", "Providers & API keys"];
-      case "mcp":
-        return ["Tools", "AI Assistant", "Model Context Protocol (MCP)"];
-      case "prompt-library":
-        return ["Tools", "AI Assistant", "Prompt Library"];
-      case "rules":
-        return ["Tools", "AI Assistant", "Rules"];
-      case "skills":
-        return ["Tools", "AI Assistant", "Skills"];
-      case "appearance":
-        return ["Appearance & Behavior", "Appearance"];
-      case "system-settings":
-        return ["Appearance & Behavior", "System Settings"];
-      case "editor-font":
-        return ["Editor", "Font"];
-      case "editor-code-style":
-        return ["Editor", "Code Style"];
-      case "editor-general":
-        return ["Editor", "General"];
-      case "plugins":
-        return ["Plugins"];
-      case "git":
-        return ["Version Control", "Git"];
-      case "terminal":
-        return ["Tools", "Terminal"];
-      case "keymap":
-        return ["Keymap"];
-      default:
-        return ["Settings", (selectedSection || "General").replace(/-/g, " ")];
-    }
+    const walk = (nodes: TreeNode[], trail: string[]): string[] | null => {
+      for (const node of nodes) {
+        if (node.id === selectedSection) return [...trail, node.label];
+        if (node.children) {
+          const found = walk(node.children, [...trail, node.label]);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return walk(SETTINGS_TREE, []) ?? ["Settings"];
   };
 
   const breadcrumb = getBreadcrumb() || ["Settings", "General"];
@@ -617,131 +466,6 @@ export function SettingsModal({
 
             {/* Stage Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-5 text-[13px] text-zinc-200 font-sans">
-              {/* ── SECTION: AGENTS (media_1788523057455.png reference) ───────── */}
-              {selectedSection === "agents" && (
-                <div className="space-y-4 max-w-2xl">
-                  {/* Agent Search Filter */}
-                  <div className="relative flex items-center">
-                    <Search className="w-3.5 h-3.5 absolute left-3 text-zinc-400" />
-                    <input
-                      type="text"
-                      value={agentSearch}
-                      onChange={(e) => setAgentSearch(e.target.value)}
-                      placeholder="Search agents..."
-                      className="w-full bg-surface border border-hairline rounded-md pl-8 pr-3 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 font-sans"
-                    />
-                  </div>
-
-                  {/* Agents List */}
-                  <div className="divide-y divide-hairline border border-hairline rounded-lg bg-surface/50 overflow-hidden">
-                    {agents
-                      .filter(
-                        (a) =>
-                           !agentSearch.trim() ||
-                          a.name.toLowerCase().includes(agentSearch.toLowerCase()) ||
-                          a.description.toLowerCase().includes(agentSearch.toLowerCase())
-                      )
-                      .map((agent) => (
-                        <div
-                          key={agent.id}
-                          className="p-3 flex items-start gap-3 hover:bg-surface-hover transition-colors"
-                        >
-                          {/* Agent Avatar / Icon */}
-                          <div className="w-8 h-8 rounded-lg bg-workbench border border-hairline flex items-center justify-center shrink-0 mt-0.5 text-purple-400">
-                            {agent.id.includes("claude") ? (
-                              <Bot className="w-4 h-4 text-amber-400" />
-                            ) : agent.id.includes("codex") ? (
-                              <Bot className="w-4 h-4 text-emerald-400" />
-                            ) : agent.id.includes("junie") ? (
-                              <Bot className="w-4 h-4 text-purple-400" />
-                            ) : agent.id.includes("deterministic") ? (
-                              <Cpu className="w-4 h-4 text-purple-300" />
-                            ) : (
-                              <Layers className="w-4 h-4 text-zinc-400" />
-                            )}
-                          </div>
-
-                          {/* Agent Info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-[13px] text-zinc-100">
-                                {agent.name}
-                              </span>
-                              <span className="text-[11px] text-zinc-400 font-mono">
-                                {agent.version}
-                              </span>
-                              {agent.badge && (
-                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-zinc-800 text-zinc-300 font-mono border border-hairline">
-                                  {agent.badge}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-zinc-400 mt-0.5 leading-normal">
-                              {agent.description}
-                            </p>
-                            <div className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 mt-1 cursor-pointer">
-                              <span>{agent.author}</span>
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </div>
-                          </div>
-
-                          {/* Agent Action Button */}
-                          <div className="shrink-0">
-                            {agent.isCore ? (
-                              <span className="px-3 py-1 rounded text-[11px] bg-purple-950/40 text-purple-300 font-medium border border-purple-500/40">
-                                Active
-                              </span>
-                            ) : agent.installed ? (
-                              <button
-                                type="button"
-                                onClick={() => toggleAgent(agent.id)}
-                                className="px-3 py-1 rounded text-[11px] bg-surface hover:bg-surface-hover text-zinc-200 border border-hairline transition font-medium cursor-pointer"
-                              >
-                                Uninstall
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => toggleAgent(agent.id)}
-                                className="px-3 py-1 rounded text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition cursor-pointer shadow-sm"
-                              >
-                                Install
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-
-                  {/* Bottom Controls (Checked in IntelliJ screenshot) */}
-                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs border-t border-hairline">
-                    <label className="flex items-center gap-2 cursor-pointer text-zinc-200">
-                      <input
-                        type="checkbox"
-                        checked={passCustomMcp}
-                        onChange={(e) => setPassCustomMcp(e.target.checked)}
-                        className="rounded border-zinc-700 bg-surface text-purple-500 focus:ring-0"
-                      />
-                      <span>Pass custom MCP servers</span>
-                    </label>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-zinc-400">Pass IntelliJ MCP server</span>
-                      <select
-                        value={mcpMode}
-                        onChange={(e) => setMcpMode(e.target.value)}
-                        className="bg-surface border border-hairline rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-purple-500/60"
-                      >
-                        <option value="On demand">On demand</option>
-                        <option value="Always">Always</option>
-                        <option value="Disabled">Disabled</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── SECTION: PROVIDERS & API KEYS ────────────────────────────── */}
               {selectedSection === "providers" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
@@ -901,84 +625,6 @@ export function SettingsModal({
                 </div>
               )}
 
-              {/* ── SECTION: MODEL CONTEXT PROTOCOL (MCP) ─────────────────────── */}
-              {selectedSection === "mcp" && (
-                <div className="space-y-4 max-w-2xl">
-                  <div>
-                    <h3 className="text-sm font-semibold text-zinc-100">
-                      Model Context Protocol (MCP) Servers
-                    </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Standardized bridges providing AI agents secure access to local tools, databases, and filesystem.
-                    </p>
-                  </div>
-
-                  <div className="border border-hairline rounded-panel bg-surface/50 overflow-hidden">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-hairline bg-workbench/60 text-zinc-400">
-                          <th className="p-2.5 font-medium">Server Name</th>
-                          <th className="p-2.5 font-medium">Transport</th>
-                          <th className="p-2.5 font-medium">Command / Spec</th>
-                          <th className="p-2.5 font-medium text-right">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-hairline">
-                        <tr>
-                          <td className="p-2.5 font-semibold text-zinc-100">Filesystem</td>
-                          <td className="p-2.5 text-zinc-400">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
-                            npx @modelcontextprotocol/server-filesystem
-                          </td>
-                          <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                              Connected
-                            </span>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold text-zinc-100">Git Engine</td>
-                          <td className="p-2.5 text-zinc-400">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
-                            npx @modelcontextprotocol/server-git
-                          </td>
-                          <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                              Connected
-                            </span>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold text-zinc-100">Web Fetch</td>
-                          <td className="p-2.5 text-zinc-400">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
-                            npx @modelcontextprotocol/server-fetch
-                          </td>
-                          <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-purple-950/50 text-purple-300 border border-purple-800/40">
-                              Active
-                            </span>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold text-zinc-100">Memory Graph</td>
-                          <td className="p-2.5 text-zinc-400">stdio</td>
-                          <td className="p-2.5 font-mono text-[11px] text-zinc-400">
-                            npx @modelcontextprotocol/server-memory
-                          </td>
-                          <td className="p-2.5 text-right">
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-zinc-800/80 text-zinc-400 border border-hairline">
-                              Idle
-                            </span>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* ── SECTION: APPEARANCE & THEMES ─────────────────────────────── */}
               {selectedSection === "appearance" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
@@ -1188,15 +834,6 @@ export function SettingsModal({
                       />
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-hairline pt-3">
-                      <span className="text-zinc-200">Format On Save</span>
-                      <input
-                        type="checkbox"
-                        checked={formatOnSave}
-                        onChange={(e) => setFormatOnSave(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
-                      />
-                    </div>
 
                     <div className="flex items-center justify-between border-t border-hairline pt-3">
                       <span className="text-zinc-200">Word Wrap in Editor</span>
@@ -1219,25 +856,12 @@ export function SettingsModal({
                       Integrated Terminal Settings
                     </h3>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Configure shell binary path, terminal font, and selection behaviors.
+                      Text size for the integrated terminal.
                     </p>
                   </div>
 
                   <div className="space-y-3 bg-surface border border-hairline rounded-panel p-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Shell Path
-                      </label>
-                      <input
-                        type="text"
-                        value={shellPath}
-                        onChange={(e) => setShellPath(e.target.value)}
-                        placeholder="/bin/zsh"
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between border-t border-hairline pt-3">
+                    <div className="flex items-center justify-between">
                       <span className="text-zinc-200">Terminal Font Size</span>
                       <select
                         value={terminalFontSize}
@@ -1245,140 +869,46 @@ export function SettingsModal({
                         className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={12}>12px</option>
-                        <option value={13}>13px (Default)</option>
+                        <option value={13}>13px</option>
                         <option value={14}>14px</option>
                         <option value={15}>15px</option>
+                        <option value={16}>16px</option>
                       </select>
                     </div>
-
-                    <div className="flex items-center justify-between border-t border-hairline pt-3">
-                      <span className="text-zinc-200">Copy On Select</span>
-                      <input
-                        type="checkbox"
-                        checked={copyOnSelect}
-                        onChange={(e) => setCopyOnSelect(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
-                      />
-                    </div>
                   </div>
                 </div>
               )}
 
-              {/* ── SECTION: GIT & VERSION CONTROL ───────────────────────────── */}
-              {selectedSection === "git" && (
+              {selectedSection === "marketplace" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
-                    <h3 className="text-sm font-semibold text-zinc-100">
-                      Version Control & Git
-                    </h3>
+                    <h3 className="text-sm font-semibold text-zinc-100">Marketplace</h3>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Git binary configuration and workspace synchronization options.
+                      Skills, MCP servers and tooling the agent can use.
                     </p>
                   </div>
 
-                  <div className="space-y-3 bg-surface border border-hairline rounded-panel p-4">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Git Executable Path
-                      </label>
-                      <input
-                        type="text"
-                        value={gitExecutablePath}
-                        onChange={(e) => setGitExecutablePath(e.target.value)}
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Default Branch Name
-                      </label>
-                      <input
-                        type="text"
-                        value={gitDefaultBranch}
-                        onChange={(e) => setGitDefaultBranch(e.target.value)}
-                        className="w-full rounded-[8px] bg-workbench/80 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono focus:border-purple-500/60 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── SECTION: PLUGINS ─────────────────────────────────────────── */}
-              {selectedSection === "plugins" && (
-                <div className="space-y-4 max-w-2xl">
-                  <div>
-                    <h3 className="text-sm font-semibold text-zinc-100">
-                      Plugins & Extensions Marketplace
-                    </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Manage installed tools, language servers, and theme packs.
+                  <div className="bg-surface border border-hairline rounded-panel p-4 space-y-3">
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      Plugins, skills and MCP servers are managed in the Marketplace panel, where each
+                      entry shows its source repository, licence, and exactly what an install writes to
+                      disk before you commit to it.
                     </p>
-                  </div>
-
-                  <div className="divide-y divide-hairline border border-hairline rounded-panel bg-surface overflow-hidden">
-                    {[
-                      {
-                        name: "TypeScript and JavaScript Language Features",
-                        author: "ACSA Code",
-                        version: "v1.96.0",
-                        status: "Installed",
-                      },
-                      {
-                        name: "Tailwind CSS IntelliSense",
-                        author: "Tailwind Labs",
-                        version: "v0.12.7",
-                        status: "Installed",
-                      },
-                      {
-                        name: "Python & Pylance Language Server",
-                        author: "Microsoft",
-                        version: "v2024.18.0",
-                        status: "Installed",
-                      },
-                    ].map((p) => (
-                      <div key={p.name} className="p-3 flex items-center justify-between">
-                        <div>
-                          <div className="font-semibold text-xs text-zinc-100">
-                            {p.name}
-                          </div>
-                          <div className="text-[11px] text-zinc-400">
-                            {p.author} • {p.version}
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-surface-active text-zinc-300 font-medium border border-hairline">
-                          {p.status}
-                        </span>
-                      </div>
-                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenMarketplace?.();
+                      }}
+                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition cursor-pointer"
+                    >
+                      Open the Marketplace
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               )}
 
-              {/* Fallback for other category sections */}
-              {![
-                "agents",
-                "providers",
-                "mcp",
-                "appearance",
-                "editor-font",
-                "editor-code-style",
-                "terminal",
-                "git",
-                "plugins",
-              ].includes(selectedSection) && (
-                <div className="py-10 text-center text-zinc-400 space-y-2">
-                  <div className="w-10 h-10 rounded-full bg-surface border border-hairline flex items-center justify-center mx-auto text-zinc-400">
-                    <Settings className="w-5 h-5" />
-                  </div>
-                  <h4 className="font-semibold text-sm text-zinc-200">
-                    {(selectedSection || "General").replace(/-/g, " ").toUpperCase()}
-                  </h4>
-                  <p className="text-xs max-w-sm mx-auto">
-                    Preferences for this section are loaded and active with default IDE settings.
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* ── Dialog Action Footer Bar ──────────────────────────────────── */}

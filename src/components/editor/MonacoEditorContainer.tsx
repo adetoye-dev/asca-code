@@ -70,6 +70,29 @@ export function MonacoEditorContainer({
     settingsRef.current = aiSettings;
   }, [aiSettings]);
 
+  // Apply editor preferences live, so changing them in Settings takes effect
+  // immediately instead of on the next time a file is opened.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const size = aiSettings?.fontSize ?? 13;
+    editor.updateOptions({
+      fontSize: size,
+      lineHeight: aiSettings?.lineHeight ? Math.round(aiSettings.lineHeight * size) : 0,
+      fontLigatures: aiSettings?.enableLigatures ?? true,
+      tabSize: aiSettings?.tabSize ?? 4,
+      insertSpaces: aiSettings?.insertSpaces ?? true,
+      wordWrap: aiSettings?.wordWrap ? "on" : "off",
+    });
+  }, [
+    aiSettings?.fontSize,
+    aiSettings?.lineHeight,
+    aiSettings?.enableLigatures,
+    aiSettings?.tabSize,
+    aiSettings?.insertSpaces,
+    aiSettings?.wordWrap,
+  ]);
+
   useEffect(() => {
     if (monacoRef.current) {
       applyMonacoTheme(monacoRef.current, themeId);
@@ -967,15 +990,20 @@ export function MonacoEditorContainer({
         onChange={(val) => onChange(val || "")}
         onMount={handleEditorDidMount}
         options={{
-          fontSize: 13,
+          // Editor preferences from Settings. These were previously hardcoded
+          // here, which is why the Font and Code Style panes appeared to save
+          // values that changed nothing.
+          fontSize: aiSettings?.fontSize ?? 13,
+          lineHeight: aiSettings?.lineHeight ? Math.round((aiSettings.lineHeight) * (aiSettings?.fontSize ?? 13)) : 0,
+          fontLigatures: aiSettings?.enableLigatures ?? true,
           fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
           lineNumbers: "on",
           renderWhitespace: "selection",
           renderLineHighlight: "all",
           renderLineHighlightOnlyWhenFocus: false,
-          tabSize: 4,
-          insertSpaces: true,
-          wordWrap: "off",
+          tabSize: aiSettings?.tabSize ?? 4,
+          insertSpaces: aiSettings?.insertSpaces ?? true,
+          wordWrap: aiSettings?.wordWrap ? "on" : "off",
           automaticLayout: true,
           scrollBeyondLastLine: false,
           minimap: { enabled: true, maxColumn: 80 },

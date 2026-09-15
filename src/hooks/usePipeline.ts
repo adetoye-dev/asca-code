@@ -165,12 +165,21 @@ export function usePipeline(): UsePipelineReturn {
       model: newSettings?.model || "",
       apiKey: newSettings?.apiKey || "",
       baseUrl: newSettings?.baseUrl || "",
+      // Editor and terminal preferences live alongside the model selection; the
+      // settings dialog writes them through onSave and they are persisted below.
+      fontSize: newSettings?.fontSize,
+      lineHeight: newSettings?.lineHeight,
+      enableLigatures: newSettings?.enableLigatures,
+      tabSize: newSettings?.tabSize,
+      insertSpaces: newSettings?.insertSpaces,
+      wordWrap: newSettings?.wordWrap,
+      terminalFontSize: newSettings?.terminalFontSize,
     };
     setAiSettingsState(hydrateAiSettings(safeSettings));
     // Only the non-secret parts are persisted; credentials live in the app
     // database and are resolved server-side.
-    const { provider, model, baseUrl } = safeSettings;
-    void appStore.setSetting("ai_settings", { provider, model, baseUrl }).catch(() => {});
+    const { apiKey: _apiKey, ...persistable } = safeSettings;
+    void appStore.setSetting("ai_settings", persistable).catch(() => {});
   };
 
   /**
@@ -219,10 +228,18 @@ export function usePipeline(): UsePipelineReturn {
         if (savedAi?.provider) {
           setAiSettingsState((prev) =>
             hydrateAiSettings({
+              ...prev,
               provider: savedAi.provider,
               model: savedAi.model || prev.model,
               apiKey: "",
               baseUrl: savedAi.baseUrl || "",
+              fontSize: savedAi.fontSize ?? prev.fontSize,
+              lineHeight: savedAi.lineHeight ?? prev.lineHeight,
+              enableLigatures: savedAi.enableLigatures ?? prev.enableLigatures,
+              tabSize: savedAi.tabSize ?? prev.tabSize,
+              insertSpaces: savedAi.insertSpaces ?? prev.insertSpaces,
+              wordWrap: savedAi.wordWrap ?? prev.wordWrap,
+              terminalFontSize: savedAi.terminalFontSize ?? prev.terminalFontSize,
             })
           );
         }

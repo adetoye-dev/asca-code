@@ -21,6 +21,8 @@ interface BottomPanelProps {
   isOpen: boolean;
   onClose: () => void;
   activeProjectCwd: string;
+  /** Integrated terminal font size, from Settings. */
+  terminalFontSize?: number;
   activityLog: PipelineOutputLine[];
   onClearLog: () => void;
   status: string;
@@ -31,6 +33,7 @@ export function BottomPanel({
   isOpen,
   onClose,
   activeProjectCwd,
+  terminalFontSize,
   activityLog,
   onClearLog,
   status,
@@ -217,6 +220,7 @@ export function BottomPanel({
             ref={terminalRef}
             cwd={activeProjectCwd}
             isVisible={activeTab === "terminal"}
+            fontSize={terminalFontSize}
           />
         </div>
 

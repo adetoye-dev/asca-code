@@ -22,11 +22,13 @@ export interface XtermTerminalHandle {
 interface XtermTerminalProps {
   cwd?: string;
   isVisible?: boolean;
+  /** From Settings → Terminal. Defaults to 13px, matching that pane. */
+  fontSize?: number;
   onConnectionChange?: (connected: boolean) => void;
 }
 
 export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>(
-  ({ cwd, isVisible = true, onConnectionChange }, ref) => {
+  ({ cwd, isVisible = true, fontSize = 13, onConnectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -177,7 +179,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
           brightWhite: "#ffffff",
         },
         fontFamily: "'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace",
-        fontSize: 12,
+        fontSize,
         lineHeight: 1.25,
         cursorBlink: true,
         cursorStyle: "block",
@@ -284,6 +286,14 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         return () => clearTimeout(timer);
       }
     }, [isVisible, safeFit]);
+
+    // Apply a font-size change from Settings without restarting the shell.
+    useEffect(() => {
+      const term = termRef.current;
+      if (!term) return;
+      term.options.fontSize = fontSize;
+      safeFit();
+    }, [fontSize, safeFit]);
 
     // Respawn shell if project directory changes
     useEffect(() => {

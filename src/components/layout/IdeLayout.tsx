@@ -1517,6 +1517,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onClearLog={clearLog}
             status={status}
             orchestrationResult={orchestrationResult}
+            terminalFontSize={aiSettings?.terminalFontSize ?? 13}
           />
           </Suspense>
         </div>
@@ -1606,6 +1607,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onApplyTheme={setThemeId}
             initialTab={settingsModalTab}
             projectName={activeProject?.name || "Practice"}
+            onOpenMarketplace={() => {
+              setActiveSidebarTab("extensions");
+              setIsSidebarOpen(true);
+            }}
           />
         )}
       </ErrorBoundary>
