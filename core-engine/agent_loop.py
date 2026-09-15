@@ -455,6 +455,25 @@ def _parse_xml_param_value(val_str: str, param_name: str = "") -> Any:
     return s
 
 
+def _normalize_dsml_markup(text: str) -> str:
+    """Rewrite DeepSeek's native DSML tool-call markup into plain XML tags.
+
+    DeepSeek wraps tool calls in a "DSML" marker delimited by FULLWIDTH VERTICAL
+    LINE characters (U+FF5C) rather than ASCII pipes, and writes the inner tags
+    the same way. The invoke regexes look for a plain `<invoke ...>` prefix, so
+    without this rewrite **no DeepSeek tool call was ever parsed**: the agent
+    spent its whole round budget emitting markup and finished having changed
+    nothing, which reads to the user as "it can't even make a tiny change".
+    """
+    if "DSML" not in text:
+        return text
+    normalized = text.replace("\uff5c", "|")
+    # `<||DSML||invoke` / `<||DSML||tool_calls>` -> `<invoke` / `<tool_calls>`
+    normalized = re.sub(r"<\s*\|\|\s*DSML\s*\|\|\s*", "<", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"</\s*\|\|\s*DSML\s*\|\|\s*", "</", normalized, flags=re.IGNORECASE)
+    return normalized
+
+
 def _extract_params_from_xml_body(body: str) -> dict[str, Any]:
     """Extract tool arguments from an XML tool invoke body."""
     params: dict[str, Any] = {}
@@ -475,7 +494,7 @@ def _extract_params_from_xml_body(body: str) -> dict[str, Any]:
 
     # 2. <parameter name="key">value</parameter> or <arg name="key">value</arg>
     param_tag_pattern = re.compile(
-        r"<(?:parameter|arg|argument)\s+name=[\"']?([A-Za-z0-9_]+)[\"']?\s*>([\s\S]*?)(?:</(?:parameter|arg|argument)>|$)",
+        r"<(?:parameter|arg|argument)\s+name=[\"']?([A-Za-z0-9_]+)[\"']?[^>]*>([\s\S]*?)(?:</(?:parameter|arg|argument)>|$)",
         re.IGNORECASE,
     )
     for m in param_tag_pattern.finditer(body):
@@ -556,6 +575,7 @@ def _parse_xml_invoke_blocks(text: str) -> list[tuple[str, dict[str, Any]]]:
 
 def _parse_all_tool_calls(response_text: str, fallback_file: Optional[str] = None) -> list[tuple[str, dict[str, Any]]]:
     """Extract all tool calls from various model output formats (SEARCH/REPLACE, Unified Diffs, JSON codeblocks, XML, ReAct)."""
+    response_text = _normalize_dsml_markup(response_text)
     calls: list[tuple[str, dict[str, Any]]] = []
 
     # 1. Multi-format SEARCH/REPLACE blocks (handles [path], path:, **path**, `path`, File: path, etc.)
