@@ -31,6 +31,23 @@ export interface MarketplaceItem {
   domain: MarketplaceDomain;
   description: string;
   author: string;
+  /**
+   * How much the entry should be trusted, shown as a badge. "built-in" ships
+   * with ACSA, "official" is the upstream publisher/maintainer, "community" is
+   * third-party.
+   */
+  trust: MarketplaceTrust;
+  /** Real, clickable links — a marketplace entry without a source is useless. */
+  repo?: string;
+  homepage?: string;
+  docs?: string;
+  license?: string;
+  version?: string;
+  /** Longer explanation shown in the detail view. */
+  overview?: string;
+  /** What this can do on the machine, shown before install. */
+  permissions?: string[];
+  /** Legacy field kept for display of the raw source string. */
   source: string;
   tags: string[];
   /** SKILL.md body for skills (frontmatter is added on install if absent). */
@@ -40,6 +57,53 @@ export interface MarketplaceItem {
   /** Runtime the item needs. */
   requires?: string;
 }
+
+export type MarketplaceTrust = "built-in" | "official" | "community";
+
+export const TRUST_LABEL: Record<MarketplaceTrust, string> = {
+  "built-in": "Built-in",
+  official: "Official",
+  community: "Community",
+};
+
+/**
+ * Where an install writes, and for MCP servers exactly what will run. Surfaced
+ * before the user commits, because installing a server means executing a
+ * third-party command on this machine.
+ */
+export function installTarget(
+  item: MarketplaceItem,
+  projectRoot: string
+): { path: string; command: string } {
+  const root = (projectRoot || ".").replace(/[\\/]+$/, "");
+  if (item.kind === "skill") {
+    return { path: `${root}/.acsa/skills/${item.id}.md`, command: "" };
+  }
+  const config = item.mcpConfig || { command: "", args: [] };
+  return {
+    path: `${root}/.acsa/mcp.json`,
+    command: [config.command, ...(config.args || [])].join(" "),
+  };
+}
+
+/** Places to find more capabilities, linked from the marketplace. */
+export const ECOSYSTEM_LINKS: Array<{ label: string; url: string; note: string }> = [
+  {
+    label: "MCP server registry",
+    url: "https://github.com/modelcontextprotocol/servers",
+    note: "The official catalogue of Model Context Protocol servers.",
+  },
+  {
+    label: "MCP documentation",
+    url: "https://modelcontextprotocol.io",
+    note: "Protocol spec, SDKs and transport details.",
+  },
+  {
+    label: "Agent Skills (Anthropic)",
+    url: "https://github.com/anthropics/skills",
+    note: "Reference SKILL.md packs you can adapt for this harness.",
+  },
+];
 
 const SKILL_CODE_REVIEW = `# Code Review
 
@@ -133,7 +197,7 @@ Optimise measured hot paths only:
 Never trade correctness for speed.`;
 
 export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
-  // ── Built-in MCP server (offline, guaranteed to work) ────────────────────
+  // ── Built-in (ships with ACSA, works offline) ───────────────────────────
   {
     id: "acsa-workspace",
     name: "ACSA Workspace",
@@ -142,34 +206,44 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description:
       "Built-in read-only workspace tools (list_files, read_file, search_code). Runs offline with zero install.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
+    license: "Same as this project",
     tags: ["workspace", "search", "offline"],
+    overview:
+      "First-party server that exposes the open project to the agent as read-only tools. It needs no runtime, no network access and no credentials, which makes it the safest way to give the agent file access. Installed automatically with the app; remove it only if you do not want the agent reading your files.",
+    permissions: [
+      "Read files inside the currently open project only",
+      "No network access",
+      "No writes, no process execution",
+    ],
     mcpConfig: { command: "python3", args: ["core-engine/mcp_servers/workspace_server.py"] },
     requires: "python3",
   },
-  // ── Reference / official MCP servers ─────────────────────────────────────
+
+  // ── Official MCP servers (modelcontextprotocol) ─────────────────────────
   {
     id: "mcp-filesystem",
-    name: "Filesystem (official MCP)",
+    name: "Filesystem",
     kind: "mcp",
     domain: "tooling",
-    description: "Official MCP server exposing scoped filesystem read/write tools.",
+    description: "Scoped filesystem read/write tools from the official MCP reference set.",
     author: "modelcontextprotocol",
+    trust: "official",
     source: "github.com/modelcontextprotocol/servers",
+    repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+    homepage: "https://modelcontextprotocol.io",
+    docs: "https://github.com/modelcontextprotocol/servers#readme",
+    license: "MIT",
+    version: "latest",
     tags: ["files", "read", "write"],
+    overview:
+      "Gives the agent read/write access to the directories you pass it. The directory list is the security boundary — add only the folders the agent should touch, and prefer running it against the project root rather than your home directory.",
+    permissions: [
+      "Read and write files under the directories listed in the config",
+      "Downloads the package from npm on first use (npx)",
+    ],
     mcpConfig: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."] },
-    requires: "npx",
-  },
-  {
-    id: "mcp-git",
-    name: "Git (official MCP)",
-    kind: "mcp",
-    domain: "coding",
-    description: "Inspect repositories: log, diff, status and blame through MCP.",
-    author: "modelcontextprotocol",
-    source: "github.com/modelcontextprotocol/servers",
-    tags: ["git", "history", "diff"],
-    mcpConfig: { command: "npx", args: ["-y", "@modelcontextprotocol/server-git", "."] },
     requires: "npx",
   },
   {
@@ -177,10 +251,21 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     name: "Memory (knowledge graph)",
     kind: "mcp",
     domain: "memory",
-    description: "Persistent knowledge-graph memory across sessions for long-running work.",
+    description: "Persistent knowledge-graph memory the agent can carry across sessions.",
     author: "modelcontextprotocol",
+    trust: "official",
     source: "github.com/modelcontextprotocol/servers",
+    repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
+    homepage: "https://modelcontextprotocol.io",
+    license: "MIT",
+    version: "latest",
     tags: ["memory", "graph", "context"],
+    overview:
+      "Stores entities, relations and observations in a local JSON knowledge graph so context survives between sessions. Useful for long-running projects where decisions and their rationale should not be re-derived every time.",
+    permissions: [
+      "Reads and writes a local memory file on disk",
+      "Downloads the package from npm on first use (npx)",
+    ],
     mcpConfig: { command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] },
     requires: "npx",
   },
@@ -189,28 +274,21 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     name: "Sequential Thinking",
     kind: "mcp",
     domain: "tooling",
-    description: "Structured step-by-step reasoning scaffold for hard multi-step problems.",
+    description: "Structured step-by-step reasoning scaffold for hard, multi-step problems.",
     author: "modelcontextprotocol",
+    trust: "official",
     source: "github.com/modelcontextprotocol/servers",
+    repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
+    homepage: "https://modelcontextprotocol.io",
+    license: "MIT",
+    version: "latest",
     tags: ["reasoning", "planning"],
+    overview:
+      "Exposes a single tool that lets the model externalise a plan as numbered, revisable thoughts instead of holding it all in one pass. Cheap and side-effect free, and it noticeably helps small local models stay on task.",
+    permissions: ["No filesystem access", "No network access"],
     mcpConfig: {
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-    },
-    requires: "npx",
-  },
-  {
-    id: "mcp-sqlite",
-    name: "SQLite",
-    kind: "mcp",
-    domain: "tooling",
-    description: "Query and inspect SQLite databases directly from the agent.",
-    author: "modelcontextprotocol",
-    source: "github.com/modelcontextprotocol/servers",
-    tags: ["database", "sql"],
-    mcpConfig: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-sqlite", "--db", "data.db"],
     },
     requires: "npx",
   },
@@ -219,31 +297,122 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     name: "Fetch (web)",
     kind: "mcp",
     domain: "research",
-    description: "Fetch and convert web pages to markdown for grounded research.",
+    description: "Fetch a URL and convert the page to markdown for grounded research.",
     author: "modelcontextprotocol",
+    trust: "official",
     source: "github.com/modelcontextprotocol/servers",
+    repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+    homepage: "https://modelcontextprotocol.io",
+    license: "MIT",
+    version: "latest",
     tags: ["web", "research"],
+    overview:
+      "Lets the agent read a specific page you point it at, with the HTML converted to markdown so the content fits in context. It only fetches URLs the agent asks for — it is not a general crawler.",
+    permissions: [
+      "Makes outbound HTTP requests to URLs the agent chooses",
+      "Downloads the package from PyPI on first use (uvx)",
+    ],
     mcpConfig: { command: "uvx", args: ["mcp-server-fetch"] },
     requires: "uvx",
   },
   {
-    id: "mcp-github",
-    name: "GitHub",
+    id: "mcp-everything",
+    name: "Everything (reference server)",
     kind: "mcp",
-    domain: "coding",
-    description: "Issues, pull requests and repository data via the GitHub API.",
+    domain: "tooling",
+    description: "Reference server exercising prompts, resources and tools — useful for testing.",
     author: "modelcontextprotocol",
+    trust: "official",
     source: "github.com/modelcontextprotocol/servers",
-    tags: ["github", "issues", "prs"],
-    mcpConfig: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-github"],
-      env: { GITHUB_PERSONAL_ACCESS_TOKEN: "" },
-    },
-    requires: "npx + token",
+    repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
+    homepage: "https://modelcontextprotocol.io",
+    license: "MIT",
+    version: "latest",
+    tags: ["reference", "testing"],
+    overview:
+      "A deliberately broad reference server used to exercise every part of the protocol. Handy for verifying that this client can list tools and call them; not something you would keep enabled for real work.",
+    permissions: [
+      "Adds many demo tools and prompts to the model's context",
+      "Downloads the package from npm on first use (npx)",
+    ],
+    mcpConfig: { command: "npx", args: ["-y", "@modelcontextprotocol/server-everything"] },
+    requires: "npx",
   },
 
-  // ── Skills ───────────────────────────────────────────────────────────────
+  // ── Third-party servers (well-known maintainers) ────────────────────────
+  {
+    id: "mcp-playwright",
+    name: "Playwright (browser automation)",
+    kind: "mcp",
+    domain: "tooling",
+    description: "Drive a real browser: navigate, click, fill forms and read the page.",
+    author: "Microsoft",
+    trust: "community",
+    source: "github.com/microsoft/playwright-mcp",
+    repo: "https://github.com/microsoft/playwright-mcp",
+    docs: "https://github.com/microsoft/playwright-mcp#readme",
+    license: "Apache-2.0",
+    version: "latest",
+    tags: ["browser", "e2e", "automation"],
+    overview:
+      "Microsoft's Playwright MCP server gives the agent a scriptable browser, which is the reliable way to verify UI changes end to end instead of guessing from the source. It reuses your installed Playwright browsers.",
+    permissions: [
+      "Launches a local browser and can interact with any page it opens",
+      "Makes network requests as part of browsing",
+      "Downloads the package from npm on first use (npx)",
+    ],
+    mcpConfig: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+    requires: "npx",
+  },
+  {
+    id: "mcp-context7",
+    name: "Context7 (up-to-date library docs)",
+    kind: "mcp",
+    domain: "research",
+    description: "Pulls current, version-specific documentation for libraries and frameworks.",
+    author: "Upstash",
+    trust: "community",
+    source: "github.com/upstash/context7",
+    repo: "https://github.com/upstash/context7",
+    homepage: "https://context7.com",
+    license: "MIT",
+    version: "latest",
+    tags: ["docs", "research", "libraries"],
+    overview:
+      "Stops the model inventing APIs from stale training data by fetching versioned documentation for the libraries you actually use. One of the highest-value servers for coding work.",
+    permissions: [
+      "Makes outbound HTTP requests to context7.com",
+      "Downloads the package from npm on first use (npx)",
+    ],
+    mcpConfig: { command: "npx", args: ["-y", "@upstash/context7-mcp"] },
+    requires: "npx",
+  },
+  {
+    id: "mcp-chrome-devtools",
+    name: "Chrome DevTools",
+    kind: "mcp",
+    domain: "testing",
+    description: "Inspect a Chrome page: DOM, console output and network activity.",
+    author: "Google",
+    trust: "community",
+    source: "github.com/ChromeDevTools/chrome-devtools-mcp",
+    repo: "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+    docs: "https://github.com/ChromeDevTools/chrome-devtools-mcp#readme",
+    license: "Apache-2.0",
+    version: "latest",
+    tags: ["browser", "devtools", "debug"],
+    overview:
+      "Exposes Chrome DevTools capabilities over MCP so the agent can read console errors, network requests and the rendered DOM — the fastest way to diagnose a front-end bug that only shows up at runtime.",
+    permissions: [
+      "Launches/attaches to Chrome and reads page internals",
+      "Makes network requests as part of browsing",
+      "Downloads the package from npm on first use (npx)",
+    ],
+    mcpConfig: { command: "npx", args: ["-y", "chrome-devtools-mcp@latest"] },
+    requires: "npx",
+  },
+
+  // ── First-party skills (SKILL.md playbooks run by the engine) ───────────
   {
     id: "code-review",
     name: "Code Review",
@@ -251,8 +420,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "coding",
     description: "Senior-engineer review focusing on correctness, safety and maintainability.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["review", "quality"],
+    overview:
+      "A review playbook the engine can load when it is asked to check code. It sets the order of concerns (correctness before style), requires a concrete fix per finding, and explicitly forbids rewriting whole files when a focused edit will do.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_CODE_REVIEW,
   },
   {
@@ -262,8 +435,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "security",
     description: "Find exploitable issues: injection, unsafe primitives, secrets, auth gaps.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["security", "audit"],
+    overview:
+      "A security-focused pass that looks for injection, unsafe deserialisation, hard-coded secrets, missing authorisation checks and unsafe file or network handling, with the exploit path spelled out for each finding.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_SECURITY_AUDIT,
   },
   {
@@ -273,8 +450,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "design",
     description: "Hierarchy, consistency, accessibility and state coverage for interfaces.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["design", "ux", "a11y"],
+    overview:
+      "Reviews UI work for visual hierarchy, spacing and alignment consistency, contrast and accessibility, and — most often forgotten — loading, empty and error states.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_DESIGN_REVIEW,
   },
   {
@@ -284,8 +465,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "coding",
     description: "Behaviour-preserving refactors planned as small verifiable steps.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["refactor", "planning"],
+    overview:
+      "Turns a large refactor into a sequence of small, behaviour-preserving steps, each with its own verification, so a failure is always attributable to one change.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_REFACTOR_PLAN,
   },
   {
@@ -295,8 +480,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "testing",
     description: "Regression-catching tests with boundaries and error paths covered.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["tests", "quality"],
+    overview:
+      "Writes tests that would actually catch the bug being fixed: boundary values, empty and malformed input, and the error path — rather than assertions that only restate the implementation.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_TEST_WRITER,
   },
   {
@@ -306,8 +495,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "memory",
     description: "Record decisions and rationale in .acsa/memory.md across sessions.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["memory", "decisions"],
+    overview:
+      "Keeps a running record of decisions and their reasons in the project, so later sessions do not relitigate settled choices.",
+    permissions: ["Instructions only — writes only the notes the agent chooses to record"],
     skillContent: SKILL_MEMORY_KEEPER,
   },
   {
@@ -317,8 +510,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "tooling",
     description: "Actionable docs: what it does, minimal example, precise inputs/outputs.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["docs", "readme"],
+    overview:
+      "Writes documentation a reader can act on immediately: what the thing does, the smallest working example, and exact inputs and outputs.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_DOCS_WRITER,
   },
   {
@@ -328,8 +525,12 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     domain: "coding",
     description: "Measure-first optimisation of real hot paths, with before/after numbers.",
     author: "ACSA Code",
+    trust: "built-in",
     source: "built-in",
     tags: ["performance", "profiling"],
+    overview:
+      "Insists on measuring before changing anything, targets the profile rather than intuition, and requires before/after numbers for any claimed improvement.",
+    permissions: ["Instructions only — no tools, files or network access"],
     skillContent: SKILL_PERF_TUNER,
   },
 ];

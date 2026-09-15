@@ -20,10 +20,19 @@ import {
   FlaskConical,
   Plug,
   RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  ShieldCheck,
+  Info,
+  FileText,
 } from "lucide-react";
 import {
+  ECOSYSTEM_LINKS,
   MARKETPLACE_ITEMS,
+  TRUST_LABEL,
   domainLabel,
+  installTarget,
   installMcpServer,
   installSkill,
   listMcpServers,
@@ -57,6 +66,8 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
   const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
   const [installedServers, setInstalledServers] = useState<Record<string, any>>({});
   const [toolsById, setToolsById] = useState<Record<string, string[]>>({});
+  /** Which entry's detail view is open (one at a time keeps the sidebar calm). */
+  const [expandedId, setExpandedId] = useState<string>("");
 
   const refreshInstalled = async () => {
     try {
@@ -247,96 +258,270 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
           const busy = busyId === item.id;
           const DomainIcon = DOMAIN_ICONS[item.domain] || Package;
           const tools = toolsById[item.id];
+          const expanded = expandedId === item.id;
+          const links = [
+            { label: "Repository", url: item.repo },
+            { label: "Docs", url: item.docs },
+            { label: "Website", url: item.homepage },
+          ].filter((l) => Boolean(l.url));
+          const target = installTarget(item, projectRoot);
+          const trustTone =
+            item.trust === "built-in"
+              ? "bg-sky-500/15 text-sky-300"
+              : item.trust === "official"
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-amber-500/15 text-amber-300";
           return (
             <div
               key={item.id}
-              className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-2.5 hover:border-zinc-700 transition-colors"
+              className={`rounded-xl border bg-zinc-900/40 transition-colors ${
+                expanded ? "border-purple-500/40" : "border-zinc-800 hover:border-zinc-700"
+              }`}
             >
-              <div className="flex items-start gap-2">
-                <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
-                  <Icon icon={DomainIcon} className="w-3.5 h-3.5 text-purple-300" />
+              <button
+                type="button"
+                onClick={() => setExpandedId(expanded ? "" : item.id)}
+                className="w-full text-left p-2.5"
+                title={expanded ? "Hide details" : "Show details"}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
+                    <Icon icon={DomainIcon} className="w-3.5 h-3.5 text-purple-300" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-zinc-100 truncate">
+                        {item.name}
+                      </span>
+                      <span
+                        className={`px-1 rounded text-[9px] font-mono uppercase ${
+                          item.kind === "mcp"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "bg-sky-500/15 text-sky-300"
+                        }`}
+                      >
+                        {item.kind === "mcp" ? "mcp" : "skill"}
+                      </span>
+                      <span className={`px-1 rounded text-[9px] font-mono uppercase ${trustTone}`}>
+                        {TRUST_LABEL[item.trust]}
+                      </span>
+                      {installed && (
+                        <span className="px-1 rounded text-[9px] font-mono bg-emerald-500/15 text-emerald-300">
+                          installed
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">
+                      {item.description}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span className="text-[9px] font-mono text-zinc-500">
+                        {domainLabel(item.domain).toLowerCase()} · {item.author}
+                      </span>
+                      {item.license && (
+                        <span className="text-[9px] font-mono text-zinc-600">
+                          {item.license}
+                        </span>
+                      )}
+                      {item.requires && (
+                        <span className="text-[9px] font-mono text-amber-400/80">
+                          needs {item.requires}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <Icon
+                    icon={expanded ? ChevronDown : ChevronRight}
+                    className="w-3.5 h-3.5 text-zinc-500 shrink-0 mt-1"
+                  />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-zinc-100 truncate">
-                      {item.name}
-                    </span>
-                    <span
-                      className={`px-1 rounded text-[9px] font-mono uppercase ${
-                        item.kind === "mcp"
-                          ? "bg-emerald-500/15 text-emerald-300"
-                          : "bg-sky-500/15 text-sky-300"
-                      }`}
-                    >
-                      {item.kind === "mcp" ? "mcp" : "skill"}
-                    </span>
-                    {installed && (
-                      <span className="px-1 rounded text-[9px] font-mono bg-emerald-500/15 text-emerald-300">
-                        installed
+              </button>
+
+              {expanded && (
+                <div className="px-2.5 pb-2.5 space-y-2 border-t border-zinc-800 pt-2">
+                  {item.overview && (
+                    <p className="text-[10px] text-zinc-400 leading-relaxed">{item.overview}</p>
+                  )}
+
+                  {/* Source & credibility */}
+                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                      <Icon icon={ShieldCheck} className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span className="font-mono">
+                        {item.trust === "built-in"
+                          ? "Ships with ACSA Code"
+                          : item.trust === "official"
+                          ? `Published by ${item.author} (upstream maintainer)`
+                          : `Third-party — maintained by ${item.author}`}
                       </span>
+                    </div>
+                    {item.version && (
+                      <div className="text-[9px] font-mono text-zinc-500">
+                        version: {item.version}
+                      </div>
+                    )}
+                    {links.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {links.map((link) => (
+                          <a
+                            key={link.label}
+                            href={link.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-zinc-700 text-[9px] font-mono text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
+                          >
+                            {link.label}
+                            <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[9px] font-mono text-zinc-600">
+                        No external source — bundled with the app.
+                      </div>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">
-                    {item.description}
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <span className="text-[9px] font-mono text-zinc-500">
-                      {domainLabel(item.domain).toLowerCase()} · {item.author}
-                    </span>
-                    {item.requires && (
-                      <span className="text-[9px] font-mono text-amber-400/80">
-                        needs {item.requires}
-                      </span>
+
+                  {/* What the install actually does */}
+                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                      <Icon icon={FileText} className="w-3 h-3 shrink-0" />
+                      <span className="font-mono">What installs</span>
+                    </div>
+                    <div className="text-[9px] font-mono text-zinc-500 break-all">
+                      {target.path}
+                    </div>
+                    {target.command && (
+                      <div className="text-[9px] font-mono text-zinc-400 break-all">
+                        runs: <span className="text-zinc-300">{target.command}</span>
+                      </div>
+                    )}
+                    {item.permissions && item.permissions.length > 0 && (
+                      <ul className="pt-0.5 space-y-0.5">
+                        {item.permissions.map((permission) => (
+                          <li
+                            key={permission}
+                            className="flex items-start gap-1 text-[9px] text-zinc-400"
+                          >
+                            <span className="text-zinc-600">•</span>
+                            <span className="leading-snug">{permission}</span>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
-                  {tools && tools.length > 0 && (
-                    <div className="mt-1 text-[9px] font-mono text-emerald-300/90 truncate">
-                      tools: {tools.slice(0, 4).join(", ")}
-                      {tools.length > 4 ? "…" : ""}
+
+                  {/* Skill body preview */}
+                  {item.kind === "skill" && item.skillContent && (
+                    <details className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
+                      <summary className="text-[10px] text-zinc-400 cursor-pointer font-mono">
+                        Preview SKILL.md
+                      </summary>
+                      <pre className="mt-1.5 max-h-52 overflow-auto text-[9px] leading-snug text-zinc-400 whitespace-pre-wrap font-mono">
+                        {item.skillContent}
+                      </pre>
+                    </details>
+                  )}
+
+                  {/* MCP tools */}
+                  {item.kind === "mcp" && (
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1">
+                      <div className="text-[10px] text-zinc-400 font-mono">
+                        {tools && tools.length > 0
+                          ? `Tools exposed (${tools.length})`
+                          : "Tool list"}
+                      </div>
+                      {tools && tools.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {tools.map((tool) => (
+                            <span
+                              key={tool}
+                              className="px-1 py-0.5 rounded bg-zinc-800/70 border border-zinc-700 text-[9px] font-mono text-emerald-300"
+                            >
+                              {tool}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-[9px] text-zinc-500 leading-snug">
+                          {installed
+                            ? "Run “Test” to start the server and list its tools."
+                            : "Install, then Test to start the server and list its tools."}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              </div>
 
-              <div className="flex items-center gap-1.5 mt-2">
-                {!installed ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleInstall(item)}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
-                  >
-                    <Icon icon={Download} className="w-3 h-3" />
-                    <span>{busy ? "Installing…" : "Install"}</span>
-                  </button>
-                ) : (
-                  <>
-                    {item.kind === "mcp" && (
+                  <div className="flex items-center gap-1.5">
+                    {!installed ? (
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => handleTest(item)}
-                        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
+                        onClick={() => handleInstall(item)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
                       >
-                        <Icon icon={Plug} className="w-3 h-3" />
-                        <span>{busy ? "Testing…" : "Test"}</span>
+                        <Icon icon={Download} className="w-3 h-3" />
+                        <span>{busy ? "Installing…" : "Install"}</span>
                       </button>
+                    ) : (
+                      <>
+                        {item.kind === "mcp" && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleTest(item)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
+                          >
+                            <Icon icon={Plug} className="w-3 h-3" />
+                            <span>{busy ? "Testing…" : "Test"}</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleUninstall(item)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800/60 hover:bg-red-900/40 border border-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
+                        >
+                          <Icon icon={Trash2} className="w-3 h-3" />
+                          <span>Remove</span>
+                        </button>
+                      </>
                     )}
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => handleUninstall(item)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800/60 hover:bg-red-900/40 border border-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
-                    >
-                      <Icon icon={Trash2} className="w-3 h-3" />
-                      <span>Remove</span>
-                    </button>
-                  </>
-                )}
-              </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
+
+        {/* Where to find more — real, external sources */}
+        <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/30 p-2.5 space-y-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+            <Icon icon={Info} className="w-3 h-3 shrink-0" />
+            Find more capabilities
+          </div>
+          {ECOSYSTEM_LINKS.map((link) => (
+            <a
+              key={link.url}
+              href={link.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="block group"
+            >
+              <div className="flex items-center gap-1 text-[10px] text-zinc-300 group-hover:text-white">
+                <span className="font-medium">{link.label}</span>
+                <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
+              </div>
+              <div className="text-[9px] text-zinc-500 leading-snug">{link.note}</div>
+            </a>
+          ))}
+          <div className="text-[9px] text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
+            This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
+            servers (a command plus arguments). Remote/HTTP servers are not supported yet, and
+            skills are plain <span className="font-mono text-zinc-400">SKILL.md</span> files you
+            can also add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
+          </div>
+        </div>
       </div>
     </div>
   );
