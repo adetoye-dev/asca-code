@@ -7,7 +7,7 @@ that only the maintainer can make).
 ## What works today
 
 - `cd .tauri && ../node_modules/.bin/tauri build --bundles app` produces
-  `Autonomous IDE.app` and it launches.
+  `ACSA Code.app` and it launches.
 - The Python engine ships inside the bundle and is found at runtime:
   `Contents/Resources/core-engine`, resolved via `app.path().resource_dir()`.
 - `scripts/generate_placeholder_icon.py` regenerates the placeholder icons if
@@ -19,12 +19,15 @@ Verify a build before shipping:
 scripts/build_engine_sidecar.sh
 cd .tauri
 ../node_modules/.bin/tauri build --bundles app
-ls "target/release/bundle/macos/Autonomous IDE.app/Contents/MacOS/acsa-engine"
-"target/release/bundle/macos/Autonomous IDE.app/Contents/MacOS/autonomous-ide" &
-# expect: [IDE] Autonomous IDE started. Engine dir: ".../Contents/Resources/core-engine"
+ls "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-engine"
+"target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-code" &
+# expect: [ACSA Code] started. Engine dir: ".../Contents/Resources/core-engine"
 ```
 
 ## 1. Replace the placeholder icon — **[blocked: needs brand art]**
+
+_Not a licensing issue: `LICENSE` and `THIRD-PARTY-NOTICES.md` are generated and
+shipped inside the bundle. The icon below is purely cosmetic._
 
 `tauri icon` produced the required set, but the artwork is a generic placeholder.
 
@@ -59,8 +62,8 @@ Unsigned builds are quarantined by Gatekeeper on other people's Macs.
 3. Notarise and staple:
 
    ```bash
-   xcrun notarytool submit "Autonomous IDE.dmg" --keychain-profile <profile> --wait
-   xcrun stapler staple "Autonomous IDE.app"
+   xcrun notarytool submit "ACSA Code.dmg" --keychain-profile <profile> --wait
+   xcrun stapler staple "ACSA Code.app"
    ```
 
    Tauri can do this in CI via `APPLE_CERTIFICATE`, `APPLE_ID`,
@@ -114,7 +117,7 @@ tampered manifest is rejected — never publish one without the `.sig`.
   "notes": "What changed",
   "pub_date": "2026-01-01T00:00:00Z",
   "platforms": {
-    "darwin-aarch64": { "signature": "<.sig contents>", "url": "https://<host>/Autonomous-IDE_0.2.0_aarch64.app.tar.gz" }
+    "darwin-aarch64": { "signature": "<.sig contents>", "url": "https://<host>/ACSA-Code_0.2.0_aarch64.app.tar.gz" }
   }
 }
 ```
@@ -144,7 +147,7 @@ if (update) {
 ## Release checklist
 
 1. Bump `version` in `.tauri/tauri.conf.json` (and `package.json`).
-2. `npm run verify` — typecheck plus the Python suite.
+2. `npm run verify` — typecheck plus the Python suite. `npm run notices:check` runs in CI and fails if a dependency change left the notices stale.
 3. `tauri build` with the signing key set.
 4. Launch the `.app` and confirm the engine resolves from `Contents/Resources`.
 5. Notarise and staple, upload the artifact + `.sig`, publish `latest.json`.

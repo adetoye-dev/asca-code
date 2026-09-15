@@ -89,10 +89,10 @@ jobs:
       - name: Confirm the bundle resolves its engine
         run: |
           set -euo pipefail
-          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           test -x "$APP/Contents/MacOS/acsa-engine"
           test -f "$APP/Contents/Resources/core-engine/manager.py"
-          "$APP/Contents/MacOS/autonomous-ide" > /tmp/launch.log 2>&1 &
+          "$APP/Contents/MacOS/acsa-code" > /tmp/launch.log 2>&1 &
           PID=$!
           sleep 12
           kill "$PID" 2>/dev/null || true
@@ -102,7 +102,7 @@ jobs:
         if: env.APPLE_CERTIFICATE != ''
         run: |
           set -euo pipefail
-          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           codesign --verify --deep --strict --verbose=2 "$APP"
           spctl --assess --type execute --verbose=2 "$APP"
 

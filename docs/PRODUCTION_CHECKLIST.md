@@ -75,14 +75,14 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Structured logs | **[partial]** | The engine logs JSON lines to stdout; there is no rotation, retention, or support bundle. |
 | Telemetry | **[done]** | None. Usage metrics are local (`usage_events`) and never leave the machine. |
 | Dependency updates | **[open]** | No Dependabot or scheduled audit. `npm audit` is not wired into CI. |
-| Licence and third-party notices | **[open]** | No `LICENSE` file and no notices bundle, which is a licensing problem for redistribution. |
+| Licence and third-party notices | **[done]** | MIT `LICENSE`; `THIRD-PARTY-NOTICES.md` generated from the runtime tree (`npm run notices`), embed­ding the SIL OFL text the bundled fonts require. Both ship **inside** the app bundle, and CI fails if the notices go stale or if either file is missing from a build. |
 
 ## Suggested order
 
-1. **Licence + notices** — the remaining hard blocker; required before distributing.
-2. **An Apple Developer certificate** — so `release.yml` produces a signed, notarised build rather than an unsigned one.
-3. **Secret redaction in logs**, then **crash reporting**, so support is possible.
-4. **Auto-update**, once builds are signed and there is a release host.
-5. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-6. **Backup/restore** and **OS keychain** for credentials.
-7. **Accessibility audit**.
+1. **An Apple Developer certificate** — so `release.yml` produces a signed, notarised build rather than an unsigned one.
+2. **Secret redaction in logs**, then **crash reporting**, so support is possible.
+3. **Auto-update**, once builds are signed and there is a release host.
+4. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
+5. **Backup/restore** and **OS keychain** for credentials.
+6. **Accessibility audit**.
+7. **Real brand artwork** — the app icon is still a generated placeholder.

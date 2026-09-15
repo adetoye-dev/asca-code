@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri-v2-schema/main/tauri.conf.schema.json",
-  "productName": "Autonomous IDE",
+  "productName": "ACSA Code",
   "version": "0.1.0",
-  "identifier": "com.autonomous-ide.app",
+  "identifier": "com.acsacode.app",
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Autonomous IDE \u2014 Local-First Code Generation",
+        "title": "ACSA Code",
         "label": "main",
         "width": 1440,
         "height": 900,
@@ -38,7 +38,9 @@
     "createUpdaterArtifacts": false,
     "resources": {
       "../core-engine": "core-engine",
-      "../scripts": "scripts"
+      "../scripts": "scripts",
+      "../LICENSE": "LICENSE",
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "icon": [
       "icons/icon.png"

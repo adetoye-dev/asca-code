@@ -12,7 +12,9 @@
     "test:verbose": "python3 -m unittest discover -s tests -t . -v",
     "test:e2e": "python3 tests/e2e/run_e2e.py",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "notices": "node scripts/generate_third_party_notices.mjs",
+    "notices:check": "node scripts/generate_third_party_notices.mjs --check"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
@@ -45,5 +47,13 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
-  }
+  },
+  "description": "ACSA Code \u2014 a local-first AI engineering workbench: autonomous coding with deterministic verification.",
+  "license": "MIT",
+  "author": "Adetoye Adewoye",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adetoye-dev/asca-code.git"
+  },
+  "homepage": "https://github.com/adetoye-dev/asca-code#readme"
 }

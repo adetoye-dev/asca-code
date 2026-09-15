@@ -33,6 +33,11 @@ jobs:
       - name: Verify
         run: npm run verify
 
+      # A dependency bump that forgets to regenerate the notices would ship
+      # binaries with missing attributions.
+      - name: Third-party notices are current
+        run: npm run notices:check
+
       - name: Production build
         run: npm run build
 
@@ -101,10 +106,14 @@ jobs:
       - name: The bundle contains the engine and starts
         run: |
           set -euo pipefail
-          APP=".tauri/target/release/bundle/macos/Autonomous IDE.app"
+          APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           test -f "$APP/Contents/Resources/core-engine/manager.py"
           test -x "$APP/Contents/MacOS/acsa-engine"
-          "$APP/Contents/MacOS/autonomous-ide" > /tmp/launch.log 2>&1 &
+          # MIT needs the notice to accompany the binary, and OFL needs the font
+          # licence to travel with the font. Both live inside the bundle.
+          test -f "$APP/Contents/Resources/LICENSE"
+          grep -q "SIL OPEN FONT LICENSE" "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"
+          "$APP/Contents/MacOS/acsa-code" > /tmp/launch.log 2>&1 &
           PID=$!
           sleep 12
           kill "$PID" 2>/dev/null || true
@@ -114,7 +123,7 @@ jobs:
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Autonomous-IDE-macos-app
+          name: ACSA-Code-macos-app
           path: .tauri/target/release/bundle/macos/*.app
           if-no-files-found: error
           retention-days: 14

@@ -1,6 +1,6 @@
 //! main.rs — Tauri Native Desktop Entry Point
 //!
-//! Launches the Autonomous IDE desktop application, exposing two Tauri commands
+//! Launches the ACSA Code desktop application, exposing two Tauri commands
 //! to the frontend:
 //!
 //! 1. `run_generation_pipeline` — Spawns the Python orchestrator (manager.py) as
@@ -365,7 +365,7 @@ fn create_project_template(
             );
             let _ = std::fs::write(
                 project_dir.join("README.md"),
-                format!("# {}\n\nFastAPI service created with Autonomous IDE.\n", clean_name),
+                format!("# {}\n\nFastAPI service created with ACSA Code.\n", clean_name),
             );
         }
         "express" => {
@@ -385,7 +385,7 @@ fn create_project_template(
             );
             let _ = std::fs::write(
                 project_dir.join("README.md"),
-                format!("# {}\n\nExpress service created with Autonomous IDE.\n", clean_name),
+                format!("# {}\n\nExpress service created with ACSA Code.\n", clean_name),
             );
         }
         "typescript" => {
@@ -411,7 +411,7 @@ fn create_project_template(
             );
             let _ = std::fs::write(
                 project_dir.join("README.md"),
-                format!("# {}\n\nTypeScript project created with Autonomous IDE.\n", clean_name),
+                format!("# {}\n\nTypeScript project created with ACSA Code.\n", clean_name),
             );
         }
         _ => {
@@ -424,7 +424,7 @@ fn create_project_template(
             );
             let _ = std::fs::write(
                 project_dir.join("README.md"),
-                format!("# {}\n\nAutonomous IDE Project.\n", clean_name),
+                format!("# {}\n\nACSA Code Project.\n", clean_name),
             );
         }
     }
@@ -823,11 +823,11 @@ fn main() {
                 window.open_devtools();
             }
             println!(
-                "[IDE] Autonomous IDE started. Engine dir: {:?}",
+                "[ACSA Code] started. Engine dir: {:?}",
                 resolve_engine_dir(app.path().resource_dir().ok().as_deref())
             );
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("Failed to launch Autonomous IDE");
+        .expect("Failed to launch ACSA Code");
 }
