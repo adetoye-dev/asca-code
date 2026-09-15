@@ -206,8 +206,6 @@ export const NON_CODE_OR_UTILITY_TERMS = [
   "midjourney",
 ];
 
-export const NON_CODE_MODALITIES = NON_CODE_OR_UTILITY_TERMS;
-
 export function isCodingChatModel(id: string): boolean {
   if (!id || typeof id !== "string") return false;
   const l = id.toLowerCase().trim();
@@ -504,14 +502,6 @@ export function scoreLocalModel(modelName: string): number {
   return score;
 }
 
-export const LOCAL_WORKER_PREFERENCE = [
-  "qwen2.5-coder",
-  "deepseek-coder",
-  "codestral",
-  "llama",
-  "mistral",
-];
-
 export function autoSelectBestLocalWorker(installedModels: string[]): string | null {
   if (!installedModels || installedModels.length === 0) return null;
   const clean = installedModels.filter(Boolean);
@@ -758,60 +748,6 @@ export function resolveInitialSelectedModel(includeLocal: boolean = false): Conf
 
   // 4. Fallback to first available model in list
   return list[0] || null;
-}
-
-export interface ModelDownloadState {
-  modelName: string;
-  progressPercentage: number;
-  downloadedBytes: number;
-  totalBytes: number;
-  status: "downloading" | "paused" | "interrupted" | "completed";
-}
-
-const DOWNLOAD_STATE_KEY = "acsa_code_model_downloads_v1";
-
-export function saveModelDownloadState(state: ModelDownloadState): void {
-  try {
-    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY) || "{}";
-    const states = JSON.parse(raw);
-    states[state.modelName] = state;
-    localStorage.setItem(DOWNLOAD_STATE_KEY, JSON.stringify(states));
-  } catch {}
-}
-
-export function getModelDownloadState(modelName: string): ModelDownloadState | null {
-  try {
-    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY);
-    if (!raw) return null;
-    const states = JSON.parse(raw);
-    return states[modelName] || null;
-  } catch {
-    return null;
-  }
-}
-
-export function clearModelDownloadState(modelName: string): void {
-  try {
-    const raw = localStorage.getItem(DOWNLOAD_STATE_KEY);
-    if (!raw) return;
-    const states = JSON.parse(raw);
-    delete states[modelName];
-    localStorage.setItem(DOWNLOAD_STATE_KEY, JSON.stringify(states));
-  } catch {}
-}
-
-import { ModelCapability } from "../types/workbench";
-
-export function routeTaskToBestModel(
-  taskType: ModelCapability,
-  providers: Record<AIProviderId, AIProviderConfig>
-): AIProviderConfig | null {
-  for (const p of Object.values(providers)) {
-    if (p.isConnected && p.capabilities?.includes(taskType)) {
-      return p;
-    }
-  }
-  return null;
 }
 
 /**

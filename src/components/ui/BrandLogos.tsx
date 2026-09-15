@@ -927,19 +927,3 @@ export function getBrandMetadata(idOrAliasOrUrl: string): AIBrandMetadata | unde
 
   return undefined;
 }
-
-/**
- * Retrieve the React Logo component for an AI brand by ID, alias, or domain.
- */
-export function getBrandLogo(idOrAlias: string): React.ComponentType<LogoProps> {
-  const meta = getBrandMetadata(idOrAlias);
-  return meta ? meta.component : DeterministicLogo;
-}
-
-/**
- * Retrieve the official SVG file URL for an AI brand or model.
- */
-export function getBrandLogoUrl(providerOrModel: string): string {
-  const brandId = resolveBrandId(providerOrModel);
-  return BRAND_LOGO_URLS[brandId] ?? BRAND_LOGO_URLS.deterministic;
-}

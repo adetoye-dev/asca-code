@@ -24,20 +24,6 @@ export interface SecurityStatus {
   }[];
 }
 
-export interface ExtensionManifest {
-  id: string;
-  name: string;
-  displayName: string;
-  publisher: string;
-  version: string;
-  description: string;
-  iconUrl?: string;
-  downloadCount: number;
-  installed: boolean;
-  category: "Theme" | "Language" | "Linter" | "AI" | "Other";
-  themeData?: any;
-}
-
 export type AIProviderId =
   | "ollama"
   | "openai"
