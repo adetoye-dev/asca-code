@@ -253,6 +253,32 @@ const activeWatchTimers = new Map<string, NodeJS.Timeout>();
 let indexWriteQueue: Promise<void> = Promise.resolve();
 let activeProjectGeneration = 0;
 
+/** True when the in-memory index/graph were built for `root`. */
+function indexCacheMatches(root: string): boolean {
+  return !!activeProjectIndex && activeGraphRoot === root;
+}
+
+/**
+ * Index for `root`, preferring the in-memory cache only when it belongs to that
+ * root, otherwise falling back to the on-disk `.acsa/index.json`.
+ *
+ * `activeProjectIndex`/`activeProjectGraph` are single-slot caches bound to
+ * `activeGraphRoot`. Reading them without this check answers for the previously
+ * active project right after a project switch — wrong profile, wrong symbols
+ * and a wrong dependency graph, which also leaks into the AI prompt's
+ * project-intelligence block and so into the agent's plan.
+ */
+function readIndexForRoot(root: string): any {
+  if (indexCacheMatches(root)) return activeProjectIndex;
+  const indexPath = path.join(root, ".acsa", "index.json");
+  if (!fs.existsSync(indexPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 function setupProjectWatcher(projectRoot: string): void {
   if (activeWatchedPath === projectRoot && activeProjectWatcher) return;
 
@@ -1448,7 +1474,7 @@ export function realFilesystemPlugin(): Plugin {
 
             const tree = buildFileTree(resolvedPath);
             // Trigger background indexing if not already indexed
-            if (!activeProjectIndex || activeWatchedPath !== resolvedPath) {
+            if (!indexCacheMatches(resolvedPath)) {
               void syncProjectIndex(resolvedPath);
             }
             res.end(JSON.stringify({ nodes: tree, resolvedPath }));
@@ -1480,15 +1506,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/indexer/symbols" && req.method === "POST") {
             const { projectRoot, query = "", file = "" } = await parseJsonBody(req);
             const resolved = resolveProjectRoot(projectRoot || process.cwd());
-            let indexData = activeProjectIndex;
-            if (!indexData) {
-              const indexPath = path.join(resolved, ".acsa", "index.json");
-              if (fs.existsSync(indexPath)) {
-                try {
-                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-                } catch {}
-              }
-            }
+            let indexData = readIndexForRoot(resolved);
             if (!indexData) {
               indexData = await syncProjectIndex(resolved);
             }
@@ -1515,7 +1533,9 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/indexer/blast-radius" && req.method === "POST") {
             const { projectRoot, filePath } = await parseJsonBody(req);
             const resolvedRoot = resolveProjectRoot(projectRoot || process.cwd());
-            if (!activeProjectIndex) {
+            // The graph is a single-slot cache too: rebuild it when it belongs
+            // to a different project, or we would trace the old project's graph.
+            if (!indexCacheMatches(resolvedRoot)) {
               await syncProjectIndex(resolvedRoot);
             }
 
@@ -1537,15 +1557,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/indexer/status" && req.method === "GET") {
             const projectRoot = parsedUrl.searchParams.get("projectRoot") || "";
             const resolved = resolveProjectRoot(projectRoot || process.cwd());
-            let indexData = activeProjectIndex;
-            if (!indexData) {
-              const indexPath = path.join(resolved, ".acsa", "index.json");
-              if (fs.existsSync(indexPath)) {
-                try {
-                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-                } catch {}
-              }
-            }
+            const indexData = readIndexForRoot(resolved);
             res.end(
               JSON.stringify({
                 indexed: !!indexData,
@@ -1565,15 +1577,7 @@ export function realFilesystemPlugin(): Plugin {
           if (pathname === "/api/indexer/map" && req.method === "GET") {
             const projectRootParam = parsedUrl.searchParams.get("projectRoot") || "";
             const resolved = resolveProjectRoot(projectRootParam || process.cwd());
-            let indexData = activeProjectIndex;
-            if (!indexData) {
-              const indexPath = path.join(resolved, ".acsa", "index.json");
-              if (fs.existsSync(indexPath)) {
-                try {
-                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-                } catch {}
-              }
-            }
+            let indexData = readIndexForRoot(resolved);
             if (!indexData) {
               indexData = await syncProjectIndex(resolved);
             }
@@ -3416,11 +3420,7 @@ export function realFilesystemPlugin(): Plugin {
             if (projectRoot && fs.existsSync(projectRoot)) {
               try {
                 const resolvedRoot = resolveProjectRoot(projectRoot);
-                const indexPath = path.join(resolvedRoot, ".acsa", "index.json");
-                let indexData = activeProjectIndex;
-                if (!indexData && fs.existsSync(indexPath)) {
-                  indexData = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-                }
+                const indexData = readIndexForRoot(resolvedRoot);
                 if (indexData) {
                   const prof = indexData.profile || {};
                   const symNames = Object.keys(indexData.symbols || {}).slice(0, 35);
