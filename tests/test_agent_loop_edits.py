@@ -251,6 +251,51 @@ class ToolCallParsingTests(unittest.TestCase):
         self.assertEqual(calls[0][1].get("path"), "calc.py")
 
 
+class DeepSeekDsmlToolCallTests(unittest.TestCase):
+    """DeepSeek wraps tool calls in DSML markers built from U+FF5C, not ASCII '|'.
+
+    The parser only looked for a plain `<invoke ...>` prefix, so every DeepSeek
+    tool call was silently ignored: the agent burned its whole round budget
+    emitting markup and finished having changed nothing.
+    """
+
+    @staticmethod
+    def _marker(closing: bool = False) -> str:
+        bar = "\uff5c" * 2
+        return ("</" if closing else "<") + bar + "DSML" + bar
+
+    def _raw(self, inner: str) -> str:
+        m, mc = self._marker(), self._marker(closing=True)
+        return f"{m} tool_calls>\n{inner}\n{mc} tool_calls>\n"
+
+    def test_dsml_read_file_invoke_is_parsed(self):
+        m, mc = self._marker(), self._marker(closing=True)
+        raw = self._raw(
+            f'{m} invoke name="read_file">\n'
+            f'{m} parameter name="path" string="true">src/App.tsx{mc} parameter>\n'
+            f"{mc} invoke>"
+        )
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertTrue(calls, "DSML tool call was not parsed")
+        self.assertEqual(calls[0][0], "read_file")
+        self.assertEqual(calls[0][1].get("path"), "src/App.tsx")
+
+    def test_dsml_write_file_keeps_full_content(self):
+        m, mc = self._marker(), self._marker(closing=True)
+        content = "import { useState } from 'react';\n\nexport default App;\n"
+        raw = self._raw(
+            f'{m} invoke name="write_file">\n'
+            f'{m} parameter name="path" string="true">src/App.tsx{mc} parameter>\n'
+            f"{m} parameter name=\"content\" string=\"true\">{content}{mc} parameter>\n"
+            f"{mc} invoke>"
+        )
+        calls = agent_loop._parse_all_tool_calls(raw, fallback_file=None)
+        self.assertTrue(calls, calls)
+        self.assertEqual(calls[0][0], "write_file")
+        self.assertEqual(calls[0][1].get("path"), "src/App.tsx")
+        self.assertIn("export default App;", calls[0][1].get("content", ""))
+
+
 class EscapedNewlineTests(unittest.TestCase):
     """Models sometimes emit a literal backslash-n inside XML parameters."""
 
