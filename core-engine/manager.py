@@ -1362,6 +1362,67 @@ def _apply_diff_hunks(original: str, hunk_lines: list[str]) -> str:
     return "".join(result)
 
 
+# tsc codes that mean "this file cannot be parsed at all". Type errors
+# (TS2xxx/TS7xxx) are expected when a single file is checked without its
+# project graph, so they must never be treated as corruption.
+_TS_SYNTAX_ERROR_CODE = re.compile(r"^TS1\d{3}$")
+
+
+def _gate_findings(report: Optional[GauntletReport]) -> tuple[list[str], list[str]]:
+    """Split a syntax-gate report into (problems, unverified_linters).
+
+    `problems` are error-severity diagnostics, formatted for display.
+    `unverified_linters` names linters that crashed or timed out: they produced
+    no diagnostics, so a caller reading only the diagnostic count would treat
+    "verification never ran" as "verified clean".
+    """
+    if report is None:
+        return [], ["syntax gate"]
+    problems: list[str] = []
+    unverified: list[str] = []
+    for linter_result in report.linter_results:
+        if linter_result.status in (LinterStatus.CRASH, LinterStatus.TIMEOUT):
+            unverified.append(linter_result.linter)
+        for d in linter_result.diagnostics:
+            if d.severity == Severity.ERROR:
+                problems.append(f"{Path(d.file).name}:{d.line}: [{d.severity.value}] {d.message}")
+    return problems, unverified
+
+
+def _source_is_broken(path: Path, project_root: str = "") -> str:
+    """Return a reason string when a written file is definitely invalid, else "".
+
+    Last-resort guard for the fuzzy diff-write path, which applies with
+    strict=False and is therefore never syntax-gated. Deliberately
+    conservative: a false positive would silently revert a legitimate edit,
+    which is worse than letting a rare bad write through.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        try:
+            ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+            return str(exc)
+        return ""
+
+    if suffix in {".ts", ".tsx"}:
+        try:
+            report = run_syntax_gate([str(path)], linters=["tsc"], cwd=project_root or None)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("tsc syntax check failed for %s: %s", path, exc)
+            return ""
+        syntax_errors = [
+            d
+            for linter_result in report.linter_results
+            for d in linter_result.diagnostics
+            if _TS_SYNTAX_ERROR_CODE.match(d.code or "")
+        ]
+        if syntax_errors:
+            first = syntax_errors[0]
+            return f"{first.code} {first.message} (line {first.line})"
+    return ""
+
+
 def _write_patches_to_disk(patches: list[DiffPatch], project_root: str = "") -> list[str]:
     """Write finalized patches to disk using high-fidelity verified content with atomic backup."""
     written: list[str] = []
@@ -1444,31 +1505,31 @@ def _write_patches_to_disk(patches: list[DiffPatch], project_root: str = "") -> 
             continue
 
         # The fallback applier runs with strict=False, so its output was never
-        # syntax-gated. Never leave invalid Python behind: restore the pre-write
-        # backup and keep the correction loop active instead.
+        # syntax-gated. Never leave provably-broken source behind: restore the
+        # pre-write backup and keep the correction loop active instead.
         for result in batch.results:
             result_path = Path(result.file_path).resolve() if getattr(result, "file_path", None) else None
             if result_path is None or result.status not in {"applied", "created"}:
                 continue
-            if result_path.suffix != ".py" or not result_path.exists():
+            if not result_path.exists():
                 continue
-            try:
-                ast.parse(result_path.read_text(encoding="utf-8"))
-            except SyntaxError as exc:
-                bak_path = result_path.with_suffix(result_path.suffix + ".bak")
-                if bak_path.exists():
-                    shutil.copy2(bak_path, result_path)
-                    restored = f"restored from {bak_path.name}"
-                else:
-                    restored = "no backup available"
-                logger.warning(
-                    "Fallback patch produced invalid Python in %s (%s) — %s",
-                    result_path,
-                    exc,
-                    restored,
-                )
-                if str(result_path) in written:
-                    written.remove(str(result_path))
+            defect = _source_is_broken(result_path, project_root)
+            if not defect:
+                continue
+            bak_path = result_path.with_suffix(result_path.suffix + ".bak")
+            if bak_path.exists():
+                shutil.copy2(bak_path, result_path)
+                restored = f"restored from {bak_path.name}"
+            else:
+                restored = "no backup available"
+            logger.warning(
+                "Fallback patch produced invalid source in %s (%s) — %s",
+                result_path,
+                defect,
+                restored,
+            )
+            if str(result_path) in written:
+                written.remove(str(result_path))
 
     return written
 
@@ -2029,8 +2090,21 @@ def evaluate_syntax_gate(
 
             filtered_lr = LinterResult(
                 linter=lr.linter,
-                status=LinterStatus.FAIL if any(d.severity == Severity.ERROR for d in new_diags) else LinterStatus.PASS,
-                exit_code=1 if any(d.severity == Severity.ERROR for d in new_diags) else 0,
+                status=(
+                    # A linter that crashed or timed out produced no diagnostics,
+                    # but that is "could not verify", not "verified clean" — do
+                    # not launder it into PASS.
+                    lr.status
+                    if lr.status in (LinterStatus.CRASH, LinterStatus.TIMEOUT)
+                    else LinterStatus.FAIL
+                    if any(d.severity == Severity.ERROR for d in new_diags)
+                    else LinterStatus.PASS
+                ),
+                exit_code=lr.exit_code
+                if lr.status in (LinterStatus.CRASH, LinterStatus.TIMEOUT)
+                else 1
+                if any(d.severity == Severity.ERROR for d in new_diags)
+                else 0,
                 diagnostics=new_diags,
                 raw_stdout=lr.raw_stdout,
                 raw_stderr=lr.raw_stderr,
@@ -2039,7 +2113,17 @@ def evaluate_syntax_gate(
             )
             filtered_results.append(filtered_lr)
 
-        passed = (new_errors_count == 0)
+        unverified = [
+            lr.linter
+            for lr in filtered_results
+            if lr.status in (LinterStatus.CRASH, LinterStatus.TIMEOUT)
+        ]
+        if unverified:
+            logger.warning(
+                "Syntax gate could not verify staged files — linter(s) failed to run: %s",
+                ", ".join(unverified),
+            )
+        passed = (new_errors_count == 0) and not unverified
         if total_preexisting_count > 0:
             logger.info(
                 "Baseline diffing: %d new error(s), %d new warning(s) (%d pre-existing ignored)",
@@ -2582,25 +2666,23 @@ def orchestrate(
             if (Path(config.project_root) / f).exists()
         ]
 
-        # Errors still present after the self-healing pass. A mutation that
-        # leaves broken syntax on disk must NOT be reported as success.
-        unresolved_syntax: list[str] = []
+        # Problems still present after the self-healing pass. A mutation that
+        # leaves broken (or unverified) syntax on disk must NOT be reported as
+        # success.
+        problems: list[str] = []
+        unverified: list[str] = []
 
         if target_abs_paths:
             report = run_syntax_gate(target_abs_paths, cwd=config.project_root)
-            if report.total_errors > 0:
-                logger.warning("Syntax gate reported %d errors on edited files", report.total_errors)
-                emit_step("Syntax Gate", f"Verification warning: {report.total_errors} error(s) found", "failed")
-                emit_step("Self-Healing Gate", f"Triggering targeted repair for {report.total_errors} syntax issue(s)...", "running")
-
-                diag_messages = []
-                for lr in report.linter_results:
-                    for d in lr.diagnostics:
-                        diag_messages.append(f"- {Path(d.file).name}:{d.line}: [{d.severity}] {d.message}")
+            problems, unverified = _gate_findings(report)
+            if problems:
+                logger.warning("Syntax gate reported %d error(s) on edited files", len(problems))
+                emit_step("Syntax Gate", f"Verification warning: {len(problems)} error(s) found", "failed")
+                emit_step("Self-Healing Gate", f"Triggering targeted repair for {len(problems)} syntax issue(s)...", "running")
 
                 repair_prompt = (
                     f"CRITICAL: Post-verification detected syntax errors in the modified files:\n"
-                    + "\n".join(diag_messages[:5])
+                    + "\n".join(f"- {p}" for p in problems[:5])
                     + "\nPlease inspect the files and use edit_file to fix these syntax errors immediately."
                 )
 
@@ -2623,26 +2705,31 @@ def orchestrate(
                         max_iterations=3,
                     )
                     rep_after = run_syntax_gate(target_abs_paths, cwd=config.project_root)
-                    if rep_after.total_errors == 0:
+                    problems, unverified = _gate_findings(rep_after)
+                    if not problems and not unverified:
                         emit_step("Self-Healing Gate", "Repairs successful — all syntax errors resolved", "done")
                         if repair_result.answer:
                             agent_result.answer += f"\n\n### Self-Healing Post-Verification\n{repair_result.answer}"
                     else:
-                        emit_step("Self-Healing Gate", f"Verification warning: {rep_after.total_errors} remaining issue(s)", "failed")
-                        for lr in rep_after.linter_results:
-                            for d in lr.diagnostics:
-                                unresolved_syntax.append(
-                                    f"- {Path(d.file).name}:{d.line}: [{d.severity}] {d.message}"
-                                )
+                        emit_step(
+                            "Self-Healing Gate",
+                            f"Verification warning: {len(problems) + len(unverified)} remaining issue(s)",
+                            "failed",
+                        )
                 except Exception as repair_exc:
                     logger.warning("Self-healing repair exception: %s", repair_exc)
-                    unresolved_syntax = [f"- self-healing repair failed: {repair_exc}"]
+                    unverified = [f"self-healing repair failed: {repair_exc}"]
+            elif unverified:
+                emit_step("Syntax Gate", f"Could not verify: {', '.join(unverified)}", "failed")
             else:
                 emit_step("Syntax Gate", f"PASSED — 0 syntax errors across {len(target_abs_paths)} file(s)", "done")
 
+        unresolved_syntax = [f"- {p}" for p in problems] + [
+            f"- {u} could not run, so the change is unverified" for u in unverified
+        ]
         if unresolved_syntax:
             detail = "\n".join(unresolved_syntax[:8])
-            logger.warning("Mutation left unresolved syntax errors; reporting failure:\n%s", detail)
+            logger.warning("Mutation did not pass syntax verification; reporting failure:\n%s", detail)
             return OrchestrationResult(
                 outcome=LoopOutcome.FAILED,
                 total_rounds=agent_result.total_rounds,
@@ -2652,8 +2739,8 @@ def orchestrate(
                 answer=agent_result.answer,
                 intent="mutation",
                 error_detail=(
-                    "The agent's edits left syntax errors that self-healing could not fix, "
-                    "so this change is not being reported as successful:\n" + detail
+                    "The agent's edits did not pass the syntax verification, so this change "
+                    "is not being reported as successful:\n" + detail
                 ),
             )
 

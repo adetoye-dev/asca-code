@@ -45,6 +45,25 @@ def _report(path: str, errors: int) -> GauntletReport:
     )
 
 
+def _crashed_report(path: str) -> GauntletReport:
+    """A gate where the linter never produced output (crash/timeout)."""
+    return GauntletReport(
+        target_paths=[path],
+        passed=False,
+        linter_results=[
+            LinterResult(
+                linter="tsc",
+                status=LinterStatus.CRASH,
+                exit_code=-1,
+                diagnostics=[],
+                error_detail="executor exception",
+            )
+        ],
+        total_diagnostics=0,
+        total_errors=0,
+    )
+
+
 class _FakeAgentResult:
     def __init__(self, edited_files):
         self.edited_files = edited_files
@@ -102,6 +121,28 @@ class OrchestrateOutcomeTests(unittest.TestCase):
         path = str(self.root / "calc.py")
         result = self._run([_report(path, 0)])
         self.assertEqual(result.outcome, manager.LoopOutcome.SUCCESS)
+
+    def test_gate_that_could_not_run_is_not_a_success(self):
+        # A crashed/timed-out linter yields zero diagnostics. That is
+        # "unverified", not "verified clean", and must not read as success.
+        path = str(self.root / "calc.py")
+        result = self._run([_crashed_report(path), _crashed_report(path)])
+        self.assertEqual(result.outcome, manager.LoopOutcome.FAILED)
+        self.assertIn("unverified", result.error_detail.lower())
+
+    def test_evaluate_syntax_gate_does_not_launder_crash_into_pass(self):
+        # evaluate_syntax_gate rewrites linter statuses from its diff against the
+        # baseline; a crash has no diagnostics, so it used to be rewritten to
+        # PASS and reported as verified.
+        path = str(self.root / "calc.py")
+        with mock.patch.object(manager, "run_syntax_gate", return_value=_crashed_report(path)):
+            passed, report, _card = manager.evaluate_syntax_gate(
+                [path],
+                baseline_diagnostics={"calc.py": []},
+                project_root=str(self.root),
+            )
+        self.assertFalse(passed)
+        self.assertEqual(report.linter_results[0].status, LinterStatus.CRASH)
 
 
 if __name__ == "__main__":

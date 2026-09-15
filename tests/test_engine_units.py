@@ -127,6 +127,76 @@ class PatchWriteFidelityTests(unittest.TestCase):
             manager._write_patches_to_disk([patch], str(self.root))
         self.assertEqual(self.target.read_text(encoding="utf-8"), self.original)
 
+    def _ts_report(self, code: str):
+        from gauntlet.syntax_guard import (
+            Diagnostic,
+            GauntletReport,
+            LinterResult,
+            LinterStatus,
+            Severity,
+        )
+
+        return GauntletReport(
+            target_paths=[str(self.root)],
+            passed=False,
+            linter_results=[
+                LinterResult(
+                    linter="tsc",
+                    status=LinterStatus.FAIL,
+                    exit_code=1,
+                    diagnostics=[
+                        Diagnostic(
+                            file=str(self.root),
+                            line=1,
+                            column=1,
+                            severity=Severity.ERROR,
+                            code=code,
+                            message="boom",
+                            source="tsc",
+                        )
+                    ],
+                )
+            ],
+            total_diagnostics=1,
+            total_errors=1,
+        )
+
+    def _ts_fallback_case(self, new_content: str):
+        """Stage an app.ts fallback write; returns (patch, target, original, fake_apply)."""
+        original = "export const a = 1;\n"
+        target = self.root / "app.ts"
+        target.write_text(original, encoding="utf-8")
+        patch = manager.DiffPatch(
+            file_path=str(target),
+            original_content="",
+            patched_content="",
+            diff_text="--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-export const a = 1;\n+x\n",
+        )
+
+        def fake_apply(diff_text, project_root="", backup=True, strict=False):
+            (self.root / "app.ts.bak").write_text(original, encoding="utf-8")
+            target.write_text(new_content, encoding="utf-8")
+            return mock.Mock(results=[mock.Mock(file_path=str(target), status="applied")], rejected=[], errors=[])
+
+        return patch, target, original, fake_apply
+
+    def test_fallback_restores_backup_on_ts_syntax_error(self):
+        patch, target, original, fake_apply = self._ts_fallback_case("export const a = ;\n")
+        with mock.patch.object(manager, "apply_diff_text", side_effect=fake_apply), \
+             mock.patch.object(manager, "run_syntax_gate", return_value=self._ts_report("TS1005")):
+            manager._write_patches_to_disk([patch], str(self.root))
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_fallback_keeps_ts_type_errors(self):
+        # TS2xxx are expected when a file is checked without its project graph,
+        # so they must never revert an otherwise valid write.
+        changed = "export const a = missingSymbol;\n"
+        patch, target, _, fake_apply = self._ts_fallback_case(changed)
+        with mock.patch.object(manager, "apply_diff_text", side_effect=fake_apply), \
+             mock.patch.object(manager, "run_syntax_gate", return_value=self._ts_report("TS2304")):
+            manager._write_patches_to_disk([patch], str(self.root))
+        self.assertEqual(target.read_text(encoding="utf-8"), changed)
+
 
 class ContextIndexPruningTests(unittest.TestCase):
     def setUp(self):
