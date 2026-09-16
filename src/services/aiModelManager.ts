@@ -807,8 +807,12 @@ export function getConfiguredModelsList(includeLocal: boolean = false): Configur
     if ((p.id as string) === "deterministic") continue;
 
     if (p.category === "cloud") {
-      // Cloud providers: only show if user configured an API key
-      if (p.apiKey && p.apiKey.trim().length > 3) {
+      // "Has a key" is `isConnected`, which the registry derives server-side from
+      // whether a key exists. It is NOT `apiKey`: credentials are write-only across
+      // the API, so that field is always empty by design and gating on it hid every
+      // configured cloud model — which is why chat refused to start with "no local AI
+      // model is installed or selected" while the dashboard showed DeepSeek connected.
+      if (p.isConnected) {
         const rawModels = p.availableModels && p.availableModels.length > 0
           ? p.availableModels
           : [p.selectedModel];
