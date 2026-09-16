@@ -39,7 +39,8 @@ async function streamViaIpc(params: any): Promise<void> {
         // The engine always sends its own final frame on success, so reaching here
         // first means it died — and stderr is the only explanation available.
         if (event.payload) onError(String(event.payload));
-        else onDone({ aborted: signal?.aborted ?? false });
+        else if (signal?.aborted) onDone({ aborted: true });
+        else onError("The assistant stopped before finishing.");
         cleanup();
       }),
     );
@@ -72,7 +73,12 @@ async function streamViaIpc(params: any): Promise<void> {
   } catch (err: any) {
     if (!finished) {
       finished = true;
-      onError(err?.message || "Failed to communicate with the assistant.");
+      // `invoke` rejects with the raw string from Rust's `Err(..)`, which has no
+      // `.message` — reading only that replaced the real reason with a generic one
+      // and made this undiagnosable.
+      onError(
+        typeof err === "string" ? err : err?.message || "Failed to communicate with the assistant.",
+      );
     }
     cleanup();
   } finally {

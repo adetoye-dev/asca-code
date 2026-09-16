@@ -1064,7 +1064,8 @@ async fn chat_stream(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("could not start the assistant: {}", e))?;
+        // Name the path: if resolution is what failed, that is the whole diagnosis.
+        .map_err(|e| format!("could not start the assistant ({}): {}", program.display(), e))?;
 
     let stdout = child
         .stdout

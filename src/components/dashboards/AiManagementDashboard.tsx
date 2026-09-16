@@ -1026,7 +1026,7 @@ export function AiManagementDashboard({
                       <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                         <span>API Key / Secret Token</span>
                         <span className="text-[11px] text-zinc-500 font-normal">
-                          Stored in browser local storage on this device
+                          Stored in the app database on this device — never read back into the page
                         </span>
                       </label>
                       <div className="flex items-center gap-2">
@@ -1122,7 +1122,7 @@ export function AiManagementDashboard({
                 </div>
                 {activeProvider.category === "cloud" && (
                   <p className="text-[10px] text-zinc-500">
-                    API keys are stored locally in this browser and are used by the agent, editor review and inline edit.
+                    API keys are stored in the app database on this device and used by the agent, editor review and inline edit. They are write-only across the app's own API: the page can set or clear a key and ask whether one exists, but never receives the value.
                   </p>
                 )}
 
