@@ -36,6 +36,7 @@ import {
   type OllamaStatus,
   type OllamaProgressEvent,
 } from "../../services/ollamaSetup";
+import { aiFetch } from "../../services/aiClient";
 
 interface AiManagementDashboardProps {
   onModelSettingsChanged?: () => void;
@@ -226,7 +227,7 @@ export function AiManagementDashboard({
     setTestResult(null);
 
     try {
-      const res = await fetch("/api/ai/test-connection", {
+      const res = await aiFetch("/api/ai/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

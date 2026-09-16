@@ -18,6 +18,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
+import { aiFetch } from "../services/aiClient";
 
 export interface AISettings {
   /**
@@ -242,7 +243,7 @@ export function SettingsModal({
     try {
       // Proxied through the bridge so the request is made with the stored
       // credential and the key never has to be held in the browser.
-      const res = await fetch("/api/ai/test-connection", {
+      const res = await aiFetch("/api/ai/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

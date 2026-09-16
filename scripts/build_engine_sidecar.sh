@@ -62,6 +62,7 @@ mkdir -p .tauri/binaries
   --hidden-import indexer_cli \
   --hidden-import skills_cli \
   --hidden-import mcp_cli \
+  --hidden-import ai_cli \
   --hidden-import skill_loader \
   --hidden-import scale_detector \
   --add-data "${REPO_ROOT}/core-engine/skills:skills" \
