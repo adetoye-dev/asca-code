@@ -197,6 +197,33 @@ xcrun stapler validate "target/release/bundle/macos/ACSA Code.app"
 its own libpython, and the hardened runtime kills the process on launch without
 it.
 
+#### When notarisation stalls, or looks like a hang
+
+`notarytool submit --wait` polls until Apple returns a verdict. A few minutes is
+normal; anything much longer means the submission is stuck, and waiting will not
+clear it. The release workflow notarises explicitly rather than through Tauri —
+Tauri's built-in path discards `notarytool`'s output, so this exact stall presents
+as a silent fifteen-minute-or-longer hang inside the bundle step — and it prints
+the submission id, so you can ask Apple directly what happened. `notarytool info`
+needs the credentials, so keep the app-specific password in a password manager
+rather than only in the repository secrets:
+
+```bash
+xcrun notarytool info <submission-id> \
+  --apple-id "$APPLE_ID" --password "<app-specific password>" --team-id "$APPLE_TEAM_ID"
+```
+
+Read the result against <https://developer.apple.com/system-status/>:
+
+- `Accepted` — the service was merely slow; the run can be repeated as-is.
+- `Invalid` — Apple rejected it. `xcrun notarytool log <submission-id>` names the
+  reason, which is a useful failure rather than silence.
+- `In Progress` hours after submission, especially with a recent incident listed
+  under *App Store Connect - App Upload* on the status page, means the submission
+  was orphaned by that incident. `notarytool` has no cancel, so do not wait:
+  re-run the release and submit again. A fresh submission completes in minutes
+  once the service is healthy.
+
 ### 3d. Windows (later)
 
 `bundle.windows.certificateThumbprint` is `null` and no job signs or publishes a
