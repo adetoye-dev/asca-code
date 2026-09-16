@@ -14,6 +14,7 @@ import { Plus, Minus, ChevronRight, Check, ChevronUp, GitPullRequest, ChevronDow
 import { Icon } from "../ui/Icon";
 
 import { FileIcon } from "../ui/FileIcon";
+import { gitFetch } from "../../services/gitClient";
 
 export interface ChangedGitFile {
   path: string;
@@ -48,7 +49,7 @@ export function SourceControlSidebar({
   const fetchStatus = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/git/status", {
+      const res = await gitFetch("/api/git/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -72,7 +73,7 @@ export function SourceControlSidebar({
 
   const handleOpenFileDiff = async (file: ChangedGitFile, isStaged: boolean) => {
     try {
-      const res = await fetch("/api/git/diff-file", {
+      const res = await gitFetch("/api/git/diff-file", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd, filePath: file.path, staged: isStaged }),
@@ -89,7 +90,7 @@ export function SourceControlSidebar({
   const handleStageFile = async (filePath: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     try {
-      const res = await fetch("/api/git/stage", {
+      const res = await gitFetch("/api/git/stage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd, filePath }),
@@ -104,7 +105,7 @@ export function SourceControlSidebar({
   const handleUnstageFile = async (filePath: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     try {
-      const res = await fetch("/api/git/unstage", {
+      const res = await gitFetch("/api/git/unstage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd, filePath }),
@@ -119,7 +120,7 @@ export function SourceControlSidebar({
   const handleStageAll = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     try {
-      const res = await fetch("/api/git/stage-all", {
+      const res = await gitFetch("/api/git/stage-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -134,7 +135,7 @@ export function SourceControlSidebar({
   const handleUnstageAll = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     try {
-      const res = await fetch("/api/git/unstage-all", {
+      const res = await gitFetch("/api/git/unstage-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -153,7 +154,7 @@ export function SourceControlSidebar({
     );
     if (!confirmed) return;
     try {
-      const res = await fetch("/api/git/discard", {
+      const res = await gitFetch("/api/git/discard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd, filePath }),
@@ -177,7 +178,7 @@ export function SourceControlSidebar({
     const shouldStageAll = stagedFiles.length === 0 && unstagedFiles.length > 0;
 
     try {
-      const res = await fetch("/api/git/commit", {
+      const res = await gitFetch("/api/git/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

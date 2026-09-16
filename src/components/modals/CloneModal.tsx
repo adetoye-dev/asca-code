@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { CheckCircle2, AlertCircle, GitFork, RefreshCw, Folder, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { gitFetch } from "../../services/gitClient";
 
 interface CloneModalProps {
   isOpen: boolean;
@@ -59,7 +60,7 @@ export function CloneModal({
     setStatusMsg({ type: "info", text: "Cloning repository from remote..." });
 
     try {
-      const res = await fetch("/api/git/clone", {
+      const res = await gitFetch("/api/git/clone", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

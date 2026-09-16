@@ -52,6 +52,7 @@ import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
+import { gitFetch } from "../../services/gitClient";
 
 type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
 
@@ -345,7 +346,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   const refreshBranch = useCallback(async () => {
     try {
-      const res = await fetch("/api/git/status", {
+      const res = await gitFetch("/api/git/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: activeProject.path }),

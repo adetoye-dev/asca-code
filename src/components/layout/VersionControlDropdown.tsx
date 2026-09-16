@@ -12,6 +12,7 @@ import { useState, useEffect, useRef } from "react";
 import { Plus, Info, Check, ChevronUp, ChevronDown, GitBranch } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { StatusGlyph, StatusChip } from "../ui/StatusGlyph";
+import { gitFetch } from "../../services/gitClient";
 
 interface VersionControlDropdownProps {
   projectCwd: string;
@@ -41,7 +42,7 @@ export function VersionControlDropdown({
 
   const fetchGitStatus = async () => {
     try {
-      const res = await fetch("/api/git/status", {
+      const res = await gitFetch("/api/git/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -58,7 +59,7 @@ export function VersionControlDropdown({
 
   const fetchBranches = async () => {
     try {
-      const res = await fetch("/api/git/branches", {
+      const res = await gitFetch("/api/git/branches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -109,7 +110,7 @@ export function VersionControlDropdown({
     setIsLoading(true);
     setActionMsg(null);
     try {
-      const res = await fetch("/api/git/checkout", {
+      const res = await gitFetch("/api/git/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd, branch: branchName }),
@@ -134,7 +135,7 @@ export function VersionControlDropdown({
     if (!newBranchName.trim()) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/git/checkout", {
+      const res = await gitFetch("/api/git/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -165,7 +166,7 @@ export function VersionControlDropdown({
     setIsLoading(true);
     setActionMsg("Pulling from remote...");
     try {
-      const res = await fetch("/api/git/pull", {
+      const res = await gitFetch("/api/git/pull", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
@@ -189,7 +190,7 @@ export function VersionControlDropdown({
     setIsLoading(true);
     setActionMsg("Pushing to remote...");
     try {
-      const res = await fetch("/api/git/push", {
+      const res = await gitFetch("/api/git/push", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectCwd }),
