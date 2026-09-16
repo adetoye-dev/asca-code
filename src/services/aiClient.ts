@@ -16,6 +16,7 @@ import { engineCall, hasIpc } from "./engineBridge";
 const MIGRATED: Record<string, string> = {
   "test-connection": "test-connection",
   "review-file": "review-file",
+  "inline-edit": "inline-edit",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

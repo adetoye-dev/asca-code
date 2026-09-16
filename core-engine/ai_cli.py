@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -374,7 +375,110 @@ def review_file(payload: dict) -> dict:
     }
 
 
-COMMANDS = {"test-connection": test_connection, "review-file": review_file}
+INLINE_SYSTEM_PROMPT = (
+    "You are an expert code editing assistant. Given existing code and instructions, return ONLY the updated replacement code. "
+    "Do not include conversational commentary, explanations, or markdown code fences."
+)
+
+
+def _sanitize_inline_replacement(replacement: str, selected: str, prefix: str, suffix: str) -> dict:
+    """Reduce a model reply to just the edited code, or explain why it cannot be.
+
+    Ported because it is what makes the feature safe to apply: models routinely wrap
+    output in fences, echo the context back, or answer a small edit with a whole
+    rewritten file.
+    """
+    selected = (selected or "").replace("\r\n", "\n")
+    replacement = (replacement or "").replace("\r\n", "\n").strip()
+
+    # 1. Unwrap a fenced block, discarding prose around it.
+    fenced = re.search(r"```[a-zA-Z0-9_+-]*\n([\s\S]*?)```", replacement)
+    if fenced:
+        replacement = fenced.group(1).strip()
+    else:
+        replacement = re.sub(r"^```[a-zA-Z0-9_+-]*\n?", "", replacement)
+        replacement = re.sub(r"\n?```\s*$", "", replacement).strip()
+
+    # 2. If the model echoed the surrounding context, keep only the edited region.
+    prefix_tail = (prefix or "").replace("\r\n", "\n")[-160:].strip()
+    if len(prefix_tail) >= 60:
+        at = replacement.find(prefix_tail)
+        if at > 0:
+            replacement = re.sub(r"^\n+", "", replacement[at + len(prefix_tail) :])
+    suffix_head = (suffix or "").replace("\r\n", "\n")[:160].strip()
+    if len(suffix_head) >= 60:
+        at = replacement.find(suffix_head)
+        if at >= 0:
+            replacement = re.sub(r"\n+$", "", replacement[:at])
+    replacement = replacement.strip()
+
+    if not replacement:
+        return {"replacement": "", "reason": "the model returned no usable code"}
+
+    # 3. Refuse implausible growth: the edit was requested for a small range, so a
+    #    much larger answer is a rewritten file, not an edit.
+    selected_lines = max(1, len(selected.split("\n")))
+    produced_lines = len(replacement.split("\n"))
+    if produced_lines > max(selected_lines * 3, selected_lines + 60):
+        return {
+            "replacement": "",
+            "reason": f"the model returned {produced_lines} lines for a {selected_lines}-line edit, so it was not applied",
+        }
+
+    # 4. Trim a trailing explanation block the model added after the code.
+    prose_tail = re.search(
+        r"\n\s*\n\s*(?:Explanation|Note|This|The (?:code|change|edit|fix)|Changes?:)[\s\S]{40,}$",
+        replacement,
+        re.IGNORECASE,
+    )
+    if prose_tail:
+        trimmed = replacement[: prose_tail.start()].rstrip()
+        if trimmed and len(trimmed.split("\n")) >= max(1, selected_lines - 5):
+            replacement = trimmed
+
+    return {"replacement": replacement, "reason": ""}
+
+
+def inline_edit(payload: dict) -> dict:
+    """Rewrite the selected code and return only the replacement."""
+    provider = str(payload.get("provider") or "ollama").strip()
+    model = str(payload.get("model") or "").strip()
+    api_key = _resolve_key(provider, str(payload.get("apiKey") or ""))
+    selected = str(payload.get("selectedCode") or "")
+    prefix = str(payload.get("surroundingPrefix") or "")
+    suffix = str(payload.get("surroundingSuffix") or "")
+
+    user_prompt = (
+        f"Context before:\n{prefix[-600:]}\n\n"
+        f"Code to edit:\n{selected}\n\n"
+        f"Context after:\n{suffix[:600]}\n\n"
+        f"Instruction: {payload.get('instruction') or ''}\n\nEmit updated code:"
+    )
+
+    ok, raw, error = _review_completion(
+        provider,
+        model,
+        str(payload.get("baseUrl") or "").rstrip("/"),
+        api_key,
+        INLINE_SYSTEM_PROMPT,
+        user_prompt,
+    )
+    if not ok:
+        return {"ok": False, "error": error, "replacement": ""}
+    if not raw:
+        return {"ok": False, "error": "The provider returned an empty replacement.", "replacement": ""}
+
+    cleaned = _sanitize_inline_replacement(raw, selected, prefix, suffix)
+    if not cleaned["replacement"]:
+        return {"ok": False, "reason": cleaned["reason"], "replacement": ""}
+    return {"ok": True, "replacement": cleaned["replacement"], "reason": cleaned["reason"]}
+
+
+COMMANDS = {
+    "test-connection": test_connection,
+    "review-file": review_file,
+    "inline-edit": inline_edit,
+}
 
 
 def run(argv: list[str]) -> int:
