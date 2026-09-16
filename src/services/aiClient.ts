@@ -15,6 +15,7 @@ import { engineCall, hasIpc } from "./engineBridge";
 /** Bridge action → engine subcommand action. Empty means "not migrated yet". */
 const MIGRATED: Record<string, string> = {
   "test-connection": "test-connection",
+  "review-file": "review-file",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

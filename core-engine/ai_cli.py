@@ -161,7 +161,220 @@ def test_connection(payload: dict) -> dict:
     }
 
 
-COMMANDS = {"test-connection": test_connection}
+def _post_json(url: str, headers: dict[str, str], body: dict, timeout: float):
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, {"error": f"HTTP {exc.code}"}
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return 0, {"error": str(exc)}
+
+
+# The review prompt is the behaviour, so it is ported verbatim: strict JSON, real
+# line numbers from the gutter, and a hard cap on how much of a big file is sent.
+REVIEW_SYSTEM_PROMPT = (
+    "You are a meticulous senior code reviewer. Analyse the provided file and report concrete issues: bugs, logic errors, edge cases, security problems, and worthwhile refactors. "
+    'Respond with ONLY a JSON object whose top-level key is exactly "issues": {"issues":[{"line":<number>,"severity":"error|warning|info","title":"<short>","detail":"<why>","suggestion":"<concrete fix>"}]}. '
+    'Example of the exact shape expected (illustrative only): {"issues":[{"line":42,"severity":"warning","title":"Missing null check","detail":"provider can be undefined here","suggestion":"Guard with if (!provider) return;"}]}. '
+    "The file is given with its real line numbers in a left gutter formatted 'NNNN| code'. Set `line` to the exact number shown in that gutter for the code you are describing. "
+    "Never invent line numbers and never cite a line that is not shown. Different findings normally sit on different lines; only repeat a line when two findings genuinely concern that one line. "
+    'Report at most 12 issues, most important first. If the file is clean, return {"issues":[]}. No prose, no markdown fences.'
+)
+
+REVIEW_CHAR_BUDGET = 12000
+
+
+def _number_lines(content: str) -> tuple[str, int, int, int]:
+    """Number the lines the model is allowed to cite, within a character budget."""
+    lines = content.split("\n")
+    numbered: list[str] = []
+    used = 0
+    first = last = 1
+    for index, line in enumerate(lines, start=1):
+        entry = f"{index:4d}| {line}"
+        if numbered and used + len(entry) + 1 > REVIEW_CHAR_BUDGET:
+            break
+        if not numbered:
+            first = index
+        numbered.append(entry)
+        used += len(entry) + 1
+        last = index
+    return "\n".join(numbered), first, last, len(lines)
+
+
+def _extract_issues(raw: str) -> list[dict]:
+    """Pull the findings out of a model reply, tolerating fences and stray prose."""
+    candidate = raw.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.split("```", 2)[1] if candidate.count("```") >= 2 else candidate
+        candidate = candidate.split("\n", 1)[1] if "\n" in candidate else candidate
+    start, end = candidate.find("{"), candidate.rfind("}")
+    if start == -1 or end <= start:
+        return []
+    try:
+        parsed = json.loads(candidate[start : end + 1])
+    except ValueError:
+        return []
+    issues = parsed.get("issues") if isinstance(parsed, dict) else None
+    if not isinstance(issues, list):
+        return []
+    cleaned = []
+    for issue in issues[:12]:
+        if not isinstance(issue, dict):
+            continue
+        try:
+            line = int(issue.get("line"))
+        except (TypeError, ValueError):
+            continue
+        cleaned.append(
+            {
+                "line": line,
+                "severity": str(issue.get("severity") or "info"),
+                "title": str(issue.get("title") or "Finding"),
+                "detail": str(issue.get("detail") or ""),
+                "suggestion": str(issue.get("suggestion") or ""),
+            }
+        )
+    return cleaned
+
+
+def _review_completion(
+    provider: str, model: str, base_url: str, api_key: str, system: str, user: str
+) -> tuple[bool, str, str]:
+    """One non-streaming completion. Returns (ok, text, error)."""
+    timeout = 180.0
+    if provider == "ollama":
+        status, body = _post_json(
+            f"{base_url or DEFAULT_BASE_URLS['ollama']}/api/chat",
+            {"Content-Type": "application/json"},
+            {
+                "model": model or "qwen2.5-coder:7b",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 1600},
+            },
+            timeout,
+        )
+        if status != 200:
+            return False, "", body.get("error") or f"Ollama request failed ({status})"
+        return True, ((body.get("message") or {}).get("content") or "").strip(), ""
+
+    if not api_key:
+        return False, "", f"An API key is required for provider '{provider}'."
+
+    if provider == "anthropic":
+        status, body = _post_json(
+            f"{base_url or DEFAULT_BASE_URLS['anthropic']}/v1/messages",
+            {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            {
+                "model": model or "claude-3-5-sonnet-latest",
+                "max_tokens": 1600,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+            },
+            timeout,
+        )
+        if status != 200:
+            return False, "", body.get("error") or f"Anthropic request failed ({status})"
+        content = body.get("content") or [{}]
+        return True, (content[0].get("text") or "").strip(), ""
+
+    status, body = _post_json(
+        f"{base_url or DEFAULT_BASE_URLS.get(provider, 'https://api.openai.com/v1')}/chat/completions",
+        {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        {
+            "model": model or "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.1,
+        },
+        timeout,
+    )
+    if status != 200:
+        return False, "", body.get("error") or f"Provider request failed ({status})"
+    choices = body.get("choices") or [{}]
+    return True, ((choices[0].get("message") or {}).get("content") or "").strip(), ""
+
+
+def review_file(payload: dict) -> dict:
+    """Review one file and return findings anchored to real line numbers."""
+    content = str(payload.get("content") or "")
+    if not content.strip():
+        return {"ok": False, "error": "File is empty.", "issues": []}
+
+    provider = str(payload.get("provider") or "ollama").strip()
+    model = str(payload.get("model") or "").strip()
+    base_url = str(payload.get("baseUrl") or "").rstrip("/")
+    api_key = _resolve_key(provider, str(payload.get("apiKey") or ""))
+
+    numbered, first_line, last_line, total_lines = _number_lines(content)
+    language = str(payload.get("language") or "")
+    excerpt = (
+        f"Only lines {first_line}-{last_line} of {total_lines} are shown (the file was truncated). Report issues only within that range."
+        if last_line < total_lines
+        else f"The whole file ({total_lines} lines) is shown."
+    )
+    user_prompt = (
+        f"File: {payload.get('path') or ''}{f' ({language})' if language else ''}\n"
+        f"{excerpt}\n\n{numbered}\n\nReturn the JSON review object."
+    )
+
+    started = time.monotonic()
+    ok, raw, error = _review_completion(provider, model, base_url, api_key, REVIEW_SYSTEM_PROMPT, user_prompt)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if not ok:
+        return {"ok": False, "error": error, "issues": []}
+
+    # A citation outside the excerpt cannot have been seen, and repeats would stack
+    # two threads on one line — the same guards the dev bridge applied.
+    visible = set(range(first_line, last_line + 1))
+    seen: set[str] = set()
+    issues = []
+    for issue in _extract_issues(raw):
+        key = f"{issue['line']}|{issue['title']}"
+        if issue["line"] not in visible or key in seen:
+            continue
+        seen.add(key)
+        issues.append(issue)
+
+    # `usage.record` is best-effort: metrics must never break the review itself.
+    try:
+        import db_cli
+
+        db_cli._cmd_usage_record(
+            {
+                "provider": provider,
+                "model": model or provider,
+                "prompt_tokens": round((len(REVIEW_SYSTEM_PROMPT) + len(user_prompt)) / 4),
+                "completion_tokens": round(len(raw) / 4),
+                "latency_ms": elapsed_ms,
+            }
+        )
+    except Exception:  # noqa: BLE001 - see above
+        pass
+
+    return {
+        "ok": True,
+        "model": model,
+        "provider": provider,
+        "note": "",
+        "warning": ""
+        if issues or '"issues"' in raw
+        else "The model returned a response that could not be parsed as review findings.",
+        "issues": issues,
+    }
+
+
+COMMANDS = {"test-connection": test_connection, "review-file": review_file}
 
 
 def run(argv: list[str]) -> int:
