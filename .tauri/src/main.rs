@@ -1008,6 +1008,99 @@ fn terminal_resize(state: State<'_, TerminalState>, cols: u32, rows: u32) -> Res
     pty_send(child, &message)
 }
 
+// ── Streaming chat ──────────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct AiFrame {
+    line: String,
+}
+
+/// The in-flight chat child, so a stream can actually be cancelled.
+///
+/// The dev bridge owned this and streamed server-sent events. A packaged app has no
+/// server, so the engine's NDJSON frames are forwarded as Tauri events instead —
+/// the same move the terminal made. Frames go out raw and the frontend parses them,
+/// which keeps this side free of a JSON dependency for one message shape.
+pub struct ChatState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+impl ChatState {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+        }
+    }
+}
+
+#[tauri::command]
+async fn chat_stream(
+    app_handle: tauri::AppHandle,
+    state: State<'_, ChatState>,
+    payload: String,
+) -> Result<(), String> {
+    if let Some(mut previous) = state.child.lock().map_err(|e| e.to_string())?.take() {
+        let _ = previous.kill();
+    }
+
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "ai");
+    argv.push("chat".to_string());
+    argv.push(payload);
+
+    let mut child = Command::new(&program)
+        .args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the assistant: {}", e))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "could not capture assistant output".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "could not capture assistant errors".to_string())?;
+
+    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
+
+    let app_for_reader = app_handle.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read};
+        let app_for_stderr = app_for_reader.clone();
+        // Errors first: a failed run prints nothing useful on stdout, and that
+        // message is what the user needs to see.
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buffer = String::new();
+            let _ = stderr.read_to_string(&mut buffer);
+            buffer
+        });
+
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let _ = app_for_reader.emit("ai:frame", AiFrame { line });
+        }
+
+        let stderr_text = stderr_thread.join().unwrap_or_default();
+        let _ = app_for_stderr.emit("ai:exit", stderr_text.trim().to_string());
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn chat_cancel(state: State<'_, ChatState>) -> Result<(), String> {
+    if let Some(mut child) = state.child.lock().map_err(|e| e.to_string())?.take() {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
 // ── Application Entry Point ─────────────────────────────────────────────────
 
 fn main() {
@@ -1017,6 +1110,7 @@ fn main() {
             active_child: Arc::new(Mutex::new(None)),
         })
         .manage(TerminalState::new())
+        .manage(ChatState::new())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -1035,6 +1129,8 @@ fn main() {
             terminal_spawn,
             terminal_input,
             terminal_resize,
+            chat_stream,
+            chat_cancel,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

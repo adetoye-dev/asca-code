@@ -6,6 +6,80 @@
  * the local Deterministic AST engine.
  */
 
+import { hasIpc } from "./engineBridge";
+
+/**
+ * Stream a reply through the app's own IPC channel.
+ *
+ * The engine writes NDJSON frames (`{delta}` … `{done}`) and the Rust side forwards
+ * each line as an `ai:frame` event, so the three payload shapes the SSE reader
+ * handled below are unchanged — only the transport differs.
+ */
+async function streamViaIpc(params: any): Promise<void> {
+  const { provider, model, messages, images, projectRoot, baseUrl, apiKey, signal, onDelta, onDone, onError } = params;
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+
+  let finished = false;
+  let unlisten: Array<() => void> = [];
+  const cleanup = () => {
+    unlisten.forEach((off) => off());
+    unlisten = [];
+  };
+  const abort = () => {
+    if (!finished) invoke("chat_cancel").catch(() => {});
+  };
+  signal?.addEventListener?.("abort", abort);
+
+  try {
+    unlisten.push(
+      await listen<string>("ai:exit", (event) => {
+        if (finished) return;
+        finished = true;
+        // The engine always sends its own final frame on success, so reaching here
+        // first means it died — and stderr is the only explanation available.
+        if (event.payload) onError(String(event.payload));
+        else onDone({ aborted: signal?.aborted ?? false });
+        cleanup();
+      }),
+    );
+    unlisten.push(
+      await listen<{ line: string }>("ai:frame", (event) => {
+        if (finished) return;
+        try {
+          const frame = JSON.parse(event.payload.line);
+          if (frame.error) {
+            finished = true;
+            onError(frame.error);
+            cleanup();
+            return;
+          }
+          if (frame.delta) onDelta(frame.delta);
+          if (frame.done) {
+            finished = true;
+            onDone(frame);
+            cleanup();
+          }
+        } catch {
+          /* a partial or non-JSON line carries nothing to show */
+        }
+      }),
+    );
+
+    await invoke("chat_stream", {
+      payload: JSON.stringify({ provider, model, messages, images, projectRoot, baseUrl, apiKey }),
+    });
+  } catch (err: any) {
+    if (!finished) {
+      finished = true;
+      onError(err?.message || "Failed to communicate with the assistant.");
+    }
+    cleanup();
+  } finally {
+    signal?.removeEventListener?.("abort", abort);
+  }
+}
+
 export interface AgentStep {
   id?: string;
   name: string;
@@ -56,6 +130,12 @@ export async function streamChatCompletion({
   onDone,
   onError,
 }: StreamChatParams): Promise<void> {
+  // The packaged app has no dev server; prefer the app's own channel when it exists.
+  if (hasIpc()) {
+    await streamViaIpc({ provider, model, messages, images, projectRoot, baseUrl, apiKey, signal, onDelta, onDone, onError });
+    return;
+  }
+
   try {
     const res = await fetch("/api/ai/chat", {
       method: "POST",
