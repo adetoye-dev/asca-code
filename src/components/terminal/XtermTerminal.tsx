@@ -11,6 +11,13 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { hasIpc } from "../../services/engineBridge";
+
+/** Call the terminal IPC channel when it exists, else the dev bridge endpoint. */
+async function invokeTerminal(command: string, args: Record<string, unknown>): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke(command, args);
+}
 
 export interface XtermTerminalHandle {
   restart: () => void;
@@ -39,11 +46,14 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
 
     const sendResize = useCallback((cols: number, rows: number) => {
       if (cols > 0 && rows > 0) {
-        fetch("/api/terminal/resize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols, rows }),
-        }).catch(() => {});
+        const send = hasIpc()
+          ? invokeTerminal("terminal_resize", { cols, rows })
+          : fetch("/api/terminal/resize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cols, rows }),
+            }).then(() => undefined);
+        send.catch(() => {});
       }
     }, []);
 
@@ -66,11 +76,14 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
       if (!inputBufferRef.current) return;
       const dataToSend = inputBufferRef.current;
       inputBufferRef.current = "";
-      fetch("/api/terminal/input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: dataToSend }),
-      }).catch(() => {});
+      const send = hasIpc()
+        ? invokeTerminal("terminal_input", { data: dataToSend })
+        : fetch("/api/terminal/input", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data: dataToSend }),
+          }).then(() => undefined);
+      send.catch(() => {});
     }, []);
 
     const sendInput = useCallback(
@@ -95,19 +108,22 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const initShell = useCallback(
       async (force = false) => {
         try {
-          const res = await fetch("/api/terminal/spawn", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cwd,
-              cols: termRef.current?.cols || 80,
-              rows: termRef.current?.rows || 24,
-              force,
-            }),
-          });
-          if (res.ok) {
+          const cols = termRef.current?.cols || 80;
+          const rows = termRef.current?.rows || 24;
+          if (hasIpc()) {
+            await invokeTerminal("terminal_spawn", { cwd, cols, rows });
             setIsConnected(true);
             onConnectionChangeRef.current?.(true);
+          } else {
+            const res = await fetch("/api/terminal/spawn", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cwd, cols, rows, force }),
+            });
+            if (res.ok) {
+              setIsConnected(true);
+              onConnectionChangeRef.current?.(true);
+            }
           }
         } catch {
           termRef.current?.writeln("\r\n\x1b[31mFailed to connect to local shell process.\x1b[0m\r\n");
@@ -214,30 +230,62 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         sendResizeRef.current(size.cols, size.rows);
       });
 
-      // 5. Connect to terminal output EventSource stream
-      const es = new EventSource("/api/terminal/stream");
-      eventSourceRef.current = es;
-
-      es.onopen = () => {
+      // 5. Terminal output. With IPC (the app, and `tauri dev`) the shell is a
+      //    child of the app and its bytes arrive as Tauri events; in a plain
+      //    browser the dev bridge still streams them over server-sent events.
+      let closeStream: () => void;
+      if (hasIpc()) {
+        let disposed = false;
+        const unlisteners: Array<() => void> = [];
+        void (async () => {
+          const { listen } = await import("@tauri-apps/api/event");
+          const offData = await listen<{ data: string }>("terminal:data", (event) => {
+            if (event.payload?.data) term.write(event.payload.data);
+          });
+          const offExit = await listen("terminal:exit", () => {
+            setIsConnected(false);
+            onConnectionChangeRef.current?.(false);
+          });
+          if (disposed) {
+            offData();
+            offExit();
+          } else {
+            unlisteners.push(offData, offExit);
+          }
+        })();
         setIsConnected(true);
         onConnectionChangeRef.current?.(true);
-      };
+        closeStream = () => {
+          disposed = true;
+          unlisteners.forEach((off) => off());
+        };
+      } else {
+        const es = new EventSource("/api/terminal/stream");
+        eventSourceRef.current = es;
 
-      es.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload.data) {
-            term.write(payload.data);
+        es.onopen = () => {
+          setIsConnected(true);
+          onConnectionChangeRef.current?.(true);
+        };
+
+        es.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.data) {
+              term.write(payload.data);
+            }
+          } catch {
+            term.write(event.data);
           }
-        } catch {
-          term.write(event.data);
-        }
-      };
+        };
 
-      es.onerror = () => {
-        setIsConnected(false);
-        onConnectionChangeRef.current?.(false);
-      };
+        es.onerror = () => {
+          setIsConnected(false);
+          onConnectionChangeRef.current?.(false);
+        };
+
+        closeStream = () => es.close();
+      }
 
       // 6. Spawn backend shell process
       initShellRef.current(false);
@@ -270,7 +318,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         resizeObserver.disconnect();
         onDataDisposable.dispose();
         onResizeDisposable.dispose();
-        es.close();
+        closeStream();
         term.dispose();
         if (flushTimeoutRef.current) clearTimeout(flushTimeoutRef.current);
       };

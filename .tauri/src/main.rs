@@ -850,6 +850,162 @@ async fn engine_call(
     }
 }
 
+// ── Interactive terminal (PTY) ──────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct TerminalChunk {
+    data: String,
+}
+
+/// The PTY child backing the integrated terminal.
+///
+/// The dev bridge owned this: it spawned `scripts/pty_bridge.py` and pushed the
+/// byte stream to the browser over server-sent events. A packaged app has no Node
+/// process, so the child is spawned here and its output is emitted as Tauri
+/// events instead. `pty_bridge.py` itself is unchanged — it already speaks
+/// newline-delimited JSON on stdin and a raw byte stream on stdout.
+pub struct TerminalState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+impl TerminalState {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+        }
+    }
+}
+
+/// Minimal JSON string escaping for the PTY control channel. Keeps the terminal
+/// off a JSON dependency for one small message shape.
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn pty_send(child: &mut std::process::Child, message: &str) -> Result<(), String> {
+    use std::io::Write;
+    let stdin = child.stdin.as_mut().ok_or("terminal stdin is closed")?;
+    stdin
+        .write_all(format!("{}\n", message).as_bytes())
+        .and_then(|_| stdin.flush())
+        .map_err(|e| format!("could not write to the terminal: {}", e))
+}
+
+/// Start (or restart) the shell. Mirrors `/api/terminal/spawn`.
+#[tauri::command]
+fn terminal_spawn(
+    app_handle: tauri::AppHandle,
+    state: State<'_, TerminalState>,
+    cwd: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    {
+        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+        if let Some(mut previous) = guard.take() {
+            let _ = pty_send(&mut previous, "{\"action\":\"kill\"}");
+            let _ = previous.kill();
+        }
+    }
+
+    let working_dir = if Path::new(&cwd).is_dir() {
+        cwd
+    } else {
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+    };
+
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "pty");
+    argv.extend([
+        "--cwd".to_string(),
+        working_dir,
+        "--cols".to_string(),
+        cols.max(10).to_string(),
+        "--rows".to_string(),
+        rows.max(4).to_string(),
+    ]);
+
+    let mut child = Command::new(&program)
+        .args(&argv)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start the terminal: {}", e))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "could not capture terminal output".to_string())?;
+
+    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
+
+    // Raw PTY bytes are forwarded as they arrive; the reader thread owns stdout.
+    let app_for_reader = app_handle.clone();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let data = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    let _ = app_for_reader.emit("terminal:data", TerminalChunk { data });
+                }
+            }
+        }
+        let _ = app_for_reader.emit("terminal:exit", ());
+    });
+
+    let _ = app_handle.emit(
+        "terminal:data",
+        TerminalChunk {
+            data: "\r\n\u{1b}[38;5;39m[Interactive PTY Shell Connected]\u{1b}[0m\r\n".to_string(),
+        },
+    );
+
+    Ok(())
+}
+
+/// Forward keystrokes. Mirrors `/api/terminal/input`; a missing shell is not an
+/// error, because the client fires these optimistically while a shell is starting.
+#[tauri::command]
+fn terminal_input(state: State<'_, TerminalState>, data: String) -> Result<(), String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    let Some(child) = guard.as_mut() else {
+        return Ok(());
+    };
+    let message = format!("{{\"action\":\"stdin\",\"data\":\"{}\"}}", json_escape(&data));
+    pty_send(child, &message)
+}
+
+/// Forward a window resize. Mirrors `/api/terminal/resize`.
+#[tauri::command]
+fn terminal_resize(state: State<'_, TerminalState>, cols: u32, rows: u32) -> Result<(), String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    let Some(child) = guard.as_mut() else {
+        return Ok(());
+    };
+    let message = format!(
+        "{{\"action\":\"resize\",\"cols\":{},\"rows\":{}}}",
+        cols.max(10),
+        rows.max(4)
+    );
+    pty_send(child, &message)
+}
+
 // ── Application Entry Point ─────────────────────────────────────────────────
 
 fn main() {
@@ -858,6 +1014,7 @@ fn main() {
             sys: Mutex::new(System::new_all()),
             active_child: Arc::new(Mutex::new(None)),
         })
+        .manage(TerminalState::new())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -873,6 +1030,9 @@ fn main() {
             create_project_template,
             pick_folder,
             engine_call,
+            terminal_spawn,
+            terminal_input,
+            terminal_resize,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

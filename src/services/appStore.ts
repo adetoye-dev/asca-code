@@ -11,7 +11,7 @@
  * and ask whether one is configured, but the value never comes back to the page.
  */
 
-import { engineCall, hasDevBridge, isPackagedBuild } from "./engineBridge";
+import { engineCall, hasDevBridge, hasIpc } from "./engineBridge";
 
 export interface StoredProvider {
   baseUrl: string;
@@ -148,11 +148,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const [rawPath, search] = path.split("?");
   const query = new URLSearchParams(search || "");
 
-  // A packaged build has no dev server. Same call, different transport.
-  if (!hasDevBridge) {
-    if (!isPackagedBuild()) {
-      throw new Error(`${path}: no backend available outside the app or the dev server`);
-    }
+  // IPC whenever it exists — the packaged app and `tauri dev` both take this path,
+  // so the transport that ships is the one under test. The browser bridge is the
+  // fallback. Same call, different transport.
+  if (hasIpc()) {
     const route = ENGINE_ROUTES[`${method} ${rawPath}`];
     if (!route) throw new Error(`no engine route for ${method} ${rawPath}`);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -176,7 +175,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const appStore = {
   // Reachable in development through the bridge and in the packaged app through
   // IPC, so the database is genuinely available in both.
-  available: hasDevBridge || isPackagedBuild(),
+  available: hasIpc() || hasDevBridge,
 
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings: () => request<Record<string, unknown>>("/api/app/settings"),

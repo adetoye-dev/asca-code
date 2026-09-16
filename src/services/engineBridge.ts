@@ -14,17 +14,38 @@
 
 export type EngineEnvelope<T> = { ok: boolean; data?: T; error?: string };
 
-/** True when the Vite dev bridge is serving `/api/*` (development only). */
-export const hasDevBridge =
-  typeof window !== "undefined" && window.location.protocol.startsWith("http");
-
-/** True when running inside the packaged Tauri webview. */
-export function isPackagedBuild(): boolean {
+/**
+ * True when Tauri IPC is available — which includes `tauri dev`, not just the
+ * packaged app, because Tauri injects its API into whatever page it loads.
+ *
+ * Everything prefers this over the dev bridge, and that is deliberate: `tauri dev`
+ * serves the UI from `localhost:5173`, so keying off the URL would keep quietly
+ * exercising the bridge and let dev-only endpoints hide again. Preferring IPC
+ * makes the normal development loop test the path that actually ships.
+ */
+export function hasIpc(): boolean {
   return (
     typeof window !== "undefined" &&
     Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__)
   );
 }
+
+/** True inside the packaged app: IPC available and no dev-server URL. */
+export function isPackagedBuild(): boolean {
+  return (
+    hasIpc() &&
+    typeof window !== "undefined" &&
+    !window.location.protocol.startsWith("http")
+  );
+}
+
+/**
+ * True only when there is no IPC and a dev server is serving `/api/*` — i.e. the
+ * UI is open in a plain browser. Kept so `npm run dev` keeps working while the
+ * bridge is retired; nothing in the app depends on it any more.
+ */
+export const hasDevBridge =
+  !hasIpc() && typeof window !== "undefined" && window.location.protocol.startsWith("http");
 
 /**
  * Run an engine subcommand over IPC and unwrap its `{ok, data}` envelope.

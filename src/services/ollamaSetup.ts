@@ -48,10 +48,9 @@ export interface OllamaProgressEvent {
 /** Ping the bridge to get Ollama install/running state + RAM-based model recommendation. */
 export async function checkOllamaStatus(): Promise<OllamaStatus> {
   try {
-    if (!hasDevBridge) {
-      if (!isPackagedBuild()) throw new Error("no backend available");
+    if (hasIpc()) {
       // The bundled engine probes 127.0.0.1:11434 itself. This is the path that
-      // makes a packaged app able to see a running Ollama at all.
+      // makes the app able to see a running Ollama at all.
       return await engineCall<OllamaStatus>("ollama", ["status"]);
     }
     const res = await fetch("/api/ollama/status", { method: "POST" });
@@ -79,7 +78,7 @@ export async function checkOllamaStatus(): Promise<OllamaStatus> {
  * than letting a packaged build fail somewhere inside the stream.
  */
 function requireDevBridge(feature: string): void {
-  if (!hasDevBridge && isPackagedBuild()) {
+  if (hasIpc() && !hasDevBridge) {
     throw new Error(`${feature} is not available in the packaged app yet.`);
   }
 }
@@ -197,8 +196,7 @@ export async function pullOllamaModel(
 /** Start the Ollama server and wait for it to become healthy (up to 6s). */
 export async function startOllamaServer(): Promise<boolean> {
   try {
-    if (!hasDevBridge) {
-      if (!isPackagedBuild()) return false;
+    if (hasIpc()) {
       const result = await engineCall<{ started: boolean }>("ollama", ["start"]);
       return Boolean(result?.started);
     }
@@ -570,4 +568,4 @@ export function startCodingWithOllama(model?: string): void {
     window.dispatchEvent(new CustomEvent(EVENT_START_CODING_WITH_OLLAMA, { detail: { model } }));
   }
 }
-import { engineCall, hasDevBridge, isPackagedBuild } from "./engineBridge";
+import { engineCall, hasDevBridge, hasIpc } from "./engineBridge";
