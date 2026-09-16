@@ -54,6 +54,7 @@ mkdir -p .tauri/binaries
   --hidden-import pty_bridge \
   --hidden-import app_db \
   --hidden-import env_file \
+  --hidden-import ollama_cli \
   --hidden-import scale_detector \
   --hidden-import mcp_client \
   core-engine/acsa_engine.py

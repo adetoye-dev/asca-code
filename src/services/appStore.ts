@@ -11,6 +11,8 @@
  * and ask whether one is configured, but the value never comes back to the page.
  */
 
+import { engineCall, hasDevBridge, isPackagedBuild } from "./engineBridge";
+
 export interface StoredProvider {
   baseUrl: string;
   selectedModel: string;
@@ -50,10 +52,116 @@ export interface Account {
   displayName: string;
 }
 
-/** True when the bridge (dev) owns the database; false in a packaged build. */
-const hasBridge = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+/**
+ * The dev bridge exposes this store as REST; a packaged build has no server, so
+ * the same calls go to the engine over IPC. Each entry maps one onto the other —
+ * this table is the entire difference between the two transports, because every
+ * method below funnels through `request()`.
+ */
+type EngineRoute = {
+  command: string;
+  payload?: (ctx: {
+    body: any;
+    query: URLSearchParams;
+    headers: Record<string, string>;
+  }) => Record<string, unknown>;
+};
+
+const ENGINE_ROUTES: Record<string, EngineRoute> = {
+  "GET /api/app/settings": { command: "settings.get" },
+  "POST /api/app/settings": {
+    command: "settings.set",
+    payload: ({ body }) => ({ key: body.key, value: body.value }),
+  },
+  "GET /api/app/providers": { command: "providers.get" },
+  "POST /api/app/providers": {
+    command: "providers.upsert",
+    payload: ({ body }) => ({
+      id: body.id,
+      baseUrl: body.baseUrl,
+      selectedModel: body.selectedModel,
+      availableModels: body.availableModels,
+    }),
+  },
+  "GET /api/app/secrets": { command: "secrets.list" },
+  "POST /api/app/secrets": {
+    command: "secrets.set",
+    payload: ({ body }) => ({ name: body.name, value: body.value ?? "" }),
+  },
+  "DELETE /api/app/secrets": {
+    command: "secrets.delete",
+    payload: ({ query }) => ({ name: query.get("name") }),
+  },
+  "GET /api/app/projects": {
+    command: "projects.list",
+    payload: ({ query }) => ({ limit: Number(query.get("limit")) || 10 }),
+  },
+  "POST /api/app/projects": {
+    command: "projects.touch",
+    payload: ({ body }) => ({ path: body.path, name: body.name }),
+  },
+  "POST /api/app/projects/forget": {
+    command: "projects.forget",
+    payload: ({ body }) => ({ path: body.path }),
+  },
+  "GET /api/app/projects/active": { command: "projects.active" },
+  "GET /api/app/chat": {
+    command: "chat.load",
+    payload: ({ query }) => ({ projectPath: query.get("projectRoot") || "" }),
+  },
+  "POST /api/app/chat": {
+    command: "chat.save",
+    payload: ({ body }) => ({ projectPath: body.projectRoot, messages: body.messages }),
+  },
+  "POST /api/app/chat/clear": {
+    command: "chat.clear",
+    payload: ({ body }) => ({ projectPath: body.projectRoot }),
+  },
+  "GET /api/app/usage": {
+    command: "usage.summary",
+    payload: ({ query }) => ({
+      projectPath: query.get("projectRoot") || undefined,
+      sinceTs: Number(query.get("sinceTs")) || 0,
+    }),
+  },
+  "POST /api/app/auth/register": { command: "auth.register", payload: ({ body }) => body },
+  "POST /api/app/auth/login": { command: "auth.login", payload: ({ body }) => body },
+  "POST /api/app/auth/logout": {
+    command: "auth.logout",
+    payload: ({ body }) => ({ token: body.token }),
+  },
+  "GET /api/app/auth/me": {
+    command: "auth.me",
+    payload: ({ headers }) => ({ token: headers["x-acsa-session"] || "" }),
+  },
+};
+
+function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+  if (Array.isArray(headers)) return Object.fromEntries(headers);
+  return { ...headers };
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || "GET").toUpperCase();
+  const [rawPath, search] = path.split("?");
+  const query = new URLSearchParams(search || "");
+
+  // A packaged build has no dev server. Same call, different transport.
+  if (!hasDevBridge) {
+    if (!isPackagedBuild()) {
+      throw new Error(`${path}: no backend available outside the app or the dev server`);
+    }
+    const route = ENGINE_ROUTES[`${method} ${rawPath}`];
+    if (!route) throw new Error(`no engine route for ${method} ${rawPath}`);
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const payload = route.payload
+      ? route.payload({ body, query, headers: normalizeHeaders(init?.headers) })
+      : {};
+    return engineCall<T>("db", [route.command, JSON.stringify(payload)]);
+  }
+
   const res = await fetch(path, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
@@ -66,7 +174,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const appStore = {
-  available: hasBridge,
+  // Reachable in development through the bridge and in the packaged app through
+  // IPC, so the database is genuinely available in both.
+  available: hasDevBridge || isPackagedBuild(),
 
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings: () => request<Record<string, unknown>>("/api/app/settings"),

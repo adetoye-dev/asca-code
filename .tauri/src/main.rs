@@ -793,6 +793,63 @@ fn fetch_system_metrics(state: State<'_, AppState>) -> Result<SystemMetrics, Str
     })
 }
 
+// ── Tauri Command: engine_call ──────────────────────────────────────────────
+
+/// Run an engine subcommand and return its JSON envelope.
+///
+/// Everything the UI read from `/api/app/*` and `/api/ollama/*` was implemented
+/// in `vite-fs-bridge.ts`, a Vite dev-server middleware. `configureServer` never
+/// runs in a build, so a packaged app had no way to reach the database or Ollama
+/// at all — it fell back to built-in defaults, which showed up as an unconfigured
+/// provider list and "Ollama is not installed" on a machine where Ollama was
+/// running. This exposes the same engine surface over IPC instead.
+///
+/// Whitelisted on purpose: this is a bridge to the bundled engine, not a general
+/// command runner.
+#[tauri::command]
+async fn engine_call(
+    app_handle: tauri::AppHandle,
+    subcommand: String,
+    args: Vec<String>,
+) -> Result<String, String> {
+    const ALLOWED: [&str; 3] = ["db", "ollama", "index"];
+    if !ALLOWED.contains(&subcommand.as_str()) {
+        return Err(format!("engine subcommand not allowed: {}", subcommand));
+    }
+
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), &subcommand);
+    argv.extend(args);
+
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        Command::new(&program).args(&argv).output()
+    })
+    .await
+    .map_err(|e| format!("engine task failed: {}", e))?
+    .map_err(|e| format!("could not run the engine: {}", e))?;
+
+    // The engine writes structured log lines before its result, so the envelope
+    // is the last non-empty line — the same rule the dev bridge uses.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_string);
+
+    match last {
+        Some(line) => Ok(line),
+        None => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(if stderr.trim().is_empty() {
+                format!("engine {} produced no output", subcommand)
+            } else {
+                stderr.trim().to_string()
+            })
+        }
+    }
+}
+
 // ── Application Entry Point ─────────────────────────────────────────────────
 
 fn main() {
@@ -815,6 +872,7 @@ fn main() {
             delete_project_file,
             create_project_template,
             pick_folder,
+            engine_call,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

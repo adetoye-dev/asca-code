@@ -57,6 +57,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "db": ("db_cli", "run"),
     "index": ("project_indexer", "main"),
     "pty": ("pty_bridge", "main"),
+    "ollama": ("ollama_cli", "run"),
 }
 
 

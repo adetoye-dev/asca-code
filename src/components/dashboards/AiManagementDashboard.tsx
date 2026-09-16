@@ -70,6 +70,13 @@ export function AiManagementDashboard({
 
   const activeProvider = providers[selectedId] || providers.ollama;
 
+  // The registry's `isConnected` for the local provider is a static default: only
+  // cloud providers have it recomputed from a stored key. Trusting it here made
+  // the header claim "Connected & Verified" directly above a panel reading "Not
+  // installed". Derive the local provider's state from the live probe instead.
+  const activeConnected =
+    activeProvider.id === "ollama" ? ollamaStatus?.running === true : activeProvider.isConnected;
+
   // Sync inputs when selected provider changes
   useEffect(() => {
     if (activeProvider) {
@@ -446,11 +453,11 @@ export function AiManagementDashboard({
                     <div className="flex items-center gap-2 mt-1">
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          activeProvider.isConnected ? "bg-emerald-400" : "bg-zinc-600"
+                          activeConnected ? "bg-emerald-400" : "bg-zinc-600"
                         }`}
                       />
                       <span className="text-[11px] font-mono text-zinc-400 font-medium">
-                        {activeProvider.isConnected
+                        {activeConnected
                           ? "Connected & Verified"
                           : activeProvider.category === "local"
                           ? "Offline / Not Running"
@@ -498,10 +505,11 @@ export function AiManagementDashboard({
                           <Icon icon={Loader2} className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
                         ) : (
                           <span
+                            title={ollamaStatus.error || undefined}
                             className={`flex items-center gap-1.5 text-xs font-mono font-semibold ${
                               ollamaStatus.running
                                 ? "text-emerald-400"
-                                : ollamaStatus.installed
+                                : ollamaStatus.error || ollamaStatus.installed
                                   ? "text-amber-400"
                                   : "text-red-400"
                             }`}
@@ -510,16 +518,18 @@ export function AiManagementDashboard({
                               className={`w-2 h-2 rounded-full ${
                                 ollamaStatus.running
                                   ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
-                                  : ollamaStatus.installed
+                                  : ollamaStatus.error || ollamaStatus.installed
                                     ? "bg-amber-400"
                                     : "bg-red-400"
                               }`}
                             />
                             {ollamaStatus.running
                               ? "Running"
-                              : ollamaStatus.installed
-                                ? "Stopped"
-                                : "Not installed"}
+                              : ollamaStatus.error
+                                ? "Detection unavailable"
+                                : ollamaStatus.installed
+                                  ? "Stopped"
+                                  : "Not installed"}
                           </span>
                         )}
                       </div>
