@@ -83,10 +83,35 @@ jobs:
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
+      # `notarytool` reads the password from stdin when the one it was given is
+      # empty, so a blank APPLE_PASSWORD shows up as a silent hang inside the
+      # bundle step — 35 minutes, zero output, no error. Verify the credentials
+      # with an authenticated round-trip first: it fails in seconds and names the
+      # variable instead of looking like a slow notarisation.
+      - name: Preflight the notarisation credentials
+        if: env.APPLE_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "$(printenv "$v" || true)" ]; then
+              echo "::error::$v is empty or unset — notarytool would block waiting for input."
+              exit 1
+            fi
+          done
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json > /dev/null
+          echo "Notarisation credentials accepted."
+
       # Tauri signs from APPLE_SIGNING_IDENTITY and notarises automatically when
       # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are present.
       - name: Bundle
         working-directory: .tauri
+        # Notarisation waits on Apple; cap it so a stuck submission fails the job
+        # in half an hour instead of running until the 6h job limit.
+        timeout-minutes: 30
         run: ../node_modules/.bin/tauri build --bundles app,dmg
 
       - name: Confirm the bundle resolves its engine
