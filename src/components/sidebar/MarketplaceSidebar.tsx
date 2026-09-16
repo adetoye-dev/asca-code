@@ -42,6 +42,7 @@ import {
   type MarketplaceItem,
   type MarketplaceKind,
 } from "../../services/marketplace";
+import { marketplaceFetch } from "../../services/marketplaceClient";
 
 interface MarketplaceSidebarProps {
   projectRoot?: string;
@@ -71,7 +72,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
 
   const refreshInstalled = async () => {
     try {
-      const res = await fetch(`/api/skills/list?projectRoot=${encodeURIComponent(projectRoot)}`);
+      const res = await marketplaceFetch(`/api/skills/list?projectRoot=${encodeURIComponent(projectRoot)}`);
       if (res.ok) {
         const data = await res.json();
         setInstalledSkills(

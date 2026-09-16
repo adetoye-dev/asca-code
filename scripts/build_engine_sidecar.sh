@@ -32,6 +32,9 @@ if [[ ! -x "${VENV}/bin/pyinstaller" ]]; then
 fi
 
 mkdir -p .tauri/binaries
+# `skill_loader` resolves the built-in skills relative to its own file, so the
+# markdown has to travel with it — otherwise the frozen engine reports an empty
+# skill catalog and the marketplace looks broken in the packaged app.
 
 # The dispatcher imports its entry points dynamically, so they are declared
 # explicitly; PyInstaller's static analysis cannot see them.
@@ -57,7 +60,11 @@ mkdir -p .tauri/binaries
   --hidden-import ollama_cli \
   --hidden-import git_cli \
   --hidden-import indexer_cli \
+  --hidden-import skills_cli \
+  --hidden-import mcp_cli \
+  --hidden-import skill_loader \
   --hidden-import scale_detector \
+  --add-data "${REPO_ROOT}/core-engine/skills:skills" \
   --hidden-import mcp_client \
   core-engine/acsa_engine.py
 

@@ -60,6 +60,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "ollama": ("ollama_cli", "run"),
     "git": ("git_cli", "run"),
     "indexer": ("indexer_cli", "run"),
+    "skills": ("skills_cli", "run"),
+    "mcp": ("mcp_cli", "run"),
 }
 
 
