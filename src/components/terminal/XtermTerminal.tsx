@@ -14,9 +14,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { hasIpc } from "../../services/engineBridge";
 
 /** Call the terminal IPC channel when it exists, else the dev bridge endpoint. */
-async function invokeTerminal(command: string, args: Record<string, unknown>): Promise<void> {
+async function invokeTerminal<T = void>(command: string, args: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke(command, args);
+  return (await invoke(command, args)) as T;
 }
 
 export interface XtermTerminalHandle {
@@ -40,6 +40,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
+    /** PID of the shell currently attached, so a replaced shell's exit is ignored. */
+    const terminalPidRef = useRef<number | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const inputBufferRef = useRef<string>("");
     const flushTimeoutRef = useRef<any>(null);
@@ -111,7 +113,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
           const cols = termRef.current?.cols || 80;
           const rows = termRef.current?.rows || 24;
           if (hasIpc()) {
-            await invokeTerminal("terminal_spawn", { cwd, cols, rows });
+            terminalPidRef.current = await invokeTerminal<number>("terminal_spawn", { cwd, cols, rows });
             setIsConnected(true);
             onConnectionChangeRef.current?.(true);
           } else {
@@ -239,10 +241,18 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         const unlisteners: Array<() => void> = [];
         void (async () => {
           const { listen } = await import("@tauri-apps/api/event");
-          const offData = await listen<{ data: string }>("terminal:data", (event) => {
-            if (event.payload?.data) term.write(event.payload.data);
+          const offData = await listen<{ pid?: number; data?: string }>("terminal:data", (event) => {
+            const { pid, data } = event.payload ?? {};
+            // Output from a shell that has already been replaced is not this session's.
+            if (pid !== undefined && pid !== terminalPidRef.current) return;
+            if (data) term.write(data);
           });
-          const offExit = await listen("terminal:exit", () => {
+          const offExit = await listen<{ pid?: number }>("terminal:exit", (event) => {
+            // Restarting kills the previous child, which then reports exit. Without
+            // this check that parting message marks the *new* session dead, and the
+            // terminal only recovers on a full reload.
+            const { pid } = event.payload ?? {};
+            if (pid !== undefined && pid !== terminalPidRef.current) return;
             setIsConnected(false);
             onConnectionChangeRef.current?.(false);
           });

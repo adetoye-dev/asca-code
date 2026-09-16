@@ -866,7 +866,16 @@ async fn engine_call(
 
 #[derive(Clone, Serialize)]
 struct TerminalChunk {
+    /// Which shell this came from. Restarting kills the previous child, whose reader
+    /// thread then reports exit — without this the new session is marked dead by the
+    /// old one's parting message, and the terminal only works after a full reload.
+    pid: u32,
     data: String,
+}
+
+#[derive(Clone, Serialize)]
+struct TerminalExit {
+    pid: u32,
 }
 
 /// The PTY child backing the integrated terminal.
@@ -923,7 +932,7 @@ fn terminal_spawn(
     cwd: String,
     cols: u32,
     rows: u32,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     {
         let mut guard = state.child.lock().map_err(|e| e.to_string())?;
         if let Some(mut previous) = guard.take() {
@@ -962,6 +971,7 @@ fn terminal_spawn(
         .take()
         .ok_or_else(|| "could not capture terminal output".to_string())?;
 
+    let pid = child.id();
     *state.child.lock().map_err(|e| e.to_string())? = Some(child);
 
     // Raw PTY bytes are forwarded as they arrive; the reader thread owns stdout.
@@ -974,21 +984,22 @@ fn terminal_spawn(
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
                     let data = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    let _ = app_for_reader.emit("terminal:data", TerminalChunk { data });
+                    let _ = app_for_reader.emit("terminal:data", TerminalChunk { pid, data });
                 }
             }
         }
-        let _ = app_for_reader.emit("terminal:exit", ());
+        let _ = app_for_reader.emit("terminal:exit", TerminalExit { pid });
     });
 
     let _ = app_handle.emit(
         "terminal:data",
         TerminalChunk {
+            pid,
             data: "\r\n\u{1b}[38;5;39m[Interactive PTY Shell Connected]\u{1b}[0m\r\n".to_string(),
         },
     );
 
-    Ok(())
+    Ok(pid)
 }
 
 /// Forward keystrokes. Mirrors `/api/terminal/input`; a missing shell is not an
