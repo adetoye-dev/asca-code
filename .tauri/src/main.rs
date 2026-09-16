@@ -812,7 +812,7 @@ async fn engine_call(
     subcommand: String,
     args: Vec<String>,
 ) -> Result<String, String> {
-    const ALLOWED: [&str; 4] = ["db", "ollama", "index", "git"];
+    const ALLOWED: [&str; 5] = ["db", "ollama", "index", "git", "indexer"];
     if !ALLOWED.contains(&subcommand.as_str()) {
         return Err(format!("engine subcommand not allowed: {}", subcommand));
     }
