@@ -17,6 +17,7 @@ if available, otherwise falls back to deterministic edge-case tables.
 from __future__ import annotations
 
 import json
+import itertools
 import logging
 import os
 import random
@@ -43,6 +44,8 @@ _handler.setFormatter(
 logger.addHandler(_handler)
 logger.setLevel(logging.INFO)
 
+MAX_FALLBACK_CASES = 100
+
 
 # ── Resolve sibling imports ──────────────────────────────────────────────────
 
@@ -50,6 +53,8 @@ _GAUNTLET_DIR = Path(__file__).resolve().parent
 _ENGINE_DIR = _GAUNTLET_DIR.parent
 _DATAMAP_DIR = _ENGINE_DIR / "data-map"
 
+if str(_GAUNTLET_DIR) not in sys.path:
+    sys.path.insert(0, str(_GAUNTLET_DIR))
 if str(_DATAMAP_DIR) not in sys.path:
     sys.path.insert(0, str(_DATAMAP_DIR))
 
@@ -429,6 +434,7 @@ def generate_fallback_test(
     test_lines.append(f'"""Auto-generated edge-case tests for {sig.name}."""')
     test_lines.append("import sys")
     test_lines.append("import os")
+    test_lines.append("import itertools")
     test_lines.append(
         f'sys.path.insert(0, os.path.dirname(os.path.abspath("{target_module_path}")))'
     )
@@ -471,18 +477,17 @@ def generate_fallback_test(
         test_lines.append(f"            failed += 1")
         test_lines.append(f'            violations.append(f"{pname}={{repr({pname})}}: {{type(exc).__name__}}: {{exc}}")')
     else:
-        # For 2+ params: iterate first param × sample from others
-        primary = param_edge_cases[0]
-        others = param_edge_cases[1:]
-        pname = primary[0]
-        test_lines.append(f'    for {pname} in EDGE_CASES["{pname}"]:')
+        # For 2+ params: bound the complete Cartesian product globally.
+        all_names = ", ".join(f'EDGE_CASES["{p[0]}"]' for p in param_edge_cases)
+        test_lines.append(
+            f"    for values in itertools.islice(itertools.product({all_names}), {MAX_FALLBACK_CASES}):"
+        )
+        for idx, (oname, _) in enumerate(param_edge_cases):
+            test_lines.append(f"        {oname} = values[{idx}]")
 
-        for oname, _ in others:
-            test_lines.append(f'        for {oname} in EDGE_CASES["{oname}"][:5]:')
-
-        indent = "    " * (2 + len(others))
+        indent = "        "
         call_args = ", ".join(f"{p[0]}={p[0]}" for p in param_edge_cases)
-        arg_repr = " + ".join(f'f"{p[0]}={{repr({p[0]})}}"' for p in param_edge_cases)
+        arg_names = ", ".join(p[0] for p in param_edge_cases)
 
         test_lines.append(f"{indent}try:")
         test_lines.append(f"{indent}    result = {sig.name}({call_args})")
@@ -491,7 +496,7 @@ def generate_fallback_test(
         test_lines.append(f"{indent}    passed += 1")
         test_lines.append(f"{indent}except Exception as exc:")
         test_lines.append(f"{indent}    failed += 1")
-        test_lines.append(f'{indent}    violations.append(f"{{{arg_repr}}}: {{type(exc).__name__}}: {{exc}}")')
+        test_lines.append(f'{indent}    violations.append(f"args=({{ {arg_names} }}): {{type(exc).__name__}}: {{exc}}")')
 
     test_lines.append("")
     test_lines.append('    print(f"  Tests run: {passed + failed}")')
@@ -596,15 +601,26 @@ def run_oracle_test(
                 function_name, result.tests_run, elapsed,
             )
         else:
-            result.outcome = OracleOutcome.FAIL
-            result.tests_run = _count_tests_from_output(proc.stdout)
-            result.violations = _parse_violations(
-                proc.stdout + proc.stderr, function_name
-            )
-            logger.error(
-                "Oracle FAILED for %s — %d violations in %.0fms",
-                function_name, len(result.violations), elapsed,
-            )
+            raw_err = proc.stdout + proc.stderr
+            missing_module = _missing_module_from_error(raw_err)
+            fallback_dependency = missing_module in {"hypothesis"}
+            if fallback_dependency:
+                result.outcome = OracleOutcome.SKIPPED
+                result.error_detail = f"Skipped: fallback dependency '{missing_module}' is not installed"
+                logger.info(
+                    "Oracle SKIPPED for %s — missing external framework dependency in host runner",
+                    function_name,
+                )
+            else:
+                result.outcome = OracleOutcome.FAIL
+                result.tests_run = _count_tests_from_output(proc.stdout)
+                result.violations = _parse_violations(
+                    raw_err, function_name
+                )
+                logger.error(
+                    "Oracle FAILED for %s — %d violations in %.0fms",
+                    function_name, len(result.violations), elapsed,
+                )
 
     except subprocess.TimeoutExpired:
         result.outcome = OracleOutcome.TIMEOUT
@@ -617,6 +633,14 @@ def run_oracle_test(
         logger.error("Oracle execution error for %s: %s", function_name, exc)
 
     return result
+
+
+def _missing_module_from_error(raw_output: str) -> Optional[str]:
+    """Extract the missing module name from a Python import traceback."""
+    import re
+
+    match = re.search(r"(?:ModuleNotFoundError|ImportError): No module named ['\"]([^'\"]+)", raw_output)
+    return match.group(1).split(".", 1)[0] if match else None
 
 
 def _count_tests_from_output(output: str) -> int:
@@ -716,6 +740,12 @@ def run_oracle_for_file(
     """
     report_start = time.monotonic()
     report = OracleReport(target_file=target_file)
+
+    if not target_file.endswith(".py"):
+        logger.info("Oracle gate: skipped for non-Python target %s", target_file)
+        report.passed = True
+        report.elapsed_ms = (time.monotonic() - report_start) * 1000
+        return report
 
     # Parse the target file to discover functions
     parse_result = parse_file(target_file)

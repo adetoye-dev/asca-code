@@ -96,6 +96,342 @@ pub struct AppState {
     active_child: Arc<Mutex<Option<u32>>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileNode {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub children: Option<Vec<FileNode>>,
+}
+
+fn build_file_tree(dir: &std::path::Path, max_depth: usize) -> Vec<FileNode> {
+    if max_depth == 0 || !dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Ignore hidden and heavy build dirs
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "__pycache__"
+                || name == "target"
+                || name == "dist"
+                || name == ".venv"
+                || name == "venv"
+            {
+                continue;
+            }
+
+            let is_dir = path.is_dir();
+            let size_bytes = if is_dir {
+                0
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+
+            let children = if is_dir {
+                Some(build_file_tree(&path, max_depth - 1))
+            } else {
+                None
+            };
+
+            entries.push(FileNode {
+                name,
+                path: path.to_string_lossy().to_string(),
+                is_dir,
+                size_bytes,
+                children,
+            });
+        }
+    }
+
+    // Sort: directories first, then alphabetical by name
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    entries
+}
+
+// ── Tauri Commands: File & Project Management ───────────────────────────────
+
+fn canonicalize_project_root(project_root: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(project_root);
+    let absolute_root = if root.is_absolute() {
+        root
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("Failed to resolve current directory: {}", e))?
+            .join(root)
+    };
+
+    Ok(absolute_root.canonicalize().unwrap_or(absolute_root))
+}
+
+fn resolve_project_path(project_root: &str, target_path: &str) -> Result<PathBuf, String> {
+    let root = canonicalize_project_root(project_root)?;
+    let target = PathBuf::from(target_path);
+    let absolute_target = if target.is_absolute() {
+        target
+    } else {
+        root.join(target)
+    };
+
+    if absolute_target
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "Refusing to resolve path outside the active project root: {}",
+            target_path
+        ));
+    }
+
+    let resolved = if absolute_target.exists() {
+        absolute_target
+            .canonicalize()
+            .unwrap_or_else(|_| absolute_target.clone())
+    } else {
+        // Canonicalize the closest existing ancestor, then re-append the tail.
+        let mut existing = absolute_target.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        while !existing.exists() {
+            match existing.file_name() {
+                Some(name) => tail.push(name.to_os_string()),
+                None => break,
+            }
+            if !existing.pop() {
+                break;
+            }
+        }
+        let mut base = existing.canonicalize().unwrap_or(existing);
+        for name in tail.into_iter().rev() {
+            base.push(name);
+        }
+        base
+    };
+
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "Refusing to access target outside the active project root: {}",
+            target_path
+        ));
+    }
+
+    Ok(resolved)
+}
+
+#[tauri::command]
+fn list_project_files(project_path: String) -> Result<Vec<FileNode>, String> {
+    let path = canonicalize_project_root(&project_path)?;
+    if !path.exists() {
+        return Err(format!("Directory does not exist: {}", project_path));
+    }
+    Ok(build_file_tree(&path, 5))
+}
+
+#[tauri::command]
+fn read_file_content(file_path: String, project_root: String) -> Result<String, String> {
+    let path = resolve_project_path(&project_root, &file_path)?;
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    // Cap at 2MB to prevent freezing
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 2 * 1024 * 1024 {
+        return Err("File exceeds 2MB limit for direct editing".to_string());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[tauri::command]
+fn write_file_content(file_path: String, content: String, project_root: String) -> Result<(), String> {
+    let path = resolve_project_path(&project_root, &file_path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+    }
+    std::fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[tauri::command]
+fn create_file_or_folder(path: String, is_dir: bool, project_root: String) -> Result<(), String> {
+    let p = resolve_project_path(&project_root, &path)?;
+    if is_dir {
+        std::fs::create_dir_all(&p).map_err(|e| format!("Failed to create directory: {}", e))
+    } else {
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+        std::fs::write(&p, "").map_err(|e| format!("Failed to create file: {}", e))
+    }
+}
+
+#[tauri::command]
+fn delete_project_file(path: String, project_root: String) -> Result<(), String> {
+    let p = resolve_project_path(&project_root, &path)?;
+    if !p.exists() {
+        return Ok(());
+    }
+    if p.is_dir() {
+        std::fs::remove_dir_all(&p).map_err(|e| format!("Failed to delete directory: {}", e))
+    } else {
+        std::fs::remove_file(&p).map_err(|e| format!("Failed to delete file: {}", e))
+    }
+}
+
+#[tauri::command]
+fn pick_folder() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("POSIX path of (choose folder with prompt \"Select Project Directory:\")")
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(s.trim_end_matches('/').to_string()))
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+fn create_project_template(
+    name: String,
+    template: String,
+    parent_dir: Option<String>,
+) -> Result<String, String> {
+    let clean_name = name.trim().replace(
+        |c: char| !c.is_alphanumeric() && c != '-' && c != '_',
+        "_",
+    );
+    if clean_name.is_empty() {
+        return Err("Project name cannot be empty".to_string());
+    }
+
+    let base = match parent_dir {
+        Some(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => {
+            if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+            {
+                PathBuf::from(home).join("AutonomousProjects")
+            } else {
+                PathBuf::from("projects")
+            }
+        }
+    };
+
+    let project_dir = base.join(&clean_name);
+    std::fs::create_dir_all(&project_dir)
+        .map_err(|e| format!("Failed to create project directory: {}", e))?;
+
+    match template.to_lowercase().as_str() {
+        "fastapi" => {
+            let _ = std::fs::write(
+                project_dir.join("main.py"),
+                format!(
+                    "from fastapi import FastAPI\n\napp = FastAPI(title=\"{}\")\n\n@app.get(\"/\")\ndef root():\n    return {{\"status\": \"online\", \"project\": \"{}\"}}\n",
+                    clean_name, clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("models.py"),
+                "from pydantic import BaseModel\n\nclass Item(BaseModel):\n    name: str\n    description: str | None = None\n",
+            );
+            let _ = std::fs::write(
+                project_dir.join("requirements.txt"),
+                "fastapi>=0.110.0\nuvicorn>=0.28.0\npydantic>=2.0.0\n",
+            );
+            let _ = std::fs::write(
+                project_dir.join("README.md"),
+                format!("# {}\n\nFastAPI service created with Autonomous IDE.\n", clean_name),
+            );
+        }
+        "express" => {
+            let _ = std::fs::write(
+                project_dir.join("server.js"),
+                format!(
+                    "const express = require('express');\nconst app = express();\nconst port = process.env.PORT || 3000;\n\napp.use(express.json());\n\napp.get('/', (req, res) => {{\n  res.json({{ status: 'online', project: '{}' }});\n}});\n\napp.listen(port, () => console.log(`Server running on port ${{port}}`));\n",
+                    clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("package.json"),
+                format!(
+                    "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"main\": \"server.js\",\n  \"dependencies\": {{\n    \"express\": \"^4.19.2\"\n  }}\n}}\n",
+                    clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("README.md"),
+                format!("# {}\n\nExpress service created with Autonomous IDE.\n", clean_name),
+            );
+        }
+        "typescript" => {
+            let src_dir = project_dir.join("src");
+            let _ = std::fs::create_dir_all(&src_dir);
+            let _ = std::fs::write(
+                src_dir.join("index.ts"),
+                format!(
+                    "export function greet(name: string): string {{\n  return `Hello ${{name}}!`;\n}}\n\nconsole.log(greet('{}'));\n",
+                    clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("tsconfig.json"),
+                "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"esModuleInterop\": true\n  }\n}\n",
+            );
+            let _ = std::fs::write(
+                project_dir.join("package.json"),
+                format!(
+                    "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\"\n}}\n",
+                    clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("README.md"),
+                format!("# {}\n\nTypeScript project created with Autonomous IDE.\n", clean_name),
+            );
+        }
+        _ => {
+            let _ = std::fs::write(
+                project_dir.join("main.py"),
+                format!(
+                    "def main():\n    print(\"Hello from {}\")\n\nif __name__ == '__main__':\n    main()\n",
+                    clean_name
+                ),
+            );
+            let _ = std::fs::write(
+                project_dir.join("README.md"),
+                format!("# {}\n\nAutonomous IDE Project.\n", clean_name),
+            );
+        }
+    }
+
+    Ok(project_dir.to_string_lossy().to_string())
+}
+
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
 
 fn resolve_engine_dir() -> PathBuf {
@@ -414,6 +750,13 @@ fn main() {
             run_generation_pipeline,
             cancel_generation_pipeline,
             fetch_system_metrics,
+            list_project_files,
+            read_file_content,
+            write_file_content,
+            create_file_or_folder,
+            delete_project_file,
+            create_project_template,
+            pick_folder,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

@@ -1,0 +1,49 @@
+/**
+ * semantics.css — Tier 2 Semantic Mappings
+ *
+ * Implements:
+ * - Surface roles, border roles, text roles
+ * - Dynamic VS Code theme engine integration
+ * - 5-glyph universal lifecycle taxonomy tokens
+ */
+
+:root {
+  /* ── Surface Semantic Roles ── */
+  --surface-canvas: var(--vscode-editor-bg, var(--obsidian-950));
+  --surface-workbench: var(--vscode-sidebar-bg, var(--obsidian-900));
+  --surface-panel: var(--vscode-panel-bg, var(--obsidian-850));
+  --surface-overlay: var(--obsidian-750);
+  --surface-modal: var(--obsidian-700);
+  --surface-elevated: var(--obsidian-800);
+  --surface-subtle: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.07);
+  --surface-active: rgba(255, 255, 255, 0.12);
+  --surface-selected: var(--surface-active);
+
+  /* ── Border Semantic Roles ── */
+  --border-hairline: rgba(255, 255, 255, 0.08);
+  --border-accent: var(--vscode-accent, rgba(255, 255, 255, 0.20));
+  --border-focus: rgba(255, 255, 255, 0.25);
+
+  /* ── Text Semantic Roles ── */
+  --text-primary: var(--vscode-editor-fg, var(--obsidian-100));
+  --text-secondary: var(--obsidian-300);
+  --text-muted: var(--obsidian-400);
+  --text-accent: var(--vscode-accent, var(--obsidian-100));
+  --text-primary-icon: var(--vscode-accent, var(--obsidian-100));
+  --text-inverse: #09090b;
+  --action-primary: var(--vscode-accent, var(--obsidian-accent-purple));
+
+  /* ── Universal 5-Glyph Lifecycle Taxonomy Roles ── */
+  --status-success: #10b981; /* Emerald Checkmark: completed, healthy, passed */
+  --status-progress: #a855f7; /* Purple Clock: active, spinning, building */
+  --status-action: #d946ef;   /* Magenta Pie: needs action, review, attention */
+  --status-pending: #f59e0b;  /* Amber Crescent: queued, waiting, paused */
+  --status-open: #71717a;     /* Gray Dashed Ring: open, idle, neutral */
+
+  --status-success-bg: rgba(16, 185, 129, 0.12);
+  --status-progress-bg: rgba(168, 85, 247, 0.12);
+  --status-action-bg: rgba(217, 70, 239, 0.12);
+  --status-pending-bg: rgba(245, 158, 11, 0.12);
+  --status-open-bg: rgba(113, 113, 122, 0.12);
+}

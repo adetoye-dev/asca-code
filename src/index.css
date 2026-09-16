@@ -1,11 +1,99 @@
+@import "dockview/dist/styles/dockview.css";
+@import "@xterm/xterm/css/xterm.css";
+@import "./styles/tokens/primitives.css";
+@import "./styles/tokens/semantics.css";
+@import "./styles/tokens/components.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ide-ui-font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ide-mono-font: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --ide-font-family: var(--ide-mono-font);
+  --vscode-editor-bg: #09090b;
+  --vscode-editor-fg: #e4e4e7;
+  --vscode-sidebar-bg: #0f0f12;
+  --vscode-titlebar-bg: #09090b;
+  --vscode-activitybar-bg: #09090b;
+  --vscode-statusbar-bg: #09090b;
+  --vscode-statusbar-fg: #a1a1aa;
+  --vscode-accent: #e4e4e7;
+  --vscode-border: rgba(255, 255, 255, 0.08);
+  --vscode-panel-bg: #0f0f12;
+  --vscode-tab-active-bg: #09090b;
+  --vscode-tab-inactive-bg: #141417;
+}
+
+.dockview-theme-dark {
+  --dv-group-view-background-color: var(--vscode-editor-bg);
+  --dv-drag-over-background-color: rgba(168, 85, 247, 0.15);
+  --dv-drag-over-border-color: #a855f7;
+  --dv-tabs-and-actions-container-background-color: var(--vscode-titlebar-bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--vscode-tab-active-bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--vscode-tab-inactive-bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--vscode-tab-active-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--vscode-tab-inactive-bg);
+  --dv-tab-divider-color: var(--vscode-border);
+  --dv-separator-border: var(--vscode-border);
+}
+
+.dv-dockview,
+.dv-groupview,
+.dv-watermark,
+.dv-watermark-container {
+  background-color: var(--vscode-editor-bg) !important;
+}
+
+/* Monaco Editor Line Highlight Customization: Pleasing matte neutral grey, zero harsh borders */
+.monaco-editor .view-overlays .current-line,
+.monaco-editor.focused .view-overlays .current-line {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: none !important;
+}
+
+.monaco-editor .margin-view-overlays .current-line-margin,
+.monaco-editor.focused .margin-view-overlays .current-line-margin {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border: none !important;
+}
+
+.monaco-editor .view-overlays .current-line-exact,
+.monaco-editor .margin-view-overlays .current-line-exact-margin {
+  border: none !important;
+}
+
+.monaco-editor .selected-text {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
 @layer base {
   body {
-    @apply bg-zinc-950 text-zinc-100 antialiased selection:bg-sky-500 selection:text-white;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    @apply bg-zinc-950 text-zinc-100 antialiased selection:bg-zinc-700/60 selection:text-white font-sans;
+    font-family: var(--ide-ui-font);
+    font-size: 13px;
+    line-height: 1.5;
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button, input, select, textarea {
+    font-family: var(--ide-ui-font);
+  }
+
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+  }
+
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--border-focus);
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--ide-mono-font);
   }
 }
 
@@ -26,4 +114,27 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #52525b;
+}
+
+/* Custom styling for embedded xterm terminal ensuring non-clipping text */
+.xterm-terminal-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #121214;
+}
+
+.xterm-terminal-container .xterm {
+  padding: 4px 8px 8px 8px;
+  box-sizing: border-box;
+  height: 100%;
+}
+
+.xterm-terminal-container .xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm-terminal-container .xterm-screen {
+  padding: 0 !important;
 }

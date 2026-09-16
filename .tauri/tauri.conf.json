@@ -40,8 +40,12 @@
   },
 
   "bundle": {
-    "active": false,
+    "active": true,
     "createUpdaterArtifacts": false,
+
+    "icon": [
+      "icons/icon.png"
+    ],
 
     "targets": "all",
 
@@ -88,13 +92,8 @@
     "shell": {
       "open": false,
       "scope": {
-        "sidecar": true,
+        "sidecar": false,
         "scopes": [
-          {
-            "name": "llm-sidecar",
-            "cmd": "bin/llama-server",
-            "args": true
-          },
           {
             "name": "python-orchestrator",
             "cmd": "python3",

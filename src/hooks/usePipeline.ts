@@ -1,19 +1,18 @@
 /**
- * usePipeline.ts — Orchestration State Coordination Hook
+ * usePipeline.ts — Orchestration & Project Workspace State Hook (100% Real Execution)
  *
- * Coordinates state between the TradeOffSliders configuration panel,
- * the TelemetryScorecard performance monitor, and the Tauri desktop backend.
- *
- * Handles:
- * 1. Listening to `pipeline:output` streaming lines emitted by Tauri/manager.py.
- * 2. Listening to `pipeline:complete` structured event payloads.
- * 3. Polling `fetch_system_metrics` periodically to check thermal/hardware state.
- * 4. Triggering `run_generation_pipeline` Tauri command.
- * 5. Graceful fallback when running in web browser dev preview (outside Tauri runtime).
+ * Connects the desktop IDE directly to real files and real Python processes:
+ * 1. Native folder picking (via macOS osascript / Tauri dialog).
+ * 2. Real filesystem reading and writing to physical disk via Vite FS bridge or Tauri IPC.
+ * 3. Real project template scaffolding on physical disk.
+ * 4. Real execution of `python3 core-engine/manager.py` with live stdout/stderr line streaming.
+ * 5. Multi-provider AI engine support (Ollama, local sidecar, OpenAI-compatible API, or offline AST synthesizer).
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { SliderConfig } from "../components/TradeOffSliders";
+import type { FileNode } from "../components/FileTree";
+import type { OpenFileTab } from "../types/workbench";
+import type { AISettings } from "../components/SettingsModal";
 import type {
   TelemetryData,
   OrchestrationResult,
@@ -21,188 +20,659 @@ import type {
   SystemMetrics,
   PipelineStatus,
 } from "../components/TelemetryScorecard";
+import type { AgentStep } from "../services/aiChatService";
+import { systemMetricsService } from "../services/systemMetricsService";
+import {
+  syncProjectIndex,
+  getIndexStatus,
+  type ProjectIndexProfile,
+} from "../services/agentHarness";
 
-export interface UsePipelineOptions {
-  projectRoot?: string;
-  defaultLanguage?: string;
-  pollMetricsIntervalMs?: number;
+export interface ProjectMeta {
+  path: string;
+  name: string;
+}
+
+export interface ProjectIndexState {
+  indexed: boolean;
+  totalSymbols: number;
+  profile: ProjectIndexProfile | null;
 }
 
 export interface UsePipelineReturn {
-  // State
+  // Project & Files
+  activeProject: ProjectMeta;
+  projectFiles: FileNode[];
+  selectedFile: FileNode | null;
+  setSelectedFile: (file: FileNode | null) => void;
+  openTabs: OpenFileTab[];
+  activeTabPath: string | null;
+  currentDiff: string;
+  setCurrentDiff: (diff: string) => void;
+  applyPatchToTab: (path: string, newContent: string) => void;
+  touchedPaths: string[];
+  isProjectModalOpen: boolean;
+  setIsProjectModalOpen: (open: boolean) => void;
+  isSettingsModalOpen: boolean;
+  setIsSettingsModalOpen: (open: boolean) => void;
+  aiSettings: AISettings;
+  setAiSettings: (settings: AISettings) => void;
+
+  // Folder & File Actions
+  pickFolder: () => Promise<string | null>;
+  openFolder: (folderPath: string) => Promise<void>;
+  openFile: (file: FileNode) => Promise<void>;
+  closeTab: (path: string) => void;
+  selectTab: (path: string) => void;
+  updateTabContent: (path: string, newContent: string) => void;
+  saveFile: (path: string) => Promise<void>;
+  createFileOrFolder: (parentPath: string, name: string, isDir: boolean) => Promise<void>;
+  deleteFile: (path: string) => Promise<void>;
+  createProject: (name: string, template: string, parentDir?: string) => Promise<void>;
+  refreshProjectFiles: () => Promise<void>;
+
+  // Code Intelligence & Indexer State
+  indexStatus: ProjectIndexState;
+  isIndexing: boolean;
+  syncIndex: () => Promise<void>;
+
+  // Pipeline State & Execution
   prompt: string;
   setPrompt: (p: string) => void;
-  sliders: SliderConfig;
-  setSliders: (s: SliderConfig) => void;
+  sliders?: { budget_vs_scale: string; speed_vs_precision: string; simplicity_vs_futureproof: string };
+  setSliders?: (s: any) => void;
   status: PipelineStatus;
   telemetry: TelemetryData | null;
   orchestrationResult: OrchestrationResult | null;
   activityLog: PipelineOutputLine[];
   systemMetrics: SystemMetrics | null;
-  activeTab: "editor" | "telemetry" | "diffs";
-  setActiveTab: (t: "editor" | "telemetry" | "diffs") => void;
+  activeCenterView: "editor" | "diff";
+  setActiveCenterView: (v: "editor" | "diff") => void;
 
-  // Actions
-  runPipeline: (customPrompt?: string) => Promise<void>;
+  // Real-time Streaming & Agent Step State
+  streamingAnswer: string;
+  streamingThought: string;
+  agentSteps: AgentStep[];
+
+  runPipeline: (
+    customPrompt?: string,
+    modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
+    activeFilePath?: string,
+    selectedCode?: string,
+    conversationHistory?: Array<{ role: string; content: string }>
+  ) => Promise<void>;
   cancelPipeline: () => void;
   clearLog: () => void;
   isTauriAvailable: boolean;
 }
 
-const DEFAULT_SLIDERS: SliderConfig = {
+const DEFAULT_SLIDERS = {
   budget_vs_scale: "medium",
   speed_vs_precision: "medium",
   simplicity_vs_futureproof: "medium",
 };
 
-export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn {
-  const {
-    projectRoot = ".",
-    defaultLanguage = "python",
-    pollMetricsIntervalMs = 2000,
-  } = options;
+const DEFAULT_AI_SETTINGS: AISettings = {
+  provider: "ollama",
+  model: "qwen2.5-coder:7b",
+  apiKey: "",
+  baseUrl: "http://127.0.0.1:11434",
+};
 
+export function usePipeline(): UsePipelineReturn {
+  const isTauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+  // AI settings
+  const [aiSettings, setAiSettingsState] = useState<AISettings>(() => {
+    try {
+      const saved =
+        localStorage.getItem("aide_ai_settings") ||
+        localStorage.getItem("ide_ai_settings");
+      if (!saved) return DEFAULT_AI_SETTINGS;
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === "object") {
+        const p = parsed.provider === "deterministic" ? "ollama" : (parsed.provider || DEFAULT_AI_SETTINGS.provider);
+        return {
+          provider: p,
+          model: parsed.model || (p === "ollama" ? "qwen2.5-coder:7b" : DEFAULT_AI_SETTINGS.model),
+          apiKey: parsed.apiKey || DEFAULT_AI_SETTINGS.apiKey,
+          baseUrl: parsed.baseUrl || (p === "ollama" ? "http://127.0.0.1:11434" : DEFAULT_AI_SETTINGS.baseUrl),
+        };
+      }
+      return DEFAULT_AI_SETTINGS;
+    } catch {
+      return DEFAULT_AI_SETTINGS;
+    }
+  });
+
+  const setAiSettings = (newSettings: AISettings) => {
+    const safeSettings: AISettings = {
+      provider: newSettings?.provider || DEFAULT_AI_SETTINGS.provider,
+      model: newSettings?.model || "",
+      apiKey: newSettings?.apiKey || "",
+      baseUrl: newSettings?.baseUrl || "",
+    };
+    setAiSettingsState(safeSettings);
+    try {
+      const { provider, model, baseUrl } = safeSettings;
+      localStorage.setItem("aide_ai_settings", JSON.stringify({ provider, model, baseUrl }));
+    } catch {}
+  };
+
+  // Active project state
+  const [activeProject, setActiveProjectState] = useState<ProjectMeta>(() => {
+    try {
+      const saved = localStorage.getItem("aide_active_project");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.path && parsed.path !== "." && parsed.path !== "./") {
+          return parsed;
+        }
+      }
+      return { name: "acsa-code", path: "." };
+    } catch {
+      return { name: "acsa-code", path: "." };
+    }
+  });
+
+  const setActiveProject = (proj: ProjectMeta) => {
+    setActiveProjectState(proj);
+    try {
+      localStorage.setItem("aide_active_project", JSON.stringify(proj));
+    } catch {}
+  };
+
+  const [projectFiles, setProjectFiles] = useState<FileNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  // Editor tabs state
+  const [openTabs, setOpenTabs] = useState<OpenFileTab[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
+  const [activeCenterView, setActiveCenterView] = useState<"editor" | "diff">("editor");
+
+  // Pipeline & AI state
   const [prompt, setPrompt] = useState<string>("");
-  const [sliders, setSliders] = useState<SliderConfig>(DEFAULT_SLIDERS);
+  const [sliders, setSliders] = useState<any>(DEFAULT_SLIDERS);
   const [status, setStatus] = useState<PipelineStatus>("idle");
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [orchestrationResult, setOrchestrationResult] = useState<OrchestrationResult | null>(null);
   const [activityLog, setActivityLog] = useState<PipelineOutputLine[]>([]);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
-  const [activeTab, setActiveTab] = useState<"editor" | "telemetry" | "diffs">("editor");
+  const [currentDiff, setCurrentDiff] = useState<string>("");
+  const [touchedPaths, setTouchedPaths] = useState<string[]>([]);
+  const [streamingAnswer, setStreamingAnswer] = useState<string>("");
+  const [streamingThought, setStreamingThought] = useState<string>("");
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
 
-  const unlistenOutputRef = useRef<(() => void) | null>(null);
-  const unlistenCompleteRef = useRef<(() => void) | null>(null);
-  const cancellationRef = useRef(false);
+  // Code Intelligence & Symbol Graph Indexer state
+  const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
+    indexed: false,
+    totalSymbols: 0,
+    profile: null,
+  });
+  const [isIndexing, setIsIndexing] = useState<boolean>(false);
 
-  // Check if running inside Tauri webview
-  const isTauriAvailable = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  const syncIndex = useCallback(async () => {
+    if (!activeProject?.path) return;
+    setIsIndexing(true);
+    try {
+      const res = await syncProjectIndex(activeProject.path);
+      if (res) {
+        setIndexStatus({
+          indexed: true,
+          totalSymbols: res.totalSymbols,
+          profile: res.profile,
+        });
+      }
+    } finally {
+      setIsIndexing(false);
+    }
+  }, [activeProject.path]);
 
-  // ── Poll System Metrics ───────────────────────────────────────────────────
+  // Initial index probe when project path is ready
   useEffect(() => {
-    let timer: any = null;
+    if (activeProject?.path) {
+      getIndexStatus(activeProject.path).then((stat) => {
+        setIndexStatus({
+          indexed: stat.indexed,
+          totalSymbols: stat.totalSymbols,
+          profile: stat.profile,
+        });
+        if (!stat.indexed && activeProject.path !== ".") {
+          void syncIndex();
+        }
+      });
+    }
+  }, [activeProject.path, syncIndex]);
 
-    const poll = async () => {
+  // ── File Tree Loading ─────────────────────────────────────────────────────
+  const refreshProjectFiles = useCallback(async () => {
+    if (isTauriAvailable) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const nodes = await invoke<FileNode[]>("list_project_files", {
+          projectPath: activeProject.path,
+        });
+        setProjectFiles(nodes);
+      } catch (err) {
+        console.warn("Tauri list_project_files failed:", err);
+      }
+    } else {
+      try {
+        const res = await fetch("/api/fs/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectPath: activeProject.path }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setProjectFiles(data.nodes || []);
+          if (data.resolvedPath && (activeProject.path === "." || activeProject.path === "./")) {
+            const folderName = data.resolvedPath.split("/").filter(Boolean).pop() || activeProject.name;
+            setActiveProject({
+              name: folderName,
+              path: data.resolvedPath,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Vite FS list failed:", err);
+      }
+    }
+  }, [isTauriAvailable, activeProject.path]);
+
+  // Initial load
+  useEffect(() => {
+    refreshProjectFiles();
+  }, [refreshProjectFiles]);
+
+  // ── Native Folder Selection ───────────────────────────────────────────────
+  const pickFolder = useCallback(async (): Promise<string | null> => {
+    if (isTauriAvailable) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const picked = await invoke<string | null>("pick_folder");
+        return picked;
+      } catch (err) {
+        console.error("pick_folder failed:", err);
+        return null;
+      }
+    } else {
+      try {
+        const res = await fetch("/api/fs/pick-folder", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          return data.path || null;
+        }
+      } catch (err) {
+        console.error("Vite pick-folder failed:", err);
+      }
+      return null;
+    }
+  }, [isTauriAvailable]);
+
+  const openFolder = useCallback(
+    async (folderPath: string) => {
+      const cleanPath = folderPath.trim();
+      if (!cleanPath) return;
+
+      const folderName = cleanPath.split(/[/\\]/).filter(Boolean).pop() || "project";
+      setActiveProject({ name: folderName, path: cleanPath });
+      setOpenTabs([]);
+      setActiveTabPath(null);
+      setCurrentDiff("");
+
+      // Automatically trigger AST Symbol Graph indexing
+      setIsIndexing(true);
+      try {
+        const syncRes = await syncProjectIndex(cleanPath);
+        if (syncRes) {
+          setIndexStatus({
+            indexed: true,
+            totalSymbols: syncRes.totalSymbols,
+            profile: syncRes.profile,
+          });
+        }
+      } finally {
+        setIsIndexing(false);
+      }
+    },
+    []
+  );
+
+  // ── File Operations ───────────────────────────────────────────────────────
+  const openFile = useCallback(
+    async (file: FileNode) => {
+      setSelectedFile(file);
+      if (file.is_dir) return;
+
+      const existing = openTabs.find((t) => t.path === file.path);
+      if (existing) {
+        setActiveTabPath(file.path);
+        setActiveCenterView("editor");
+        return;
+      }
+
+      let content = "";
       if (isTauriAvailable) {
         try {
           const { invoke } = await import("@tauri-apps/api/core");
-          const metrics = await invoke<SystemMetrics>("fetch_system_metrics");
-          setSystemMetrics(metrics);
+          content = await invoke<string>("read_file_content", {
+            filePath: file.path,
+            projectRoot: activeProject.path,
+          });
         } catch (err) {
-          console.warn("fetch_system_metrics invoke failed:", err);
+          content = `# Error reading file: ${err}`;
         }
       } else {
-        // Mock metrics for web development mode
-        setSystemMetrics({
-          cpu_usage_percent: 18.5,
-          memory_used_mb: 4096,
-          memory_total_mb: 16384,
-          memory_usage_percent: 25.0,
-          is_thermal_risk: false,
-          thermal_warning: "",
-        });
-      }
-    };
-
-    poll();
-    timer = setInterval(poll, pollMetricsIntervalMs);
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isTauriAvailable, pollMetricsIntervalMs]);
-
-  // ── Event Listeners Setup ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (!isTauriAvailable) return;
-
-    let cancelled = false;
-
-    async function setupListeners() {
-      try {
-        const { listen } = await import("@tauri-apps/api/event");
-
-        const unlistenOut = await listen<PipelineOutputLine>("pipeline:output", (event) => {
-          if (cancelled) return;
-          const line = event.payload;
-          setActivityLog((prev) => {
-            const next = [...prev, line];
-            return next.length > 500 ? next.slice(-500) : next;
+        try {
+          const res = await fetch("/api/fs/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filePath: file.path, projectRoot: activeProject.path }),
           });
-
-          if (line.is_json) {
-            try {
-              const data = JSON.parse(line.content);
-              if (data.telemetry) {
-                setTelemetry(data.telemetry);
-              }
-            } catch {
-              // ignore
-            }
-          }
-        });
-
-        if (cancelled) {
-          unlistenOut();
-          return;
-        }
-
-        const unlistenComp = await listen<any>("pipeline:complete", (event) => {
-          if (cancelled || cancellationRef.current) return;
-          const result = event.payload;
-          if (result && result.json_result) {
-            setOrchestrationResult(result.json_result);
-            if (result.json_result.outcome === "success") {
-              setStatus("success");
-            } else {
-              setStatus("failed");
-            }
-          } else if (result && result.success) {
-            setStatus("success");
+          if (res.ok) {
+            const data = await res.json();
+            content = data.content;
           } else {
-            setStatus("failed");
+            content = `# Error reading file from disk`;
           }
-        });
+        } catch (err) {
+          content = `# Failed to read file: ${err}`;
+        }
+      }
 
-        if (cancelled) {
-          unlistenOut();
-          unlistenComp();
+      const newTab: OpenFileTab = {
+        path: file.path,
+        name: file.name,
+        content,
+        originalContent: content,
+        isDirty: false,
+      };
+
+      setOpenTabs((prev) => [...prev, newTab]);
+      setActiveTabPath(file.path);
+      setActiveCenterView("editor");
+    },
+    [isTauriAvailable, openTabs, activeProject.path]
+  );
+
+  const closeTab = useCallback(
+    (path: string) => {
+      setOpenTabs((prev) => {
+        const next = prev.filter((t) => t.path !== path);
+        if (activeTabPath === path) {
+          const nextActive = next.length > 0 ? next[next.length - 1].path : null;
+          setActiveTabPath(nextActive);
+        }
+        return next;
+      });
+    },
+    [activeTabPath]
+  );
+
+  const selectTab = useCallback((path: string) => {
+    setActiveTabPath(path);
+    setActiveCenterView("editor");
+  }, []);
+
+  const updateTabContent = useCallback((path: string, newContent: string) => {
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.path === path) {
+          return {
+            ...tab,
+            content: newContent,
+            isDirty: newContent !== tab.originalContent,
+          };
+        }
+        return tab;
+      })
+    );
+  }, []);
+
+  const applyPatchToTab = useCallback((path: string, newContent: string) => {
+    setOpenTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.path === path) {
+          return {
+            ...tab,
+            content: newContent,
+            originalContent: newContent,
+            isDirty: false,
+          };
+        }
+        return tab;
+      })
+    );
+  }, []);
+
+  const saveFile = useCallback(
+    async (path: string) => {
+      const tab = openTabs.find((t) => t.path === path);
+      if (!tab) return;
+
+      if (isTauriAvailable) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("write_file_content", {
+            filePath: path,
+            content: tab.content,
+            projectRoot: activeProject.path,
+          });
+        } catch (err) {
+          alert(`Failed to save: ${err}`);
           return;
         }
-
-        unlistenOutputRef.current = unlistenOut;
-        unlistenCompleteRef.current = unlistenComp;
-      } catch (err) {
-        console.error("Failed to setup Tauri event listeners:", err);
+      } else {
+        try {
+          const res = await fetch("/api/fs/write", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filePath: path, content: tab.content, projectRoot: activeProject.path }),
+          });
+          if (!res.ok) {
+            alert("Failed to write file to disk");
+            return;
+          }
+        } catch (err) {
+          alert(`Failed to write file: ${err}`);
+          return;
+        }
       }
-    }
 
-    setupListeners();
+      setOpenTabs((prev) =>
+        prev.map((t) =>
+          t.path === path
+            ? { ...t, originalContent: t.content, isDirty: false }
+            : t
+        )
+      );
+    },
+    [isTauriAvailable, openTabs, activeProject.path]
+  );
 
-    return () => {
-      cancelled = true;
-      if (unlistenOutputRef.current) {
-        unlistenOutputRef.current();
-        unlistenOutputRef.current = null;
+  const createFileOrFolder = useCallback(
+    async (parentPath: string, name: string, isDir: boolean) => {
+      const cleanName = name.trim().replace(/^[/\\]+/, "");
+      if (!cleanName) return;
+
+      let targetPath: string;
+      if (parentPath && parentPath !== activeProject.path) {
+        targetPath = `${parentPath}/${cleanName}`;
+      } else {
+        targetPath = `${activeProject.path}/${cleanName}`;
       }
-      if (unlistenCompleteRef.current) {
-        unlistenCompleteRef.current();
-        unlistenCompleteRef.current = null;
-      }
-    };
-  }, [isTauriAvailable]);
 
-  // ── Run Pipeline ──────────────────────────────────────────────────────────
+      if (isTauriAvailable) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("create_file_or_folder", {
+            path: targetPath,
+            isDir,
+            projectRoot: activeProject.path,
+          });
+          await refreshProjectFiles();
+          if (!isDir) {
+            openFile({
+              name: cleanName.split("/").pop() || cleanName,
+              path: targetPath,
+              is_dir: false,
+              size_bytes: 0,
+            });
+          }
+        } catch (err) {
+          alert(`Failed to create: ${err}`);
+        }
+      } else {
+        try {
+          const res = await fetch("/api/fs/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ itemPath: targetPath, isDir, projectRoot: activeProject.path }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert(`Failed to create: ${data?.error || res.statusText}`);
+            return;
+          }
+          await refreshProjectFiles();
+          if (!isDir) {
+            openFile({
+              name: cleanName.split("/").pop() || cleanName,
+              path: data.path || targetPath,
+              is_dir: false,
+              size_bytes: 0,
+            });
+          }
+        } catch (err) {
+          alert(`Failed to create: ${err}`);
+        }
+      }
+    },
+    [isTauriAvailable, activeProject.path, refreshProjectFiles, openFile]
+  );
+
+  const deleteFile = useCallback(
+    async (path: string) => {
+      if (isTauriAvailable) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("delete_project_file", {
+            path,
+            projectRoot: activeProject.path,
+          });
+          closeTab(path);
+          await refreshProjectFiles();
+        } catch (err) {
+          console.error("Delete failed:", err);
+        }
+      } else {
+        try {
+          await fetch("/api/fs/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetPath: path, projectRoot: activeProject.path }),
+          });
+          closeTab(path);
+          await refreshProjectFiles();
+        } catch (err) {
+          console.error("Delete failed:", err);
+        }
+      }
+    },
+    [isTauriAvailable, activeProject.path, closeTab, refreshProjectFiles]
+  );
+
+  const createProject = useCallback(
+    async (name: string, template: string, parentDir?: string) => {
+      if (isTauriAvailable) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const createdPath = await invoke<string>("create_project_template", {
+            name,
+            template,
+            parentDir: parentDir || null,
+          });
+          setActiveProject({ name, path: createdPath });
+          setOpenTabs([]);
+          setActiveTabPath(null);
+          setCurrentDiff("");
+        } catch (err) {
+          alert(`Scaffold failed: ${err}`);
+        }
+      } else {
+        try {
+          const res = await fetch("/api/fs/create-project", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, template, parentDir }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setActiveProject({ name: data.name, path: data.projectPath });
+            setOpenTabs([]);
+            setActiveTabPath(null);
+            setCurrentDiff("");
+          }
+        } catch (err) {
+          alert(`Scaffold failed: ${err}`);
+        }
+      }
+    },
+    [isTauriAvailable, refreshProjectFiles]
+  );
+
+  // ── Poll System Metrics via Central Service ──────────────────────────────
+  useEffect(() => {
+    return systemMetricsService.subscribe((metrics) => {
+      setSystemMetrics(metrics);
+    });
+  }, []);
+
+  // ── Run Pipeline (100% Real Subprocess Execution) ─────────────────────────
+  const pipelineAbortRef = useRef<AbortController | null>(null);
+
   const runPipeline = useCallback(
-    async (customPrompt?: string) => {
+    async (
+      customPrompt?: string,
+      modelOverride?: { provider: string; model: string; apiKey?: string; baseUrl?: string },
+      activeFilePath?: string,
+      selectedCode?: string,
+      conversationHistory?: Array<{ role: string; content: string }>
+    ) => {
       const activePrompt = customPrompt ?? prompt;
+      const activeAiSettings = modelOverride
+        ? {
+            ...aiSettings,
+            provider: modelOverride.provider,
+            model: modelOverride.model,
+            apiKey: modelOverride.apiKey !== undefined ? modelOverride.apiKey : aiSettings.apiKey,
+            baseUrl: modelOverride.baseUrl !== undefined ? modelOverride.baseUrl : aiSettings.baseUrl,
+          }
+        : aiSettings;
       if (!activePrompt.trim()) return;
 
-      cancellationRef.current = false;
+      let detectedLanguage = "typescript";
+      if (activeFilePath) {
+        const ext = activeFilePath.split(".").pop()?.toLowerCase();
+        if (ext === "py") detectedLanguage = "python";
+        else if (ext === "rs") detectedLanguage = "rust";
+        else if (ext === "go") detectedLanguage = "go";
+        else if (ext === "c" || ext === "cpp" || ext === "h") detectedLanguage = "cpp";
+        else if (ext === "java") detectedLanguage = "java";
+      }
+
       setStatus("running");
       setActivityLog([]);
+      setCurrentDiff("");
       setOrchestrationResult(null);
       setTelemetry(null);
+      setStreamingAnswer("");
+      setStreamingThought("");
+      setAgentSteps([]);
 
       if (isTauriAvailable) {
         try {
@@ -210,23 +680,18 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
           const result: any = await invoke("run_generation_pipeline", {
             prompt: activePrompt,
             sliders,
-            projectRoot,
-            language: defaultLanguage,
+            projectRoot: activeProject.path,
+            language: detectedLanguage,
             skipPerformance: false,
             dryRun: false,
           });
 
-          if (cancellationRef.current) return;
-
-          if (result && result.json_result) {
-            setOrchestrationResult(result.json_result);
-            setStatus(result.json_result.outcome === "success" ? "success" : "failed");
-          } else {
-            setStatus(result.success ? "success" : "failed");
+          if (result && result.parsed_result) {
+            setOrchestrationResult(result.parsed_result);
+            setStatus(result.parsed_result.outcome === "success" ? "success" : "failed");
           }
+          await refreshProjectFiles();
         } catch (err: any) {
-          if (cancellationRef.current) return;
-          console.error("Pipeline invocation failed:", err);
           setStatus("error");
           setActivityLog((prev) => [
             ...prev,
@@ -239,79 +704,124 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
           ]);
         }
       } else {
-        // Simulated execution for web browser preview mode
-        const mockLines = [
-          "Starting generation pipeline with budget_vs_scale=" + sliders.budget_vs_scale,
-          "Calling local sidecar at 127.0.0.1:8080...",
-          "Received diff patch draft (1 file)",
-          "Running syntax gate on staged files...",
-          "Syntax gate PASSED (0 errors, 0 warnings)",
-          "Running property oracle tests...",
-          "Oracle tests PASSED (12/12 edge cases verified)",
-          "Launching load sandbox on port 9102...",
-          "Benchmark complete: 10,500 req/s, 0.9ms avg latency",
-          "All verification gates PASSED — finalizing patch to disk",
-        ];
+        // Real Server-Sent Events from local Vite dev backend process
+        try {
+          const controller = new AbortController();
+          pipelineAbortRef.current = controller;
+          const response = await fetch("/api/pipeline/run", {
+            signal: controller.signal,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: activePrompt,
+              projectRoot: activeProject.path,
+              language: detectedLanguage,
+              provider: activeAiSettings.provider,
+              model: activeAiSettings.model,
+              apiKey: activeAiSettings.apiKey,
+              baseUrl: activeAiSettings.baseUrl,
+              activeFilePath: activeFilePath || undefined,
+              selectedCode: selectedCode || undefined,
+              conversationHistory: conversationHistory || undefined,
+            }),
+          });
 
-        for (let i = 0; i < mockLines.length; i++) {
-          await new Promise((res) => setTimeout(res, 350));
+          if (!response.body) {
+            throw new Error("No response body from pipeline process");
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split("\n\n");
+            buffer = events.pop() || "";
+
+            for (const ev of events) {
+              const lines = ev.split("\n");
+              let eventName = "";
+              let dataStr = "";
+
+              for (const l of lines) {
+                if (l.startsWith("event: ")) eventName = l.slice(7).trim();
+                if (l.startsWith("data: ")) dataStr = l.slice(6).trim();
+              }
+
+              if (!dataStr) continue;
+
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (eventName === "chunk") {
+                  if (parsed?.text) {
+                    setStreamingAnswer((prev) => prev + parsed.text);
+                  }
+                } else if (eventName === "thought") {
+                  if (parsed?.text) {
+                    setStreamingThought((prev) => prev + parsed.text);
+                  }
+                } else if (eventName === "step") {
+                  setAgentSteps((prev) => {
+                    const idx = prev.findIndex((s) => s.name === parsed.name);
+                    if (idx >= 0) {
+                      const next = [...prev];
+                      next[idx] = { ...next[idx], ...parsed };
+                      return next;
+                    }
+                    return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...parsed }];
+                  });
+                } else if (eventName === "output") {
+                  setActivityLog((prev) => [...prev, parsed]);
+
+                  if (parsed.content.startsWith("---") || parsed.content.startsWith("@@")) {
+                    setCurrentDiff((prev) => prev + parsed.content + "\n");
+                    setActiveCenterView("diff");
+                  }
+                  if (parsed.content.startsWith("Written:")) {
+                    const writtenPath = parsed.content.slice("Written:".length).trim();
+                    if (writtenPath) setTouchedPaths((prev) => prev.includes(writtenPath) ? prev : [...prev, writtenPath]);
+                  }
+                } else if (eventName === "complete") {
+                  setStatus(parsed.success ? "success" : "failed");
+                  if (parsed.parsed_result) {
+                    setOrchestrationResult(parsed.parsed_result);
+                  }
+                  await refreshProjectFiles();
+                }
+              } catch {}
+            }
+          }
+        } catch (err: any) {
+          if (err?.name === "AbortError") return;
+          setStatus("error");
           setActivityLog((prev) => [
             ...prev,
             {
-              line_number: i + 1,
-              content: mockLines[i],
-              stream: "stdout",
+              line_number: prev.length + 1,
+              content: `Subprocess error: ${err?.message || err}`,
+              stream: "stderr",
               is_json: false,
             },
           ]);
         }
-
-        setTelemetry({
-          avg_latency_ms: 0.9,
-          p50_latency_ms: 0.8,
-          p99_latency_ms: 2.1,
-          max_latency_ms: 5.4,
-          requests_per_second: 10500,
-          total_requests: 50000,
-          error_count: 0,
-          peak_cpu_percent: 22.4,
-          peak_memory_mb: 34.5,
-          avg_cpu_percent: 15.2,
-          avg_memory_mb: 28.1,
-        });
-
-        setOrchestrationResult({
-          outcome: "success",
-          total_rounds: 1,
-          elapsed_ms: 3200,
-          error_detail: "",
-          rounds: [
-            {
-              round_number: 1,
-              syntax_passed: true,
-              performance_passed: true,
-              syntax_errors: 0,
-              performance_breaches: [],
-              context_card_tokens: 120,
-              llm_latency_ms: 1800,
-            },
-          ],
-        });
-
-        setStatus("success");
       }
+      pipelineAbortRef.current = null;
     },
-    [prompt, sliders, projectRoot, defaultLanguage, isTauriAvailable]
+    [prompt, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
   );
 
-  const cancelPipeline = useCallback(() => {
-    cancellationRef.current = true;
+  const cancelPipeline = useCallback(async () => {
+    pipelineAbortRef.current?.abort();
+    pipelineAbortRef.current = null;
     if (isTauriAvailable) {
-      import("@tauri-apps/api/core")
-        .then(({ invoke }) => {
-          invoke("cancel_generation_pipeline").catch(() => undefined);
-        })
-        .catch(() => undefined);
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("cancel_generation_pipeline");
+      } catch {}
     }
     setStatus("idle");
   }, [isTauriAvailable]);
@@ -321,6 +831,36 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
   }, []);
 
   return {
+    activeProject,
+    projectFiles,
+    selectedFile,
+    setSelectedFile,
+    openTabs,
+    activeTabPath,
+    currentDiff,
+    setCurrentDiff,
+    applyPatchToTab,
+    touchedPaths,
+    isProjectModalOpen,
+    setIsProjectModalOpen,
+    isSettingsModalOpen,
+    setIsSettingsModalOpen,
+    aiSettings,
+    setAiSettings,
+    pickFolder,
+    openFolder,
+    openFile,
+    closeTab,
+    selectTab,
+    updateTabContent,
+    saveFile,
+    createFileOrFolder,
+    deleteFile,
+    createProject,
+    refreshProjectFiles,
+    indexStatus,
+    isIndexing,
+    syncIndex,
     prompt,
     setPrompt,
     sliders,
@@ -330,12 +870,15 @@ export function usePipeline(options: UsePipelineOptions = {}): UsePipelineReturn
     orchestrationResult,
     activityLog,
     systemMetrics,
-    activeTab,
-    setActiveTab,
+    activeCenterView,
+    setActiveCenterView,
     runPipeline,
     cancelPipeline,
     clearLog,
     isTauriAvailable,
+    streamingAnswer,
+    streamingThought,
+    agentSteps,
   };
 }
 

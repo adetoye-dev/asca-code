@@ -1008,7 +1008,7 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Load Sandbox — Performance telemetry gate for the Autonomous IDE",
+        description="Load Sandbox — Performance telemetry gate for ACSA Code",
     )
     parser.add_argument(
         "command",

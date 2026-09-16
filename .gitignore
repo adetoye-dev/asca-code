@@ -108,6 +108,7 @@ sidecar.log
 *.part
 
 # ── Execution Sandbox & Verification Gauntlet Artifacts ─────────────────────
+.acsa/
 # Ignore temporary runtime files created during sandbox test runs
 *_sandbox_stdout.log
 *_sandbox_stderr.log

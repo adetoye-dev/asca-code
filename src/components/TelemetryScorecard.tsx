@@ -40,11 +40,13 @@ export interface CorrectionRound {
 
 /** Full orchestration result from manager.py OrchestrationResult.to_dict() */
 export interface OrchestrationResult {
-  outcome: "success" | "max_retries_exceeded" | "llm_unreachable" | "paradox_detected";
+  outcome: "success" | "max_retries_exceeded" | "llm_unreachable" | "paradox_detected" | "timeout";
   total_rounds: number;
   elapsed_ms: number;
   error_detail: string;
   rounds: CorrectionRound[];
+  answer?: string;
+  intent?: "inquiry" | "mutation";
 }
 
 /** Pipeline output line from Tauri's pipeline:output event */
@@ -57,10 +59,20 @@ export interface PipelineOutputLine {
 
 /** System metrics from Tauri's fetch_system_metrics command */
 export interface SystemMetrics {
+  platform?: string;
+  architecture?: string;
+  node_version?: string;
+  vite_version?: string;
+  python_version?: string;
+  cpu_count?: number;
   cpu_usage_percent: number;
   memory_used_mb: number;
   memory_total_mb: number;
   memory_usage_percent: number;
+  disk_usage_percent?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  disk_free_gb?: number;
   is_thermal_risk: boolean;
   thermal_warning: string;
 }
@@ -73,7 +85,8 @@ export interface TelemetryScorecardProps {
   pipelineStatus: PipelineStatus;
   activityLog: PipelineOutputLine[];
   systemMetrics: SystemMetrics | null;
-  sliderScale: "low" | "medium" | "high";
+  sliderScale?: "low" | "medium" | "high" | "micro" | "standard" | "enterprise";
+  scaleTier?: "micro" | "standard" | "enterprise";
 }
 
 // ── Cost Estimation ─────────────────────────────────────────────────────────
@@ -86,15 +99,22 @@ interface CostEstimate {
 
 function estimateCosts(
   telemetry: TelemetryData | null,
-  scale: "low" | "medium" | "high"
+  scale: "low" | "medium" | "high" | "micro" | "standard" | "enterprise" = "standard"
 ): CostEstimate {
+  const normalizedScale: "low" | "medium" | "high" =
+    scale === "micro" || scale === "low"
+      ? "low"
+      : scale === "enterprise" || scale === "high"
+      ? "high"
+      : "medium";
+
   if (!telemetry || telemetry.requests_per_second === 0) {
     const defaults: Record<string, CostEstimate> = {
       low:    { monthly_dollars: 5,   label: "~$5/mo",    max_concurrent_users: 100 },
       medium: { monthly_dollars: 25,  label: "~$25/mo",   max_concurrent_users: 5000 },
       high:   { monthly_dollars: 120, label: "~$120/mo",  max_concurrent_users: 50000 },
     };
-    return defaults[scale];
+    return defaults[normalizedScale];
   }
 
   // Estimate from measured throughput
@@ -156,8 +176,8 @@ function deriveSecurityStatus(
   if (result.outcome === "success" && syntaxClean) {
     return {
       label: "Syntax Verified",
-      color: "text-sky-400",
-      icon: "🔵",
+      color: "text-zinc-200",
+      icon: "✓",
       detail: "Static analysis passed. Performance gate may have been skipped.",
     };
   }
@@ -198,7 +218,7 @@ function MetricCard({
   icon,
   color = "text-zinc-100",
   barPercent,
-  barColor = "bg-sky-500",
+  barColor = "bg-zinc-400",
 }: MetricCardProps) {
   return (
     <div className="rounded-xl border border-zinc-700/40 bg-zinc-800/50 p-4 flex flex-col justify-between min-h-[120px]">
@@ -362,9 +382,11 @@ export function TelemetryScorecard({
   pipelineStatus,
   activityLog,
   systemMetrics,
-  sliderScale,
+  sliderScale = "standard",
+  scaleTier,
 }: TelemetryScorecardProps) {
-  const costs = estimateCosts(telemetry, sliderScale);
+  const effectiveScale = scaleTier || sliderScale;
+  const costs = estimateCosts(telemetry, effectiveScale);
   const security = deriveSecurityStatus(orchestrationResult, telemetry);
 
   // Format numbers for display
@@ -375,7 +397,7 @@ export function TelemetryScorecard({
     ms < 50
       ? "text-emerald-400"
       : ms < 200
-        ? "text-sky-400"
+        ? "text-sky-300"
         : ms < 500
           ? "text-amber-400"
           : "text-red-400";
@@ -405,12 +427,12 @@ export function TelemetryScorecard({
           </p>
         </div>
         {pipelineStatus === "running" && (
-          <div className="flex items-center gap-2 rounded-full bg-sky-500/10 border border-sky-500/20 px-3 py-1">
+          <div className="flex items-center gap-2 rounded-full bg-zinc-800 border border-zinc-700/60 px-3 py-1">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
-            <span className="text-xs font-medium text-sky-400">Live</span>
+            <span className="text-xs font-medium text-emerald-300">Live</span>
           </div>
         )}
       </div>
@@ -421,7 +443,7 @@ export function TelemetryScorecard({
         <MetricCard
           label="Est. Hosting Cost"
           value={costs.label}
-          sublabel={`Based on ${sliderScale} scale profile`}
+          sublabel={`Based on ${effectiveScale} scale profile`}
           icon="💰"
           color="text-emerald-400"
         />
@@ -440,7 +462,7 @@ export function TelemetryScorecard({
               : "Awaiting benchmark"
           }
           icon="👥"
-          color="text-sky-400"
+          color="text-sky-300"
         />
 
         {/* Avg Latency */}
@@ -606,12 +628,16 @@ export function TelemetryScorecard({
                 }`}
               >
                 {orchestrationResult.outcome === "success"
-                  ? "Pipeline Complete"
+                  ? orchestrationResult.intent === "inquiry"
+                    ? "Inquiry Answered"
+                    : "Pipeline Complete"
                   : orchestrationResult.outcome === "max_retries_exceeded"
                     ? "Max Retries Exceeded"
                     : orchestrationResult.outcome === "llm_unreachable"
                       ? "LLM Sidecar Unreachable"
-                      : "Contradictory Requirements Detected"}
+                      : orchestrationResult.outcome === "timeout"
+                        ? "Request Timed Out"
+                        : "Contradictory Requirements Detected"}
               </span>
             </div>
             <div className="flex items-center gap-3 text-xs text-zinc-500">

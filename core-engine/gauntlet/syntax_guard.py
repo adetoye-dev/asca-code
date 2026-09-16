@@ -18,6 +18,7 @@ Design constraints
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -421,7 +422,27 @@ def _eslint_argv(targets: list[str]) -> list[str]:
     return ["eslint", "--format=json", "--no-color", *targets]
 
 def _tsc_argv(targets: list[str]) -> list[str]:
-    return ["tsc", "--noEmit", "--pretty", "false", *targets]
+    # Explicit target files do not inherit tsconfig compiler options. Keep staged
+    # TS/TSX files type-checkable without requiring the temporary directory to
+    # contain the project's config file.
+    return [
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--jsx",
+        "react-jsx",
+        "--target",
+        "ES2022",
+        "--module",
+        "ESNext",
+        "--moduleResolution",
+        "bundler",
+        "--esModuleInterop",
+        "--allowSyntheticDefaultImports",
+        "--skipLibCheck",
+        *targets,
+    ]
 
 
 LINTER_REGISTRY: dict[str, dict] = {
@@ -460,8 +481,19 @@ LINTER_REGISTRY: dict[str, dict] = {
 
 
 def _resolve_binary(name: str) -> Optional[str]:
-    """Check if a binary is available on PATH."""
-    return shutil.which(name)
+    """Check if a binary is available on PATH or local node_modules/.bin."""
+    found = shutil.which(name)
+    if found:
+        return found
+    try:
+        cwd = Path.cwd().resolve()
+        for candidate in [cwd, *cwd.parents]:
+            local_bin = candidate / "node_modules" / ".bin" / name
+            if local_bin.is_file() and os.access(local_bin, os.X_OK):
+                return str(local_bin)
+    except Exception:
+        pass
+    return None
 
 
 def _run_linter(
@@ -502,6 +534,8 @@ def _run_linter(
         )
 
     argv = config["argv_builder"](relevant)
+    if argv and binary_path:
+        argv[0] = binary_path
 
     start = time.monotonic()
     try:
@@ -572,6 +606,67 @@ def _run_linter(
     )
 
 
+def _run_python_ast_check(target_paths: list[str]) -> LinterResult:
+    """Built-in Python compiler & AST verification with zero external dependencies.
+
+    Catches real SyntaxError, IndentationError, and compile errors natively.
+    """
+    start = time.monotonic()
+    excluded_names = {
+        ".git", "node_modules", ".venv", "venv", "env", "__pycache__",
+        "target", "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    }
+    py_files: list[Path] = []
+    for p in target_paths:
+        path_obj = Path(p)
+        if path_obj.is_file() and path_obj.suffix == ".py":
+            py_files.append(path_obj)
+        elif path_obj.is_dir():
+            for candidate in path_obj.rglob("*.py"):
+                if not any(part in excluded_names for part in candidate.relative_to(path_obj).parts):
+                    py_files.append(candidate)
+
+    diagnostics: list[Diagnostic] = []
+    for py_file in py_files:
+        try:
+            content = py_file.read_text(encoding="utf-8")
+            ast.parse(content, filename=str(py_file))
+        except SyntaxError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    file=str(py_file),
+                    line=exc.lineno or 1,
+                    column=exc.offset or 1,
+                    severity=Severity.ERROR,
+                    code="E999",
+                    message=f"SyntaxError: {exc.msg}",
+                    source="python_ast",
+                )
+            )
+        except Exception as exc:
+            diagnostics.append(
+                Diagnostic(
+                    file=str(py_file),
+                    line=1,
+                    column=1,
+                    severity=Severity.ERROR,
+                    code="E998",
+                    message=f"Parse error: {exc}",
+                    source="python_ast",
+                )
+            )
+
+    elapsed = (time.monotonic() - start) * 1000
+    has_errors = any(d.severity == Severity.ERROR for d in diagnostics)
+    return LinterResult(
+        linter="python_ast",
+        status=LinterStatus.FAIL if has_errors else LinterStatus.PASS,
+        diagnostics=diagnostics,
+        exit_code=1 if has_errors else 0,
+        elapsed_ms=elapsed,
+    )
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -628,41 +723,40 @@ def run_syntax_gate(
         logger.warning("No valid target paths after normalization")
         return GauntletReport(target_paths=target_paths, passed=True)
 
-    # Determine which linters to run
+    # Determine which external linters to run
     if linters is None:
         linters = detect_available_linters()
         logger.info("Auto-detected linters: %s", ", ".join(linters) or "(none)")
 
-    if not linters:
-        logger.warning("No linters available — syntax gate vacuously passes")
-        return GauntletReport(target_paths=normalized, passed=True)
-
-    worker_count = max_workers or min(len(linters), os.cpu_count() or 1)
-
-    gate_start = time.monotonic()
     results: list[LinterResult] = []
+    gate_start = time.monotonic()
 
-    # Run linters in parallel across CPU cores
-    with ProcessPoolExecutor(max_workers=worker_count) as executor:
-        future_to_linter = {
-            executor.submit(
-                _run_linter, name, normalized, timeout_seconds, cwd
-            ): name
-            for name in linters
-        }
+    # Guaranteed baseline: Always run Python AST verification for python targets
+    ast_result = _run_python_ast_check(normalized)
+    results.append(ast_result)
 
-        for future in as_completed(future_to_linter):
-            linter_name = future_to_linter[future]
-            try:
-                result = future.result()
-            except Exception as exc:
-                result = LinterResult(
-                    linter=linter_name,
-                    status=LinterStatus.CRASH,
-                    exit_code=-1,
-                    error_detail=f"Executor exception: {exc}",
-                )
-            results.append(result)
+    if linters:
+        worker_count = max_workers or min(len(linters), os.cpu_count() or 1)
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            future_to_linter = {
+                executor.submit(
+                    _run_linter, name, normalized, timeout_seconds, cwd
+                ): name
+                for name in linters
+            }
+
+            for future in as_completed(future_to_linter):
+                linter_name = future_to_linter[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = LinterResult(
+                        linter=linter_name,
+                        status=LinterStatus.CRASH,
+                        exit_code=-1,
+                        error_detail=f"Executor exception: {exc}",
+                    )
+                results.append(result)
 
     gate_elapsed = (time.monotonic() - gate_start) * 1000
 
@@ -710,7 +804,11 @@ def run_syntax_gate(
     return report
 
 
-def format_context_card(report: GauntletReport, max_tokens: int = 2000) -> str:
+def format_context_card(
+    report: GauntletReport,
+    max_tokens: int = 2000,
+    base_dir: Optional[str] = None,
+) -> str:
     """Compress a GauntletReport into a token-budgeted context card for the model.
 
     The card is a compact JSON string containing only actionable diagnostics,
@@ -732,8 +830,21 @@ def format_context_card(report: GauntletReport, max_tokens: int = 2000) -> str:
     all_diags.sort(key=lambda d: (0 if d.severity == Severity.ERROR else 1, d.file, d.line))
 
     for diag in all_diags:
+        file_display = diag.file
+        if base_dir:
+            try:
+                rel = os.path.relpath(diag.file, base_dir)
+                if not rel.startswith(".."):
+                    file_display = rel
+            except (ValueError, Exception):
+                pass
+        if "ide_staging_" in file_display:
+            parts = file_display.split("ide_staging_")
+            if len(parts) > 1 and "/" in parts[1]:
+                file_display = parts[1].split("/", 1)[1]
+
         entry = {
-            "f": diag.file,
+            "f": file_display,
             "l": diag.line,
             "c": diag.column,
             "s": diag.severity.value[0],  # "e" / "w" / "i"
@@ -760,7 +871,7 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Syntax Guard — Deterministic linter gate for the Autonomous IDE",
+        description="Syntax Guard — Deterministic linter gate for ACSA Code",
     )
     parser.add_argument(
         "targets",

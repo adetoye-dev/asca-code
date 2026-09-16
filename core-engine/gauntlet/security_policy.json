@@ -1,5 +1,5 @@
 {
-  "$schema": "https://autonomous-ide.dev/schemas/security_policy.schema.json",
+  "$schema": "https://acsa-code.dev/schemas/security_policy.schema.json",
 
   "_meta": {
     "version": "1.0.0",

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0.0",
-    "description": "Grammar-Guided Generation rules for the Autonomous IDE LLM sidecar. Constrains token sampling to emit only valid unified diff patches or structured JSON code-patch arrays. Prevents conversational chatter, introductory remarks, and variable name hallucinations at the token generation level.",
+    "description": "Grammar-Guided Generation rules for the ACSA Code LLM sidecar. Constrains token sampling to emit only valid unified diff patches or structured JSON code-patch arrays. Prevents conversational chatter, introductory remarks, and variable name hallucinations at the token generation level.",
     "compatible_engines": ["llama.cpp", "vllm", "outlines", "guidance"],
     "schema_source": "core-engine/data-map/graph_manager.js"
   },
