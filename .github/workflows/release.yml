@@ -33,9 +33,10 @@ jobs:
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are deliberately NOT set here.
+      # Tauri notarises automatically whenever it sees all three, and that path
+      # blocked for 30+ minutes with no output (see "Notarise and staple").
+      # They are scoped to the steps that actually need them.
 
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +91,10 @@ jobs:
       # variable instead of looking like a slow notarisation.
       - name: Preflight the notarisation credentials
         if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
@@ -109,10 +114,39 @@ jobs:
       # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are present.
       - name: Bundle
         working-directory: .tauri
-        # Notarisation waits on Apple; cap it so a stuck submission fails the job
-        # in half an hour instead of running until the 6h job limit.
-        timeout-minutes: 30
+        # Build + sign + DMG only; notarisation happens in the next step. Still
+        # capped, so a hung build fails in 20 minutes instead of the 6h job limit.
+        timeout-minutes: 20
         run: ../node_modules/.bin/tauri build --bundles app,dmg
+
+      # Tauri runs `notarytool submit --wait` internally and discards its output,
+      # so a submission that never finishes looks like a silent hang. Drive the
+      # notary service here instead: `--wait` prints the submission id and polls
+      # the status, and stapler attaches the ticket so the app validates offline.
+      - name: Notarise and staple
+        if: env.APPLE_CERTIFICATE != ''
+        timeout-minutes: 25
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP=".tauri/target/release/bundle/macos/ACSA Code.app"
+          DMG=".tauri/target/release/bundle/dmg/ACSA Code.dmg"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/app.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/app.zip" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          if [ -f "$DMG" ]; then
+            xcrun notarytool submit "$DMG" \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$DMG"
+            xcrun stapler validate "$DMG"
+          fi
 
       - name: Confirm the bundle resolves its engine
         run: |
@@ -139,9 +173,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
+          # Tauri writes the disk image to bundle/dmg/, not bundle/macos/, and
+          # produces no *.app.tar.gz while createUpdaterArtifacts is false — so
+          # both of the previous globs matched nothing.
           files: |
-            .tauri/target/release/bundle/macos/*.dmg
-            .tauri/target/release/bundle/macos/*.app.tar.gz
+            .tauri/target/release/bundle/dmg/*.dmg
           body: |
             Built from ${{ github.sha }}.
 
