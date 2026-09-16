@@ -6,8 +6,11 @@
  * and the physical filesystem verification pipeline.
  *
  * Startup behaviour:
- * - On first launch: silently checks for Ollama; shows setup wizard if absent.
- * - On subsequent launches: shows a small banner if Ollama is not running.
+ * - Silently checks whether any model is usable. If a cloud provider has a stored
+ *   key, or a non-Ollama provider is the default, it does nothing at all.
+ * - Otherwise, if the local engine is not running, it offers a dismissible
+ *   notice. It never opens a modal on its own: local AI is optional, and a wizard
+ *   that can only fail until Ollama is installed reads as a broken app.
  */
 
 import { useState, useEffect } from "react";
@@ -20,10 +23,15 @@ import {
 } from "./components/ui/OllamaSetupWizard";
 import {
   checkOllamaStatus,
-  isFirstLaunchSetup,
-  markSetupComplete,
+  dismissOllamaNotice,
+  isOllamaNoticeDismissed,
+  openAiManagementDashboard,
 } from "./services/ollamaSetup";
-import { loadAllProviders, syncOllamaModels } from "./services/aiModelManager";
+import {
+  ensureProvidersHydrated,
+  loadAllProviders,
+  syncOllamaModels,
+} from "./services/aiModelManager";
 
 export function App() {
   const pipeline = usePipeline();
@@ -31,7 +39,7 @@ export function App() {
   const [showWizard, setShowWizard] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
 
-  // Startup Ollama probe — runs once after mount
+  // Startup model probe — runs once after mount
   useEffect(() => {
     let cancelled = false;
     async function probe() {
@@ -39,30 +47,33 @@ export function App() {
       await new Promise((r) => setTimeout(r, 1500));
       if (cancelled) return;
 
-      // Skip check entirely if user already has a non-ollama default configured
-      const providers = loadAllProviders();
-      const defaultP = Object.values(providers).find((p) => p.isDefault);
-      if (defaultP && defaultP.id !== "ollama") return;
-
-      const s = await checkOllamaStatus();
+      // Decide from the hydrated registry. The old check only skipped when Ollama
+      // was not the *explicitly chosen* default provider, so configuring a cloud
+      // key without also changing the default left the probe running and popped a
+      // setup modal on every launch.
+      await ensureProvidersHydrated();
       if (cancelled) return;
 
-      if (s.running) {
-        // All good — mark setup done silently and sync installed models
-        markSetupComplete();
-        if (s.models.length > 0) {
-          syncOllamaModels(s.models);
+      const providers = Object.values(loadAllProviders());
+      const hasCloudModel = providers.some((p) => p.category === "cloud" && p.isConnected);
+      const defaultP = providers.find((p) => p.isDefault);
+      const prefersAnotherProvider = Boolean(defaultP && defaultP.id !== "ollama");
+      if (hasCloudModel || prefersAnotherProvider) return;
+
+      if (isOllamaNoticeDismissed()) return;
+
+      const status = await checkOllamaStatus();
+      if (cancelled) return;
+
+      if (status.running) {
+        if (status.models.length > 0) {
+          syncOllamaModels(status.models);
         }
         return;
       }
 
-      if (isFirstLaunchSetup()) {
-        // First time — show full wizard
-        setShowWizard(true);
-      } else {
-        // Repeat launch without Ollama running — show non-intrusive banner
-        setShowBanner(true);
-      }
+      // Offer it quietly rather than taking over the window.
+      setShowBanner(true);
     }
     void probe();
     return () => { cancelled = true; };
@@ -91,8 +102,17 @@ export function App() {
 
       {!showWizard && showBanner && (
         <OllamaNotRunningBanner
-          onOpenWizard={() => { setShowBanner(false); setShowWizard(true); }}
-          onDismiss={() => setShowBanner(false)}
+          onOpenSetup={() => {
+            setShowBanner(false);
+            dismissOllamaNotice();
+            // The dashboard covers both routes — a cloud key or the local engine —
+            // where the Ollama wizard only offers one of them.
+            openAiManagementDashboard();
+          }}
+          onDismiss={() => {
+            setShowBanner(false);
+            dismissOllamaNotice();
+          }}
         />
       )}
     </ErrorBoundary>

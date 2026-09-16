@@ -581,25 +581,25 @@ function LogBox({
 
 /* ── Non-Intrusive Repeat-Launch Banner ─────────────────────────────────── */
 interface OllamaBannerProps {
-  onOpenWizard: () => void;
+  onOpenSetup: () => void;
   onDismiss: () => void;
 }
 
-export function OllamaNotRunningBanner({ onOpenWizard, onDismiss }: OllamaBannerProps) {
+export function OllamaNotRunningBanner({ onOpenSetup, onDismiss }: OllamaBannerProps) {
   return (
     <div className="fixed bottom-6 right-6 z-[9000] flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
       <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-white truncate">Ollama is not running</p>
-        <p className="text-[10px] text-zinc-400 mt-0.5">Local AI engine is inactive</p>
+        <p className="text-xs font-semibold text-white truncate">No AI model is configured</p>
+        <p className="text-[10px] text-zinc-400 mt-0.5">Add a provider key, or start the local engine</p>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
-          onClick={onOpenWizard}
+          onClick={onOpenSetup}
           className="text-[10px] font-bold text-purple-400 hover:text-purple-300 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
         >
-          Fix
+          Set up
         </button>
         <button
           type="button"

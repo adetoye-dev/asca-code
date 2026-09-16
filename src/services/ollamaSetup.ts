@@ -11,6 +11,9 @@
 
 export const OLLAMA_FIRST_LAUNCH_KEY = "acsa_code_ollama_setup_done_v1";
 
+/** Set once the user dismisses the advisory "no model configured" notice. */
+export const OLLAMA_NOTICE_DISMISSED_KEY = "acsa_code_ollama_notice_dismissed_v1";
+
 export interface OllamaModelDetail {
   name: string;
   tag: string;
@@ -184,14 +187,22 @@ export async function startOllamaServer(): Promise<boolean> {
   }
 }
 
-/** Returns true if this is the first time setup needs to run. */
-export function isFirstLaunchSetup(): boolean {
-  return !localStorage.getItem(OLLAMA_FIRST_LAUNCH_KEY);
-}
-
 /** Mark setup as completed so wizard doesn't auto-pop on next launch. */
 export function markSetupComplete(): void {
   localStorage.setItem(OLLAMA_FIRST_LAUNCH_KEY, "1");
+}
+
+/**
+ * The "no model configured" notice is advisory, so dismissing it has to stick —
+ * otherwise the app nags on every launch. The wizard stays reachable from the AI
+ * dashboard and the command palette, so nothing is lost by hiding it.
+ */
+export function isOllamaNoticeDismissed(): boolean {
+  return localStorage.getItem(OLLAMA_NOTICE_DISMISSED_KEY) === "1";
+}
+
+export function dismissOllamaNotice(): void {
+  localStorage.setItem(OLLAMA_NOTICE_DISMISSED_KEY, "1");
 }
 
 /** Delete an installed Ollama model to free disk space. */
@@ -535,4 +546,3 @@ export function startCodingWithOllama(model?: string): void {
     window.dispatchEvent(new CustomEvent(EVENT_START_CODING_WITH_OLLAMA, { detail: { model } }));
   }
 }
-

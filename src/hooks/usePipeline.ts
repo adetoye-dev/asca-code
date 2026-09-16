@@ -23,7 +23,7 @@ import type {
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
-import { hydrateProviders } from "../services/aiModelManager";
+import { ensureProvidersHydrated } from "../services/aiModelManager";
 import { hydrateChatHistory } from "../services/aiChatPersistence";
 import { appStore } from "../services/appStore";
 import {
@@ -193,7 +193,7 @@ export function usePipeline(): UsePipelineReturn {
     let cancelled = false;
     (async () => {
       try {
-        await hydrateProviders();
+        await ensureProvidersHydrated();
         const [settings, active] = await Promise.all([
           appStore.getSettings(),
           appStore.getActiveProject(),

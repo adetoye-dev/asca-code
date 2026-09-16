@@ -342,6 +342,20 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
  * as secrets) and then deleted. Until it is deleted the key is still sitting in
  * the browser, so the removal is the point of the exercise, not a tidy-up.
  */
+let hydration: Promise<void> | null = null;
+
+/**
+ * Await the registry being hydrated, running it at most once.
+ *
+ * Both the workbench and the startup model probe need a hydrated registry, and
+ * calling `hydrateProviders()` directly from each raced the one-time
+ * localStorage migration. Everything that needs the registry should await this.
+ */
+export function ensureProvidersHydrated(): Promise<void> {
+  if (!hydration) hydration = hydrateProviders();
+  return hydration;
+}
+
 export async function hydrateProviders(): Promise<void> {
   const merged = cloneInitialProviders();
   delete (merged as any).deterministic;
