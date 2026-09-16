@@ -8,7 +8,7 @@
 # installed.
 #
 # Usage:  scripts/build_engine_sidecar.sh
-# Output: .tauri/binaries/acsa-engine-<target-triple>
+# Output: .tauri/engine/acsa-engine/acsa-engine  (an onedir tree, shipped as a resource)
 #
 # Tauri resolves `externalBin` entries by that triple suffix and strips it when
 # bundling, so the app looks for a plain `acsa-engine` next to its executable.
@@ -38,10 +38,15 @@ mkdir -p .tauri/binaries
 
 # The dispatcher imports its entry points dynamically, so they are declared
 # explicitly; PyInstaller's static analysis cannot see them.
+# `--onedir`, not `--onefile`: onefile writes a NEW executable to a temp directory on
+# every launch, so macOS scans a fresh binary every time. Measured on this machine:
+# 8.5s per call warm, versus 0.06s for a stable onedir binary — the cost of a scan,
+# not of unpacking (the payload is only 14 MB). Since every IPC call spawns the
+# engine, onefile made the whole app feel broken.
 "${VENV}/bin/pyinstaller" \
-  --onefile --noconfirm --clean \
+  --onedir --noconfirm --clean \
   --name acsa-engine \
-  --distpath .tauri/binaries \
+  --distpath .tauri/engine \
   --workpath "${TMPDIR:-/tmp}/acsa-freeze-build" \
   --specpath "${TMPDIR:-/tmp}/acsa-freeze-spec" \
   --paths core-engine \
@@ -69,9 +74,9 @@ mkdir -p .tauri/binaries
   --hidden-import mcp_client \
   core-engine/acsa_engine.py
 
-mv -f .tauri/binaries/acsa-engine ".tauri/binaries/acsa-engine-${TRIPLE}"
+ENGINE_BIN=".tauri/engine/acsa-engine/acsa-engine"
 
 echo
-echo "Built .tauri/binaries/acsa-engine-${TRIPLE}"
+echo "Built ${ENGINE_BIN}"
 echo "Smoke test:"
-".tauri/binaries/acsa-engine-${TRIPLE}" db info
+"${ENGINE_BIN}" db info

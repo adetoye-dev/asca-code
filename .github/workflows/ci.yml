@@ -70,7 +70,7 @@ jobs:
       - name: Sidecar answers each subcommand
         run: |
           set -euo pipefail
-          BIN="$(ls .tauri/binaries/acsa-engine-*)"
+          BIN=".tauri/engine/acsa-engine/acsa-engine"
           export ACSA_DATA_DIR="$(mktemp -d)"
           # Fails loudly if the freeze dropped a module — `pty` was silently
           # missing once and only surfaced when a user opened the terminal.
@@ -123,7 +123,7 @@ jobs:
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           test -f "$APP/Contents/Resources/core-engine/manager.py"
-          test -x "$APP/Contents/MacOS/acsa-engine"
+          test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
           # MIT needs the notice to accompany the binary, and OFL needs the font
           # licence to travel with the font. Both live inside the bundle.
           test -f "$APP/Contents/Resources/LICENSE"

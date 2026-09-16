@@ -152,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
-          test -x "$APP/Contents/MacOS/acsa-engine"
+          test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
           test -f "$APP/Contents/Resources/core-engine/manager.py"
           "$APP/Contents/MacOS/acsa-code" > /tmp/launch.log 2>&1 &
           PID=$!

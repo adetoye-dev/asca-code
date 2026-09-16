@@ -39,6 +39,7 @@
     "resources": {
       "../core-engine": "core-engine",
       "../scripts": "scripts",
+      "engine": "engine",
       "../LICENSE": "LICENSE",
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
@@ -88,10 +89,7 @@
       "appimage": {
         "bundleMediaFramework": false
       }
-    },
-    "externalBin": [
-      "binaries/acsa-engine"
-    ]
+    }
   },
   "plugins": {
     "shell": {

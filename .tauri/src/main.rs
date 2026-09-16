@@ -450,6 +450,16 @@ fn resolve_engine_bin(resource_dir: Option<&Path>) -> Option<PathBuf> {
         }
     }
     if let Some(resources) = resource_dir {
+        // Packaged: the engine ships as a resource directory (`--onedir`), because a
+        // onefile sidecar writes a new executable on every launch and macOS scans it
+        // again each time — 8.5s per call versus 0.06s for a stable binary.
+        candidates.push(
+            resources
+                .join("engine")
+                .join(ENGINE_BIN_NAME)
+                .join(ENGINE_BIN_NAME),
+        );
+        candidates.push(resources.join("engine").join(ENGINE_BIN_NAME));
         candidates.push(resources.join(ENGINE_BIN_NAME));
         candidates.push(resources.join("binaries").join(ENGINE_BIN_NAME));
     }

@@ -19,7 +19,7 @@ Verify a build before shipping:
 scripts/build_engine_sidecar.sh
 cd .tauri
 ../node_modules/.bin/tauri build --bundles app
-ls "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-engine"
+ls "target/release/bundle/macos/ACSA Code.app/Contents/Resources/engine/acsa-engine/acsa-engine"
 "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-code" &
 # expect: [ACSA Code] started. Engine dir: ".../Contents/Resources/core-engine"
 ```
@@ -50,7 +50,7 @@ The engine is frozen into a single binary and shipped as a Tauri sidecar, so the
 app needs no interpreter on the user's machine.
 
 ```bash
-scripts/build_engine_sidecar.sh        # -> .tauri/binaries/acsa-engine-<triple>
+scripts/build_engine_sidecar.sh        # -> .tauri/engine/acsa-engine/acsa-engine
 ```
 
 `acsa-engine` exposes the subcommands the app spawns (`manager`, `db`, `index`,
