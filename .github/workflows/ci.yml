@@ -13,6 +13,12 @@ jobs:
   verify:
     name: Verify (typecheck, tests, build)
     runs-on: ubuntu-latest
+    env:
+      # `vite build` peaks above the ~2 GB heap Node gives the runner by default
+      # and dies with exit 134 (SIGABRT, "Ineffective mark-compacts near heap
+      # limit"). A dev machine survives because Node sizes its default heap from
+      # total RAM, so this only ever broke in CI.
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +85,9 @@ jobs:
     name: Desktop bundle
     runs-on: macos-latest
     needs: [verify]
+    env:
+      # Inherited by `tauri build`'s beforeBuildCommand (`npm run build`).
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
 

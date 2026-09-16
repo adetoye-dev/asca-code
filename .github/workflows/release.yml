@@ -26,6 +26,9 @@ jobs:
   macos:
     runs-on: macos-latest
     env:
+      # Tauri's beforeBuildCommand runs `npm run build`; without this the frontend
+      # build can exceed the runner's default Node heap. See ci.yml.
+      NODE_OPTIONS: --max-old-space-size=4096
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
