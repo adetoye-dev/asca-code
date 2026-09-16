@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 # Vendors that speak the OpenAI wire format (`GET /models`, bearer token).
 OPENAI_COMPATIBLE = {
@@ -481,6 +482,201 @@ COMMANDS = {
 }
 
 
+# ── Streaming chat ──────────────────────────────────────────────────────────
+#
+# Chat streams, so it does not use the {ok, data} envelope: it writes NDJSON lines
+# the caller forwards to the UI (`{"delta": …}` … `{"done": true}`), which is the
+# same three frames the dev bridge produced over SSE.
+
+def _emit(frame: dict) -> None:
+    sys.stdout.write(json.dumps(frame) + "\n")
+    sys.stdout.flush()
+
+
+def _chat_context(project_root: str, needs_git: bool) -> str:
+    """Project intelligence + workspace git context, as the assistant prompt saw it."""
+    if not project_root or not Path(project_root).is_dir():
+        return ""
+
+    index_context = ""
+    try:
+        import indexer_cli
+
+        data = indexer_cli._load(project_root)
+        if data:
+            profile = data.get("profile") or {}
+            names = list((data.get("symbols") or {}).keys())
+            shown = names[:35]
+            more = f" (+{len(names) - 35} more)" if len(names) > 35 else ""
+            index_context = (
+                "\n\n--- Project Intelligence & Symbol Graph ---\n"
+                f"Scale Tier: {profile.get('scale_tier') or 'standard'} "
+                f"({profile.get('total_loc') or 0} LOC across {profile.get('indexed_files') or 0} files)\n"
+                f"Frameworks / Stack: {', '.join(profile.get('frameworks') or []) or profile.get('primary_language') or 'General'}\n"
+                f"Indexed Symbols: {', '.join(shown)}{more}\n"
+                "--- End of Project Intelligence ---\n"
+            )
+    except Exception:  # noqa: BLE001 - context is an enhancement, never a failure
+        index_context = ""
+
+    workspace = ""
+    if needs_git:
+        try:
+            import git_cli
+
+            def git(*args):
+                ok, out, _ = git_cli._run(project_root, list(args), timeout=5)
+                return out.strip() if ok else ""
+
+            status, diff, log = git("status", "-s"), git("diff", "--stat"), git("log", "-n", "5", "--oneline")
+            workspace = f"\n\n--- Current Workspace Git Context ---\nProject directory: {project_root}\n"
+            if status:
+                workspace += f"Uncommitted changes (git status):\n{status}\n\n"
+            if diff:
+                workspace += f"Diff summary:\n{diff}\n\n"
+            if log:
+                workspace += f"Recent commits:\n{log}\n"
+            workspace += "--- End of Workspace Context ---\n"
+        except Exception:  # noqa: BLE001 - same
+            pass
+
+    return index_context + (f"\n{workspace}" if workspace else "")
+
+
+CHAT_SYSTEM_PROMPT = (
+    "You are ACSA Code AI Assistant, an expert, thoughtful, and pragmatic coding companion integrated into ACSA Code. "
+    "Help the user understand, write, review, debug, and navigate their code. Provide clear explanations and clean "
+    "markdown code blocks with language tags when showing code."
+)
+
+
+def _iter_sse(response):
+    """Yield the `data:` payloads of an event-stream response."""
+    for raw in response:
+        line = raw.decode("utf-8", "replace").strip()
+        if line.startswith("data:"):
+            yield line[5:].strip()
+
+
+def _stream_completion(provider, model, base_url, api_key, messages, images, on_delta):
+    """Stream one completion, calling on_delta per token. Returns (ok, error)."""
+    if provider == "ollama":
+        payload_messages = [dict(m) for m in messages]
+        if images:
+            payload_messages[-1]["images"] = [
+                img.split("base64,", 1)[-1] for img in images if isinstance(img, str)
+            ]
+        body = {
+            "model": model or "qwen2.5-coder:7b",
+            "messages": payload_messages,
+            "stream": True,
+            "options": {"temperature": 0.7},
+        }
+        url = f"{base_url or DEFAULT_BASE_URLS['ollama']}/api/chat"
+        headers = {"Content-Type": "application/json"}
+    elif provider == "anthropic":
+        if not api_key:
+            return False, "An API key is required for the Anthropic provider."
+        system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+        turns = [m for m in messages if m["role"] != "system"]
+        body = {
+            "model": model or "claude-3-5-sonnet-latest",
+            "max_tokens": 4096,
+            "system": system,
+            "messages": turns,
+            "stream": True,
+        }
+        url = f"{base_url or DEFAULT_BASE_URLS['anthropic']}/v1/messages"
+        headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    else:
+        if not api_key:
+            return False, f"An API key is required for provider '{provider}'."
+        body = {
+            "model": model or "gpt-4o-mini",
+            "messages": messages,
+            "stream": True,
+            "temperature": 0.7,
+        }
+        url = f"{base_url or DEFAULT_BASE_URLS.get(provider, 'https://api.openai.com/v1')}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300.0) as response:
+            if provider == "ollama":
+                for raw in response:  # newline-delimited JSON
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    token = (chunk.get("message") or {}).get("content")
+                    if token:
+                        on_delta(token)
+                    if chunk.get("done"):
+                        break
+            else:
+                for payload in _iter_sse(response):
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except ValueError:
+                        continue
+                    if chunk.get("type") == "content_block_delta":
+                        text = (chunk.get("delta") or {}).get("text")
+                    else:
+                        choices = chunk.get("choices") or [{}]
+                        text = (choices[0].get("delta") or {}).get("content")
+                    if text:
+                        on_delta(text)
+    except urllib.error.HTTPError as exc:
+        return False, f"Provider request failed ({exc.code})"
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def chat_stream(payload: dict) -> None:
+    """Stream a reply as NDJSON frames: {delta}, then {done} or {error}."""
+    provider = str(payload.get("provider") or "ollama").strip()
+    model = str(payload.get("model") or "").strip()
+    api_key = _resolve_key(provider, str(payload.get("apiKey") or ""))
+    images = payload.get("images") or []
+    messages = payload.get("messages") or []
+
+    system = CHAT_SYSTEM_PROMPT + _chat_context(
+        str(payload.get("projectRoot") or ""), bool(payload.get("needsGitContext", True))
+    )
+    sent = [{"role": "system", "content": system}]
+    for message in messages:
+        role = message.get("role")
+        if role in ("user", "assistant", "system"):
+            sent.append({"role": role, "content": str(message.get("content") or "")})
+
+    started = time.monotonic()
+    ok, error = _stream_completion(
+        provider, model, str(payload.get("baseUrl") or "").rstrip("/"), api_key, sent,
+        images, lambda token: _emit({"delta": token}),
+    )
+    if not ok:
+        _emit({"error": error, "done": True})
+        return
+    _emit(
+        {
+            "done": True,
+            "provider": provider,
+            "model": model,
+            "elapsedMs": int((time.monotonic() - started) * 1000),
+        }
+    )
+
+
+STREAMING = {"chat"}
+COMMANDS["chat"] = chat_stream
+
+
 def run(argv: list[str]) -> int:
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(json.dumps({"ok": False, "error": f"usage: ai_cli.py <{'|'.join(COMMANDS)}> [json]"}))
@@ -494,6 +690,10 @@ def run(argv: list[str]) -> int:
     try:
         raw = argv[2] if len(argv) > 2 else (sys.stdin.read() or "{}")
         payload = json.loads(raw or "{}")
+        # Streaming commands write their own NDJSON frames and have no envelope.
+        if argv[1] in STREAMING:
+            handler(payload)
+            return 0
         print(json.dumps({"ok": True, "data": handler(payload)}))
         return 0
     except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not raise
