@@ -15,6 +15,7 @@ import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User,
 import type { PipelineStatus, PipelineOutputLine } from "../TelemetryScorecard";
 import {
   getConfiguredModelsList,
+  ensureProvidersHydrated,
   ConfiguredModelItem,
   loadAllProviders,
   getAutoSelectedLocalWorker,
@@ -123,6 +124,24 @@ export function AiAssistantChat({
   const [selectedModelItem, setSelectedModelItem] = useState<ConfiguredModelItem | null>(() =>
     resolveInitialSelectedModel()
   );
+
+  // The registry hydrates asynchronously (from the database, over IPC), so reading
+  // it in a mount-time initialiser can legitimately find nothing — and then chat
+  // refuses to send with "no model is installed or selected" for the whole session,
+  // even though the dashboard shows a connected provider. Re-resolve once hydration
+  // lands; an explicit pick by the user is never overwritten.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await ensureProvidersHydrated();
+      if (cancelled) return;
+      setConfiguredModels(getConfiguredModelsList());
+      setSelectedModelItem((current) => current ?? resolveInitialSelectedModel());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSelectModel = (item: ConfiguredModelItem | null) => {
     setSelectedModelItem(item);
