@@ -9,9 +9,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| App-owned database | **[done]** | SQLite via `core-engine/app_db.py`, one schema + migration path, reached by the dev bridge and the packaged app through `db-cli`. |
+| App-owned database | **[done]** | SQLite via `core-engine/app_db.py`, one schema + migration path, reached over IPC through the `db` engine subcommand. |
 | State out of browser storage | **[done]** | Provider registry, credentials, chat history, recent projects and the active-project pointer moved out of `localStorage`. Existing values are migrated once and the browser copies deleted. |
-| Credentials never reach the page | **[done]** | Keys are write-only across the API (`hasApiKey`, no value). Server-side resolution in the bridge and the engine. |
+| Credentials never reach the page | **[done]** | Keys are write-only across the API (`hasApiKey`, no value). Resolved server-side by the engine, and put into the agent child's environment by the Rust layer. |
 | Database file permissions | **[done]** | Data dir `0700`, database and its WAL/SHM `0600`. |
 | Encryption at rest | **[open]** | The standard library has no authenticated cipher, so secrets sit in a `0600` file rather than a fake-encrypted one. Next step is OS keychain (macOS Keychain / Windows Credential Manager) via a Tauri plugin. |
 | Backup / restore | **[open]** | No export or import of the database. Users have no way to move their settings to a new machine. |
@@ -42,7 +42,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Bundles and launches | **[done]** | `tauri build` produces an `.app` that starts and finds its engine in `Contents/Resources`. |
 | Engine shipped with the app | **[done]** | `bundle.resources` plus resource-dir resolution. |
 | Icons | **[done]** | `.tauri/icon-source.svg` generates the platform set; the titlebar/watermark logo is `public/logos/acsa.svg`. Hand-authored stand-in — swap in final art when ready. |
-| Python runtime | **[done]** | The engine is frozen into a single ~10 MB `acsa-engine` sidecar (`scripts/build_engine_sidecar.sh`) and resolved by the Rust and bridge spawn paths. No interpreter needed on the user's machine. |
+| Python runtime | **[done]** | The engine is frozen into a single `acsa-engine` tree (`scripts/build_engine_sidecar.sh`) and resolved by the Rust spawn path, falling back to `python3` for a source checkout. No interpreter needed on the user's machine. |
 | Code signing / notarisation | **[partial]** | Hardened runtime and entitlements are configured and `release.yml` imports the certificate, notarises, and verifies the ticket — but it needs an Apple Developer certificate, so no signed build has been produced yet. |
 | Auto-update | **[open]** | Documented end to end in `RELEASING.md`; needs a signing key and a release host. |
 | CI | **[done]** | `ci.yml` runs typecheck + tests + build, builds the sidecar, and bundles, launches and engine-checks the `.app`. `release.yml` signs on tag. |
@@ -51,9 +51,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Unit suite | **[done]** | 124 tests: database, CLI, env handling, agent parsing, stream handling, diff application, indexing, worker delegation. |
-| Real end-to-end agent test | **[done]** | `npm run test:e2e` drives the real pipeline against local Ollama and verifies the resulting files behave correctly. |
-| Typecheck | **[done]** | `strict: true`, including the Node-side bridge config. |
+| Unit suite | **[done]** | `npm test`: database and accounts, engine CLIs, env handling, indexing and the dependency graph, MCP client, workspace search/replace, project readiness. |
+| Real end-to-end agent test | **[partial]** | The agent is exercised by hand against a real provider; `docs/AGENT_RUNTIME.md` records the recipe and what it found. There is no scripted end-to-end run any more — the old one drove the deleted pipeline. |
+| Typecheck | **[done]** | `strict: true`, including the Node-side dev-bridge config. |
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
 | Flake budget | **[partial]** | The end-to-end edit scenario passes roughly four runs in five; it is opt-in and not part of CI. |
 
