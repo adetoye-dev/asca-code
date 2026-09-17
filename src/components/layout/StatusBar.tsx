@@ -1,6 +1,6 @@
 import { GitBranch, Activity, FileCode, Cpu, HardDrive, Database, RefreshCw } from "lucide-react";
 import { Icon } from "../ui/Icon";
-import type { SystemMetrics } from "../TelemetryScorecard";
+import type { SystemMetrics } from "../../types/telemetry";
 import type { ProjectIndexState } from "../../hooks/usePipeline";
 
 export interface StatusBarProps {

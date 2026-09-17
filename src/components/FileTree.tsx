@@ -332,7 +332,7 @@ export function FileTree({
             <FileIcon fileName={node.name} isDir={isDir} isOpen={isExpanded} className="w-4 h-4 shrink-0" />
             <span className="truncate">{node.name}</span>
             {isTouched && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 ml-1" title="Touched by Gauntlet" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 ml-1" title="Changed by the agent in this session" />
             )}
           </div>
 

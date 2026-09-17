@@ -2,11 +2,11 @@
  * systemMetricsService.ts — Central System Telemetry Service
  *
  * Single source of truth for host CPU, RAM, and Disk metrics across the IDE.
- * Ensures StatusBar (footer panel), PerformanceDashboard (monitoring page),
- * and TelemetryScorecard are always 100% synchronized with zero discrepancy.
+ * The status bar and the Performance page both read from here, so the two can
+ * never disagree about what the machine is doing.
  */
 
-import type { SystemMetrics } from "../components/TelemetryScorecard";
+import type { SystemMetrics } from "../types/telemetry";
 
 type MetricsListener = (metrics: SystemMetrics) => void;
 

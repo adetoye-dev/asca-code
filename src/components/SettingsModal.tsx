@@ -104,10 +104,25 @@ const SETTINGS_TREE: TreeNode[] = [
   { id: "marketplace", label: "Marketplace" },
 ];
 
+/** Every id the tree actually offers, so a caller cannot land on an empty pane. */
+const SETTINGS_SECTION_IDS: ReadonlySet<string> = (() => {
+  const ids = new Set<string>();
+  const walk = (nodes: TreeNode[]) => {
+    for (const node of nodes) {
+      ids.add(node.id);
+      if (node.children) walk(node.children);
+    }
+  };
+  walk(SETTINGS_TREE);
+  return ids;
+})();
+
 function resolveInitialSection(tab?: string): string {
   if (tab === "appearance") return "appearance";
   if (tab === "ai") return "providers";
-  if (tab) return tab;
+  // An unknown id renders nothing at all, which reads as "the dialog is broken"
+  // rather than "that page moved" — the caller said "agents", which never existed.
+  if (tab && SETTINGS_SECTION_IDS.has(tab)) return tab;
   return "agent";
 }
 

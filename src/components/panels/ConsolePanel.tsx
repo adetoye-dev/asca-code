@@ -6,7 +6,7 @@
  */
 
 import { useRef, useEffect } from "react";
-import type { PipelineOutputLine } from "../TelemetryScorecard";
+import type { PipelineOutputLine } from "../../types/telemetry";
 
 interface ConsolePanelProps {
   activityLog: PipelineOutputLine[];

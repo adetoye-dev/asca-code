@@ -2,7 +2,7 @@
  * BottomPanel.tsx — Production VS Code Bottom Panel with Tabs & Resize
  *
  * Provides:
- * 1. Tabbed navigation: TERMINAL, OUTPUT (Gauntlet), and PROBLEMS (Syntax/AST).
+ * 1. Tabbed navigation: TERMINAL, OUTPUT and PROBLEMS.
  * 2. Draggable top border to resize panel height (140px to 600px).
  * 3. Maximize / Restore height toggle.
  * 4. Close panel button (X) and status indicators.
@@ -13,7 +13,7 @@ import { Trash2, CheckCircle2, FileText, ChevronUp, ChevronDown, RefreshCw, Aler
 import { Icon } from "../ui/Icon";
 import { XtermTerminal, type XtermTerminalHandle } from "../terminal/XtermTerminal";
 import { ConsolePanel } from "./ConsolePanel";
-import type { PipelineOutputLine, OrchestrationResult } from "../TelemetryScorecard";
+import type { PipelineOutputLine } from "../../types/telemetry";
 
 type PanelTab = "terminal" | "output" | "problems";
 
@@ -26,7 +26,6 @@ interface BottomPanelProps {
   activityLog: PipelineOutputLine[];
   onClearLog: () => void;
   status: string;
-  orchestrationResult: OrchestrationResult | null;
 }
 
 export function BottomPanel({
@@ -37,7 +36,6 @@ export function BottomPanel({
   activityLog,
   onClearLog,
   status,
-  orchestrationResult,
 }: BottomPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>("terminal");
   const [panelHeight, setPanelHeight] = useState<number>(240);
@@ -76,7 +74,7 @@ export function BottomPanel({
 
   if (!isOpen) return null;
 
-  // Extract problems from activityLog / orchestrationResult
+  // Problems are whatever the run reported on stderr or as an explicit failure.
   const errorLines = activityLog.filter(
     (l) => l.stream === "stderr" || l.content.includes("ERROR") || l.content.includes("FAILED")
   );
@@ -120,7 +118,7 @@ export function BottomPanel({
             }`}
           >
             <Icon icon={FileText} className="w-3.5 h-3.5 text-emerald-400" />
-            <span>OUTPUT (GAUNTLET)</span>
+            <span>OUTPUT</span>
             {status === "running" && (
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
             )}
@@ -230,16 +228,7 @@ export function BottomPanel({
 
         {activeTab === "problems" && (
           <div className="h-full w-full overflow-y-auto p-3 space-y-1.5 font-mono text-xs bg-[var(--vscode-editor-bg)]">
-            {orchestrationResult && orchestrationResult.outcome !== "success" && (
-              <div className="flex items-center gap-2 p-2 rounded bg-red-950/40 border border-red-800 text-red-200 mb-2">
-                <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
-                <span>
-                  Gauntlet Verification Failed: {orchestrationResult.outcome.toUpperCase()} (Total rounds: {orchestrationResult.total_rounds})
-                </span>
-              </div>
-            )}
-
-            {errorLines.length === 0 && (!orchestrationResult || orchestrationResult.outcome === "success") ? (
+            {errorLines.length === 0 ? (
               <div className="flex items-center gap-2 text-zinc-400 py-6 justify-center font-sans text-xs">
                 <Icon icon={CheckCircle2} className="w-4 h-4 text-emerald-400" />
                 <span>No problems detected in workspace or compiler syntax guard.</span>

@@ -45,6 +45,12 @@ pub struct SystemMetrics {
     pub memory_total_mb: f64,
     pub memory_used_mb: f64,
     pub memory_usage_percent: f64,
+    /// Free/total/used for the volume the app is running from. The status bar
+    /// showed `Disk: --` because nothing ever filled these in.
+    pub disk_usage_percent: f64,
+    pub disk_used_gb: f64,
+    pub disk_total_gb: f64,
+    pub disk_free_gb: f64,
     pub is_thermal_risk: bool,
     pub thermal_warning: String,
     pub timestamp_ms: u64,
@@ -604,6 +610,23 @@ fn fetch_system_metrics(state: State<'_, AppState>) -> Result<SystemMetrics, Str
         .unwrap_or_default()
         .as_millis() as u64;
 
+    // The boot volume: what "Disk:" in a status bar means to a reader.
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let (disk_total, disk_free) = disks
+        .list()
+        .first()
+        .map(|d| (d.total_space(), d.available_space()))
+        .unwrap_or((0, 0));
+    let gib = 1024.0 * 1024.0 * 1024.0;
+    let disk_total_gb = round1(disk_total as f64 / gib);
+    let disk_free_gb = round1(disk_free as f64 / gib);
+    let disk_used_gb = round1(disk_total_gb - disk_free_gb);
+    let disk_usage_percent = if disk_total_gb > 0.0 {
+        round1((disk_used_gb / disk_total_gb) * 100.0)
+    } else {
+        0.0
+    };
+
     Ok(SystemMetrics {
         cpu_usage_percent: (cpu_usage * 10.0).round() / 10.0,
         cpu_count_physical: physical_cores,
@@ -611,6 +634,10 @@ fn fetch_system_metrics(state: State<'_, AppState>) -> Result<SystemMetrics, Str
         memory_total_mb: (mem_total * 10.0).round() / 10.0,
         memory_used_mb: (mem_used * 10.0).round() / 10.0,
         memory_usage_percent: (mem_percent * 10.0).round() / 10.0,
+        disk_usage_percent,
+        disk_used_gb,
+        disk_total_gb,
+        disk_free_gb,
         is_thermal_risk,
         thermal_warning,
         timestamp_ms: timestamp,

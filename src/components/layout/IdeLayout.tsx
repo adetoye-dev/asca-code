@@ -6,7 +6,7 @@
  * 2. Activity Bar: Explorer, Monitoring, Model Manager, Autonomous Agent Dock, Extensions & Themes.
  * 3. Primary Sidebar: Mounts the active activity bar view (toggleable via Cmd+B).
  * 4. Main Stage (Dockview): Multi-tab Monaco editor with split panes & Diff inspector.
- * 5. Dedicated Bottom Panel: Tabbed dock housing Interactive Shell (Xterm.js), Gauntlet Output, and Problems (toggleable via Cmd+J / Ctrl+`).
+ * 5. Dedicated Bottom Panel: Tabbed dock housing the interactive shell, the run's output, and problems.
  * 6. Status Bar: Branch name, encoding, language, theme, and gate status.
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
@@ -199,7 +199,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     prompt,
     setPrompt,
     status,
-    orchestrationResult,
     activityLog,
     systemMetrics,
     runPipeline,
@@ -275,7 +274,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [themeId, setThemeId] = useState<string>(
     () => (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_theme") || "github-dark" : "github-dark")
   );
-  const [settingsModalTab, setSettingsModalTab] = useState<string>("agents");
+  // Must name a section that exists in SETTINGS_TREE. It said "agents", which
+  // matches nothing, so opening Settings landed on an empty pane — the whole
+  // dialog looked broken until you happened to click a nav item.
+  const [settingsModalTab, setSettingsModalTab] = useState<string>("agent");
   const [searchInitialReplace, setSearchInitialReplace] = useState(false);
   const [targetEditorLine, setTargetEditorLine] = useState<{
     path: string;
@@ -328,7 +330,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   }, [setIsSettingsModalOpen]);
 
   const openSettings = useCallback(() => {
-    setSettingsModalTab("agents");
+    setSettingsModalTab("agent");
     setIsSettingsModalOpen(true);
   }, [setIsSettingsModalOpen]);
 
@@ -829,8 +831,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     isWide: true,
     activeAiSettings: aiSettings,
     selectedContext: activeTabPath ? { path: activeTabPath, code: selectedCode } : null,
-    failureDetail: orchestrationResult?.error_detail,
-    orchestrationResult,
     indexStatus,
     isIndexing,
     onSyncIndex: syncIndex,
@@ -1259,10 +1259,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
 
 
-          {/* Verification Gauntlet & Host Telemetry (Opens Full Page Dashboard) */}
           <button
             type="button"
-            title="Verification Gauntlet & Host Telemetry (Opens Full Page)"
+            title="Host Health & Performance (Opens Full Page)"
             onClick={openMonitorTab}
             className={`p-2 rounded-lg transition-all ${
               fullPage === "monitor"
@@ -1514,7 +1513,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             activityLog={activityLog}
             onClearLog={clearLog}
             status={status}
-            orchestrationResult={orchestrationResult}
             terminalFontSize={aiSettings?.terminalFontSize ?? 13}
           />
           </Suspense>
@@ -1548,9 +1546,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               isWide={false}
               activeAiSettings={aiSettings}
               selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
-              failureDetail={orchestrationResult?.error_detail}
-              orchestrationResult={orchestrationResult}
-              indexStatus={indexStatus}
+                indexStatus={indexStatus}
               isIndexing={isIndexing}
               onSyncIndex={syncIndex}
               streamingAnswer={streamingAnswer}

@@ -3,7 +3,7 @@
  */
 
 import type { FileNode } from "../components/FileTree";
-import type { SystemMetrics } from "../components/TelemetryScorecard";
+import type { SystemMetrics } from "./telemetry";
 
 export type { FileNode, SystemMetrics };
 

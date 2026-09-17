@@ -11,7 +11,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Icon } from "../ui/Icon";
 import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users } from "lucide-react";
-import type { PipelineStatus, PipelineOutputLine } from "../TelemetryScorecard";
+import type { PipelineStatus, PipelineOutputLine } from "../../types/telemetry";
 import {
   getConfiguredModelsList,
   ensureProvidersHydrated,
@@ -64,7 +64,6 @@ interface AiAssistantChatProps {
   isWide?: boolean;
   selectedContext?: { path: string; code: string } | null;
   failureDetail?: string;
-  orchestrationResult?: any;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -105,7 +104,6 @@ export function AiAssistantChat({
   isWide = false,
   selectedContext = null,
   failureDetail = "",
-  orchestrationResult = null,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
@@ -258,11 +256,7 @@ export function AiAssistantChat({
         detailLower.includes("connection refused")
       ) {
         errorType = "offline";
-      } else if (
-        detailLower.includes("timed out") ||
-        detailLower.includes("timeout") ||
-        orchestrationResult?.outcome === "timeout"
-      ) {
+      } else if (detailLower.includes("timed out") || detailLower.includes("timeout")) {
         errorType = "timeout";
       } else if (
         detailLower.includes("api error") ||
@@ -280,26 +274,14 @@ export function AiAssistantChat({
         detailLower.includes("empty response")
       ) {
         errorType = "api";
-      } else if (
-        detailLower.includes("syntax") ||
-        detailLower.includes("lint") ||
-        detailLower.includes("paradox") ||
-        orchestrationResult?.outcome === "paradox_detected"
-      ) {
+      } else if (detailLower.includes("syntax") || detailLower.includes("lint")) {
         errorType = "syntax";
       }
 
-      const hasEditedFiles = Boolean(
-        (orchestrationResult?.edited_files && orchestrationResult.edited_files.length > 0) ||
-        (orchestrationResult?.final_patches && orchestrationResult.final_patches.length > 0)
-      );
-
+      // The agent's own final message is the answer. There is no separate
+      // "verification result" object any more — that data source is gone.
       const finalContent = isSuccess
-        ? (orchestrationResult?.answer || streamingAnswer)
-          ? (orchestrationResult?.answer || streamingAnswer)
-          : hasEditedFiles
-          ? `### Verified Workspace Update\n\nTask successfully verified and applied in ${orchestrationResult.total_rounds ?? 1} round(s) (${Math.round(orchestrationResult.elapsed_ms ?? 0)}ms).`
-          : "Task completed. No file modifications were made."
+        ? streamingAnswer || "Task completed."
         : failureDetail
         ? `⚠️ **Task Failed:** ${failureDetail}`
         : "The task needs attention. Review Problems or Output for details.";
@@ -327,7 +309,7 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, orchestrationResult, failureDetail, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
   // Sync available models and listen for global updates
   useEffect(() => {
@@ -1984,7 +1966,7 @@ function ThinkingAccordion({
                 {elapsedSeconds > 0
                   ? `Thought for ${elapsedSeconds}s`
                   : visibleSteps.length > 0
-                  ? "Execution & Verification"
+                  ? "What the agent did"
                   : "Model Reasoning"}
               </span>
               {visibleSteps.length > 0 && (

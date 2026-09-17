@@ -13,13 +13,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { FileNode } from "../components/FileTree";
 import type { OpenFileTab } from "../types/workbench";
 import type { AISettings } from "../components/SettingsModal";
-import type {
-  TelemetryData,
-  OrchestrationResult,
-  PipelineOutputLine,
-  SystemMetrics,
-  PipelineStatus,
-} from "../components/TelemetryScorecard";
+import type { PipelineOutputLine, SystemMetrics, PipelineStatus } from "../types/telemetry";
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
@@ -520,8 +514,6 @@ export interface UsePipelineReturn {
   sliders?: { budget_vs_scale: string; speed_vs_precision: string; simplicity_vs_futureproof: string };
   setSliders?: (s: any) => void;
   status: PipelineStatus;
-  telemetry: TelemetryData | null;
-  orchestrationResult: OrchestrationResult | null;
   activityLog: PipelineOutputLine[];
   systemMetrics: SystemMetrics | null;
   activeCenterView: "editor" | "diff";
@@ -744,8 +736,6 @@ export function usePipeline(): UsePipelineReturn {
   const [prompt, setPrompt] = useState<string>("");
   const [sliders, setSliders] = useState<any>(DEFAULT_SLIDERS);
   const [status, setStatus] = useState<PipelineStatus>("idle");
-  const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
-  const [orchestrationResult, setOrchestrationResult] = useState<OrchestrationResult | null>(null);
   const [activityLog, setActivityLog] = useState<PipelineOutputLine[]>([]);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [currentDiff, setCurrentDiff] = useState<string>("");
@@ -1197,8 +1187,6 @@ export function usePipeline(): UsePipelineReturn {
       setStatus("running");
       setActivityLog([]);
       setCurrentDiff("");
-      setOrchestrationResult(null);
-      setTelemetry(null);
       setStreamingAnswer("");
       setStreamingThought("");
       setAgentSteps([]);
@@ -1355,8 +1343,6 @@ export function usePipeline(): UsePipelineReturn {
     sliders,
     setSliders,
     status,
-    telemetry,
-    orchestrationResult,
     activityLog,
     systemMetrics,
     activeCenterView,
