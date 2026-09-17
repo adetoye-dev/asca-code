@@ -1,14 +1,9 @@
 /**
- * agentHarness.ts — Project Code-Intelligence Index (frontend bridge)
+ * agentHarness.ts — Project code-intelligence index (frontend client).
  *
- * Thin client for the engine's AST symbol index. The agent's actual tool
- * surface (search_symbols, get_file_outline, get_blast_radius, read_code_slice,
- * apply_patch, run_gauntlet, run_terminal_command) is owned by the Python
- * engine (`core-engine/agent_tools.py`) and driven from `agent_loop.py`; this
- * module only syncs/reports index status for the UI.
- *
- * Progressive Context Disclosure (compact symbol outlines instead of whole
- * files) and automatic project scale-tier detection live engine-side.
+ * Thin client for the engine's AST symbol index (`core-engine/indexer_cli.py`,
+ * backed by `data-map/project_indexer.py`). It syncs the index and reports its
+ * status, which is what the code map and the symbol search render.
  */
 
 import { indexerFetch } from "./indexerClient";

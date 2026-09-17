@@ -53,11 +53,13 @@ app needs no interpreter on the user's machine.
 scripts/build_engine_sidecar.sh        # -> .tauri/engine/acsa-engine/acsa-engine
 ```
 
-`acsa-engine` exposes the subcommands the app spawns (`manager`, `db`, `index`,
-`pty`); `bundle.externalBin` ships it and Tauri strips the triple suffix when
-bundling. Both the Rust commands and the development bridge prefer it and fall
-back to `python3 <entry point>` for a source checkout. CI rebuilds it and asserts
-each subcommand answers.
+`acsa-engine` exposes the subcommands the app spawns (`db`, `index`, `indexer`,
+`git`, `pty`, `ollama`, `skills`, `mcp`, `ai`); `bundle.resources` ships the
+on-dir tree and the Rust command and the development bridge both resolve it,
+falling back to `python3 core-engine/acsa_engine.py` for a source checkout.
+`acsa-engine selftest` imports every subcommand, and CI asserts it answers — the
+dispatcher loads its entry points dynamically, so a missing import would
+otherwise only fail when that subcommand is used.
 
 Rebuild it whenever the engine changes — the bundled copy is what users run.
 

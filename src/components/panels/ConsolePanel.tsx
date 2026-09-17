@@ -1,8 +1,8 @@
 /**
- * ConsolePanel.tsx — Live Verification Subprocess Console Panel
+ * ConsolePanel.tsx — Live Output console.
  *
- * Renders live streaming logs from python manager.py subprocess, syntax_guard,
- * oracle_generator, and load_sandbox with colorized streams and filtering.
+ * Renders the agent run's diagnostic log with colorized streams. When the chat
+ * shows nothing, this is where to look.
  */
 
 import { useRef, useEffect } from "react";
@@ -27,7 +27,7 @@ export function ConsolePanel({ activityLog }: ConsolePanelProps) {
       <div className="flex-1 overflow-y-auto p-3 space-y-1 bg-workbench text-xs leading-relaxed font-mono">
         {activityLog.length === 0 ? (
           <div className="text-zinc-400 py-4 font-sans text-xs">
-            Autonomous verification engine idle. When an agent generates code, live compiler, property oracle, and test outputs will appear here...
+            No output yet. Run an agent task and the runtime's step-by-step log appears here.
           </div>
         ) : (
           activityLog.map((line, idx) => {

@@ -1,12 +1,11 @@
 /**
- * AiAssistantChat.tsx — Full Conversational AI Chat & Agent Gauntlet
+ * AiAssistantChat.tsx — the chat panel and the agent surface.
  *
- * Provides two primary workflows:
- * 1. 💬 Chat Mode (Default): Conversational AI assistant with real token streaming,
- *    syntax-highlighted code blocks, 1-click copy, and workspace awareness (git context,
- *    recent changes).
- * 2. ⚡ Agent Gauntlet Mode: Autonomous multi-round code generation & verification gauntlet
- *    (python3 core-engine/manager.py) with AST compilation and syntax gates.
+ * Two workflows share one composer:
+ * 1. 💬 Ask (default) — conversational streaming with code blocks, copy, and
+ *    workspace context (git state, recent changes).
+ * 2. ⚡ Agent — an autonomous task run, executed by the Codex runtime and
+ *    streamed into the transcript step by step.
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -801,7 +800,7 @@ export function AiAssistantChat({
             ? "border border-purple-500/60 bg-purple-950/40 text-purple-200 font-medium shadow-sm"
             : "border border-transparent text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
         }`}
-        title="Autonomous multi-step code generation & verification gauntlet (Shift+Cmd+I)"
+        title="Run a multi-step agent task on your project (Shift+Cmd+I)"
       >
         <div className="flex items-center gap-2">
           <Icon icon={Code2} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
@@ -1480,10 +1479,10 @@ Click to re-index project.`}
                           <>
                             <div className="flex items-center gap-2 text-zinc-300 font-medium">
                               <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Verification Gauntlet Halted</span>
+                              <span>Stopped Before Finishing</span>
                             </div>
                             <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              The deterministic verification gauntlet caught syntax/linter issues or contradictions in the generated code and stopped safely without modifying disk files. Review the <strong>Output (Gauntlet)</strong> tab for diagnostic logs.
+                              The agent hit a syntax or lint problem it could not resolve and stopped. Open the <strong>Output</strong> tab to see exactly which check complained, then reply with a correction.
                             </p>
                           </>
                         ) : (

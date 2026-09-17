@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """acsa_engine.py — one entry point for the whole Python engine.
 
-The app used to shell out to `python3 core-engine/manager.py`, which means an
-end user needs a Python interpreter. macOS no longer ships a usable one and
-Windows ships none, so the agent simply cannot run on a clean machine. This
-module exists so the engine can be frozen into a single self-contained binary:
+The app shells out to Python for its backend, and an end user cannot be assumed
+to have an interpreter: macOS no longer ships a usable one and Windows ships
+none. This module is the single entry point, so the engine can be frozen into a
+self-contained binary:
 
-    acsa-engine manager --task ... --project-root ...
     acsa-engine db settings.get '{}'
     acsa-engine index --project-root ... --json
+    acsa-engine git status '{}'
     acsa-engine pty
 
 It is equally the development entry point (`python3 core-engine/acsa_engine.py
@@ -35,7 +35,7 @@ def _bundle_root() -> Path:
 
 def _extend_path() -> Path:
     root = _bundle_root()
-    for sub in ("", "gauntlet", "compiler", "data-map", "mcp_servers", "skills"):
+    for sub in ("", "data-map", "mcp_servers", "skills"):
         candidate = (root / sub) if sub else root
         if candidate.is_dir() and str(candidate) not in sys.path:
             sys.path.insert(0, str(candidate))
@@ -53,7 +53,6 @@ ROOT = _extend_path()
 
 # subcommand -> (module, entry function)
 COMMANDS: dict[str, tuple[str, str]] = {
-    "manager": ("manager", "main"),
     "db": ("db_cli", "run"),
     "index": ("project_indexer", "main"),
     "pty": ("pty_bridge", "main"),

@@ -1,18 +1,16 @@
 /**
- * TelemetryScorecard.tsx — Real-Time Performance Monitor & Proof Panel
+ * TelemetryScorecard.tsx — Performance monitor panel.
  *
- * Renders live telemetry from the load_sandbox.py and manager.py backends
- * as scannable metric cards, a correction-round activity ticker, and
- * cost/capacity estimates derived from benchmark data.
- *
- * Styling: Tailwind CSS utility classes — zero external component libraries.
+ * Host metrics (CPU, memory) come from the `sysinfo` sampler in the Tauri
+ * layer; benchmark telemetry and the agent's correction rounds arrive on the
+ * same shape as before. Styling is Tailwind utilities only.
  */
 
 import { useEffect, useRef } from "react";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-/** Telemetry payload shape matching load_sandbox.py TelemetryPayload.to_dict() */
+/** Benchmark telemetry payload produced by a load run. */
 export interface TelemetryData {
   avg_latency_ms: number;
   p50_latency_ms: number;
@@ -27,7 +25,7 @@ export interface TelemetryData {
   avg_memory_mb: number;
 }
 
-/** Correction round shape from manager.py CorrectionRound */
+/** One agent correction round: the gates it ran and what they cost. */
 export interface CorrectionRound {
   round_number: number;
   syntax_passed: boolean;
@@ -38,7 +36,7 @@ export interface CorrectionRound {
   llm_latency_ms: number;
 }
 
-/** Full orchestration result from manager.py OrchestrationResult.to_dict() */
+/** Summary of an agent run: outcome, rounds, elapsed time. */
 export interface OrchestrationResult {
   outcome: "success" | "max_retries_exceeded" | "llm_unreachable" | "paradox_detected" | "timeout";
   total_rounds: number;
@@ -423,7 +421,7 @@ export function TelemetryScorecard({
             Performance Scorecard
           </h2>
           <p className="text-sm text-zinc-500 mt-0.5">
-            Real-world metrics from the verification gauntlet
+            What a run actually cost, and how the host held up
           </p>
         </div>
         {pipelineStatus === "running" && (

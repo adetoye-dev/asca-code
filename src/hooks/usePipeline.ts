@@ -1,12 +1,12 @@
 /**
- * usePipeline.ts — Orchestration & Project Workspace State Hook (100% Real Execution)
+ * usePipeline.ts — Agent runs and project workspace state.
  *
- * Connects the desktop IDE directly to real files and real Python processes:
+ * Connects the workbench to real files, real processes and the agent runtime:
  * 1. Native folder picking (via macOS osascript / Tauri dialog).
- * 2. Real filesystem reading and writing to physical disk via Vite FS bridge or Tauri IPC.
+ * 2. Real filesystem reading and writing to physical disk via Tauri IPC.
  * 3. Real project template scaffolding on physical disk.
- * 4. Real execution of `python3 core-engine/manager.py` with live stdout/stderr line streaming.
- * 5. Multi-provider AI engine support (Ollama, local sidecar, OpenAI-compatible API, or offline AST synthesizer).
+ * 4. Agent tasks executed by the Codex runtime, streamed into the chat.
+ * 5. Multi-provider AI support (Ollama, OpenAI-compatible APIs, local models).
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -40,6 +40,8 @@ import { ensureProvidersHydrated } from "../services/aiModelManager";
 async function runAgentOnCodex(params: {
   prompt: string;
   projectRoot: string;
+  /** Provider/model the user picked for this message; wins over the saved default. */
+  selection?: { providerId: string; model: string };
   onEvent: (event: any) => void;
   log: (line: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
@@ -47,14 +49,17 @@ async function runAgentOnCodex(params: {
   const { listen } = await import("@tauri-apps/api/event");
   const { getActiveSelectedModel, loadAllProviders } = await import("../services/aiModelManager");
 
-  // The pipeline entry point does not receive the provider, so use the saved selection —
-  // exactly "what the user chose" — falling back to the default provider.
+  // The chat's model picker is per-message, so it is passed in. Without it the agent
+  // silently ran on the saved default — which is how a run could use a different model
+  // than the one shown in the composer.
   const saved = getActiveSelectedModel() as { providerId?: string; model?: string } | null;
   const providers = loadAllProviders() as Record<string, any>;
   const providerId =
-    saved?.providerId || (Object.values(providers).find((p: any) => p.isDefault) as any)?.id;
+    params.selection?.providerId ||
+    saved?.providerId ||
+    (Object.values(providers).find((p: any) => p.isDefault) as any)?.id;
   const provider = providerId ? providers[providerId] : undefined;
-  const model = saved?.model || provider?.selectedModel;
+  const model = params.selection?.model || saved?.model || provider?.selectedModel;
   params.log(
     `[agent] codex: provider=${providerId ?? "none"} model=${model ?? "none"} baseUrl=${
       provider?.baseUrl ? "set" : "missing"
@@ -230,6 +235,45 @@ async function runAgentOnCodex(params: {
 }
 
 /**
+ * Compose the single string the agent runtime receives.
+ *
+ * The runtime is a one-shot process, so everything the user attached to the
+ * message has to travel inside the prompt: the file they are looking at, the
+ * code they selected, and the recent turns. Dropping these silently is how
+ * "can you fix this?" arrived with no subject.
+ */
+function buildAgentPrompt(
+  request: string,
+  activeFilePath?: string,
+  selectedCode?: string,
+  history?: Array<{ role: string; content: string }>,
+): string {
+  const parts: string[] = [];
+  if (activeFilePath) parts.push(`Active file: ${activeFilePath}`);
+  if (selectedCode) {
+    parts.push(
+      [
+        "The user selected this code in the editor. Treat it as the subject of the request:",
+        "```",
+        selectedCode,
+        "```",
+      ].join("\n"),
+    );
+  }
+  parts.push(request);
+  if (history && history.length > 0) {
+    const transcript = history
+      .filter((m) => m && m.content)
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+      .join("\n\n");
+    if (transcript) {
+      parts.push(`Earlier in this conversation:\n\n${transcript}`);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+/**
  * Map one Codex stream event onto the progress surfaces the chat already renders.
  * Separate from the runner so the mapping is readable and testable on its own.
  */
@@ -239,6 +283,7 @@ function applyCodexEvent(
     setSteps: (fn: (prev: any[]) => any[]) => void;
     appendAnswer: (text: string) => void;
     logOutput: (line: any) => void;
+    markTouched: (paths: string[]) => void;
   },
 ): void {
   if (event?.type === "thread.started") {
@@ -268,6 +313,34 @@ function applyCodexEvent(
       }
       return [...prev, step];
     });
+    return;
+  }
+  if (item.type === "file_change") {
+    // Codex reports each edited file here. Surfacing them marks the file tree, so a
+    // run that touched six files is visible without reading the transcript.
+    const changed: string[] = Array.isArray(item.changes)
+      ? item.changes
+          .map((c: any) => String(c?.path ?? c?.file ?? ""))
+          .filter((p: string) => p.length > 0)
+      : [];
+    if (changed.length > 0) {
+      update.markTouched(changed);
+      update.setSteps((prev) => {
+        const step = {
+          id: `codex-edit-${changed.join("|").slice(0, 80)}`,
+          name: "Edit Files",
+          detail: changed.map((p) => p.split(/[\\/]/).pop()).join(", ").slice(0, 120),
+          status: "done",
+        };
+        const idx = prev.findIndex((s: any) => s.id === step.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...step };
+          return next;
+        }
+        return [...prev, step];
+      });
+    }
     return;
   }
   if (item.type === "error") {
@@ -578,18 +651,12 @@ export function usePipeline(): UsePipelineReturn {
     description: string;
   } | null>(null);
 
+  // The agent runtime currently runs with its tool calls pre-approved, so this
+  // never fires. It is kept wired to the chat's approve/reject UI for the
+  // approval-policy picker, which will deliver the decision over IPC.
   const respondToPermission = useCallback(async (id: string, decision: "approved" | "rejected") => {
-    try {
-      await fetch("/api/pipeline/permission", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, decision }),
-      });
-    } catch (e) {
-      console.error("Failed to respond to permission:", e);
-    } finally {
-      setPendingPermission(null);
-    }
+    console.warn(`Permission ${decision} for ${id} — the approval channel is not wired yet.`);
+    setPendingPermission(null);
   }, []);
 
   // Code Intelligence & Symbol Graph Indexer state
@@ -1031,26 +1098,7 @@ export function usePipeline(): UsePipelineReturn {
       images?: string[]
     ) => {
       const activePrompt = customPrompt ?? prompt;
-      const activeAiSettings = modelOverride
-        ? {
-            ...aiSettings,
-            provider: modelOverride.provider,
-            model: modelOverride.model,
-            apiKey: modelOverride.apiKey !== undefined ? modelOverride.apiKey : aiSettings.apiKey,
-            baseUrl: modelOverride.baseUrl !== undefined ? modelOverride.baseUrl : aiSettings.baseUrl,
-          }
-        : aiSettings;
       if (!activePrompt.trim()) return;
-
-      let detectedLanguage = "typescript";
-      if (activeFilePath) {
-        const ext = activeFilePath.split(".").pop()?.toLowerCase();
-        if (ext === "py") detectedLanguage = "python";
-        else if (ext === "rs") detectedLanguage = "rust";
-        else if (ext === "go") detectedLanguage = "go";
-        else if (ext === "c" || ext === "cpp" || ext === "h") detectedLanguage = "cpp";
-        else if (ext === "java") detectedLanguage = "java";
-      }
 
       setStatus("running");
       setActivityLog([]);
@@ -1061,16 +1109,42 @@ export function usePipeline(): UsePipelineReturn {
       setStreamingThought("");
       setAgentSteps([]);
       setPendingPermission(null);
+      setTouchedPaths([]);
+
+      const agentPrompt = buildAgentPrompt(
+        activePrompt,
+        activeFilePath,
+        selectedCode,
+        conversationHistory,
+      );
+      if (images && images.length > 0) {
+        // The runtime accepts image files, not inline data URLs, and nothing here writes
+        // bytes to disk yet — so say so rather than let the attachment vanish.
+        setActivityLog((prev) => [
+          ...prev,
+          {
+            line_number: prev.length + 1,
+            content: `[agent] ${images.length} attached image(s) were not sent: image input is not wired yet.`,
+            stream: "stderr",
+            is_json: false,
+          },
+        ]);
+      }
 
       if (isTauriAvailable) {
         const codexStatus = await runAgentOnCodex({
-          prompt: activePrompt,
+          prompt: agentPrompt,
           projectRoot: activeProject.path,
+          selection: modelOverride
+            ? { providerId: modelOverride.provider, model: modelOverride.model }
+            : undefined,
           onEvent: (event) =>
             applyCodexEvent(event, {
               setSteps: setAgentSteps,
               appendAnswer: (text) => setStreamingAnswer((prev) => prev + text),
               logOutput: (line) => setActivityLog((prev) => [...prev, line]),
+              markTouched: (paths) =>
+                setTouchedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]),
             }),
           // Diagnostics go to the OUTPUT panel: this is read by a human when the chat
           // shows nothing, so it says which branch ran and what actually arrived.
@@ -1105,114 +1179,21 @@ export function usePipeline(): UsePipelineReturn {
 
         await refreshProjectFiles();
       } else {
-        // Real Server-Sent Events from local Vite dev backend process
-        try {
-          const controller = new AbortController();
-          pipelineAbortRef.current = controller;
-          const response = await fetch("/api/pipeline/run", {
-            signal: controller.signal,
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              prompt: activePrompt,
-              projectRoot: activeProject.path,
-              language: detectedLanguage,
-              provider: activeAiSettings.provider,
-              model: activeAiSettings.model,
-              apiKey: activeAiSettings.apiKey,
-              baseUrl: activeAiSettings.baseUrl,
-              activeFilePath: activeFilePath || undefined,
-              selectedCode: selectedCode || undefined,
-              conversationHistory: conversationHistory || undefined,
-              images: images && images.length > 0 ? images : undefined,
-            }),
-          });
-
-          if (!response.body) {
-            throw new Error("No response body from pipeline process");
-          }
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split("\n\n");
-            buffer = events.pop() || "";
-
-            for (const ev of events) {
-              const lines = ev.split("\n");
-              let eventName = "";
-              let dataStr = "";
-
-              for (const l of lines) {
-                if (l.startsWith("event: ")) eventName = l.slice(7).trim();
-                if (l.startsWith("data: ")) dataStr = l.slice(6).trim();
-              }
-
-              if (!dataStr) continue;
-
-              try {
-                const parsed = JSON.parse(dataStr);
-                if (eventName === "chunk") {
-                  if (parsed?.text) {
-                    setStreamingAnswer((prev) => prev + parsed.text);
-                  }
-                } else if (eventName === "thought") {
-                  if (parsed?.text) {
-                    setStreamingThought((prev) => prev + parsed.text);
-                  }
-                } else if (eventName === "step") {
-                  setAgentSteps((prev) => {
-                    const idx = prev.findIndex((s) => s.name === parsed.name);
-                    if (idx >= 0) {
-                      const next = [...prev];
-                      next[idx] = { ...next[idx], ...parsed };
-                      return next;
-                    }
-                    return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...parsed }];
-                  });
-                } else if (eventName === "permission_request") {
-                  setPendingPermission(parsed);
-                } else if (eventName === "output") {
-                  setActivityLog((prev) => [...prev, parsed]);
-
-                  if (parsed.content.startsWith("---") || parsed.content.startsWith("@@")) {
-                    setCurrentDiff((prev) => prev + parsed.content + "\n");
-                    setActiveCenterView("diff");
-                  }
-                  if (parsed.content.startsWith("Written:")) {
-                    const writtenPath = parsed.content.slice("Written:".length).trim();
-                    if (writtenPath) setTouchedPaths((prev) => prev.includes(writtenPath) ? prev : [...prev, writtenPath]);
-                  }
-                } else if (eventName === "complete") {
-                  setPendingPermission(null);
-                  setStatus(parsed.success ? "success" : "failed");
-                  if (parsed.parsed_result) {
-                    setOrchestrationResult(parsed.parsed_result);
-                  }
-                  await refreshProjectFiles();
-                }
-              } catch {}
-            }
-          }
-        } catch (err: any) {
-          if (err?.name === "AbortError") return;
-          setStatus("error");
-          setActivityLog((prev) => [
-            ...prev,
-            {
-              line_number: prev.length + 1,
-              content: `Subprocess error: ${err?.message || err}`,
-              stream: "stderr",
-              is_json: false,
-            },
-          ]);
-        }
+        // Agent runs need the desktop shell: the runtime, the engine and the
+        // project live behind Tauri IPC. There is no browser fallback — the dev
+        // bridge used to spawn the Python orchestrator here, and that whole
+        // pipeline is gone. Say so instead of pretending to run.
+        setStatus("failed");
+        setActivityLog((prev) => [
+          ...prev,
+          {
+            line_number: prev.length + 1,
+            content:
+              "[agent] Agent runs require the desktop app. Launch it with `npm run dev:app`.",
+            stream: "stderr",
+            is_json: false,
+          },
+        ]);
       }
       pipelineAbortRef.current = null;
     },
@@ -1225,7 +1206,7 @@ export function usePipeline(): UsePipelineReturn {
     if (isTauriAvailable) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("cancel_generation_pipeline");
+        await invoke("chat_cancel");
       } catch {}
     }
     setPendingPermission(null);

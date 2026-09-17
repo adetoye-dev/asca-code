@@ -1,12 +1,11 @@
 //! main.rs — Tauri Native Desktop Entry Point
 //!
-//! Launches the ACSA Code desktop application, exposing two Tauri commands
-//! to the frontend:
+//! Launches the ACSA Code desktop application. The Python engine is the
+//! backend: the frontend talks to it over IPC via `engine_call`, and the
+//! Rust layer only owns host-level concerns such as windowing, the engine
+//! sidecar, and local credential storage.
 //!
-//! 1. `run_generation_pipeline` — Spawns the Python orchestrator (manager.py) as
-//!    an async child process, streaming stdout line-by-line to the frontend via
-//!    Tauri events.
-//!
+//! 1. `engine_call` — Invokes a Python engine subcommand and returns its result.
 //! 2. `fetch_system_metrics` — Samples host CPU/memory usage via the `sysinfo`
 //!    crate to guard against thermal throttling during sandbox stress tests.
 
@@ -17,45 +16,15 @@
 )]
 
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex};
 use sysinfo::System;
 use tauri::{Emitter, Manager, State};
 
 // ── Data Structures ─────────────────────────────────────────────────────────
 
-/// Slider configuration received from the frontend TradeOffSliders component.
-/// Maps directly to the Python orchestrator's CLI flags.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SliderConfig {
-    /// "low" | "medium" | "high" — maps to --scale
-    pub budget_vs_scale: String,
-    /// "low" | "medium" | "high" — maps to --speed
-    pub speed_vs_precision: String,
-    /// "low" | "medium" | "high" — maps to --modularity
-    pub simplicity_vs_futureproof: String,
-}
 
-impl SliderConfig {
-    fn validate(&self) -> Result<(), String> {
-        let valid = ["low", "medium", "high"];
-        for (name, val) in [
-            ("budget_vs_scale", &self.budget_vs_scale),
-            ("speed_vs_precision", &self.speed_vs_precision),
-            ("simplicity_vs_futureproof", &self.simplicity_vs_futureproof),
-        ] {
-            if !valid.contains(&val.as_str()) {
-                return Err(format!(
-                    "Invalid value for {}: '{}'. Must be low, medium, or high.",
-                    name, val
-                ));
-            }
-        }
-        Ok(())
-    }
-}
 
 /// Single line of output from the orchestrator, streamed to the frontend.
 #[derive(Debug, Clone, Serialize)]
@@ -66,15 +35,6 @@ pub struct PipelineOutputLine {
     pub is_json: bool,
 }
 
-/// Final result summary after the pipeline completes.
-#[derive(Debug, Clone, Serialize)]
-pub struct PipelineResult {
-    pub success: bool,
-    pub exit_code: i32,
-    pub total_lines: usize,
-    pub json_result: Option<serde_json::Value>,
-    pub error_message: String,
-}
 
 /// Host system metrics snapshot.
 #[derive(Debug, Clone, Serialize)]
@@ -90,10 +50,9 @@ pub struct SystemMetrics {
     pub timestamp_ms: u64,
 }
 
-/// Managed state: wraps sysinfo::System and the active pipeline child behind mutexes.
+/// Managed state: wraps sysinfo::System behind a mutex.
 pub struct AppState {
     sys: Mutex<System>,
-    active_child: Arc<Mutex<Option<u32>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -523,216 +482,6 @@ fn resolve_engine_dir(resource_dir: Option<&Path>) -> PathBuf {
 
     // Return the first candidate as default (will produce a clear error downstream)
     candidates[0].clone()
-}
-
-// ── Tauri Command: run_generation_pipeline ──────────────────────────────────
-
-/// Spawns the Python orchestrator as an async child process. Streams each line
-/// of stdout/stderr back to the frontend via the `pipeline:output` Tauri event.
-/// Returns a PipelineResult when the process completes.
-#[tauri::command]
-async fn run_generation_pipeline(
-    app_handle: tauri::AppHandle,
-    state: State<'_, AppState>,
-    prompt: String,
-    sliders: SliderConfig,
-    project_root: String,
-    language: Option<String>,
-    skip_performance: Option<bool>,
-    dry_run: Option<bool>,
-) -> Result<PipelineResult, String> {
-    if prompt.trim().is_empty() {
-        return Err("Prompt cannot be empty.".to_string());
-    }
-    sliders.validate()?;
-
-    // Prefer the frozen sidecar (no interpreter needed) and fall back to the
-    // source tree for development checkouts.
-    let resource_dir = app_handle.path().resource_dir().ok();
-    let (engine_program, engine_leading_args) = engine_invocation(resource_dir.as_deref(), "manager");
-    if engine_program == PathBuf::from("python3") {
-        let manager_path = resolve_engine_dir(resource_dir.as_deref()).join("manager.py");
-        if !manager_path.exists() {
-            return Err(format!(
-                "Orchestrator not found at: {}. Ensure core-engine is properly installed.",
-                manager_path.display()
-            ));
-        }
-    }
-
-    let app_for_blocking = app_handle.clone();
-    let active_child = state.active_child.clone();
-
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<PipelineResult, String> {
-        let mut cmd = Command::new(&engine_program);
-        for arg in &engine_leading_args {
-            cmd.arg(arg);
-        }
-        cmd.arg(&prompt)
-            .arg("--project-root")
-            .arg(&project_root)
-            .arg("--scale")
-            .arg(&sliders.budget_vs_scale)
-            .arg("--speed")
-            .arg(&sliders.speed_vs_precision)
-            .arg("--modularity")
-            .arg(&sliders.simplicity_vs_futureproof)
-            .arg("--json");
-
-        if let Some(lang) = &language {
-            cmd.arg("--language").arg(lang);
-        }
-
-        if skip_performance.unwrap_or(false) {
-            cmd.arg("--skip-performance");
-        }
-
-        if dry_run.unwrap_or(false) {
-            cmd.arg("--dry-run");
-        }
-
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        let project_path = PathBuf::from(&project_root);
-        if project_path.exists() {
-            cmd.current_dir(&project_path);
-        }
-
-        let mut child = cmd.spawn().map_err(|e| {
-            format!(
-                "Failed to spawn orchestrator process: {}. Is Python 3 installed?",
-                e
-            )
-        })?;
-
-        let pid = child.id();
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-
-        {
-            let mut locked_child = active_child
-                .lock()
-                .map_err(|e| format!("Failed to lock active child: {}", e))?;
-            *locked_child = Some(pid);
-        }
-
-        let stdout_handle = app_for_blocking.clone();
-        let stderr_handle = app_for_blocking.clone();
-
-        let stderr_thread = std::thread::spawn(move || {
-            let stderr_reader = BufReader::new(stderr);
-            let mut collected = Vec::new();
-            for line in stderr_reader.lines() {
-                match line {
-                    Ok(content) => collected.push(content),
-                    Err(err) => collected.push(format!("[read error: {}]", err)),
-                }
-            }
-            collected
-        });
-
-        let mut all_lines: Vec<String> = Vec::new();
-        let mut json_result: Option<serde_json::Value> = None;
-        let mut line_count: usize = 0;
-
-        let stdout_reader = BufReader::new(stdout);
-        for line in stdout_reader.lines() {
-            match line {
-                Ok(content) => {
-                    line_count += 1;
-                    let is_json =
-                        content.trim_start().starts_with('{') || content.trim_start().starts_with('[');
-
-                    let output = PipelineOutputLine {
-                        line_number: line_count,
-                        content: content.clone(),
-                        stream: "stdout".to_string(),
-                        is_json,
-                    };
-
-                    let _ = stdout_handle.emit("pipeline:output", &output);
-
-                    if is_json {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                            json_result = Some(parsed);
-                        }
-                    }
-
-                    all_lines.push(content);
-                }
-                Err(err) => {
-                    let output = PipelineOutputLine {
-                        line_number: line_count + 1,
-                        content: format!("[read error: {}]", err),
-                        stream: "stderr".to_string(),
-                        is_json: false,
-                    };
-                    let _ = stdout_handle.emit("pipeline:output", &output);
-                }
-            }
-        }
-
-        let mut stderr_lines = stderr_thread.join().unwrap_or_default();
-        for content in stderr_lines.drain(..) {
-            line_count += 1;
-            let output = PipelineOutputLine {
-                line_number: line_count,
-                content: content.clone(),
-                stream: "stderr".to_string(),
-                is_json: false,
-            };
-            let _ = stderr_handle.emit("pipeline:output", &output);
-            all_lines.push(content);
-        }
-
-        let wait_result = child.wait();
-
-        {
-            if let Ok(mut locked_child) = active_child.lock() {
-                if locked_child.as_ref() == Some(&pid) {
-                    *locked_child = None;
-                }
-            }
-        }
-
-        let status = wait_result.map_err(|e| format!("Process wait failed: {}", e))?;
-        let exit_code = status.code().unwrap_or(-1);
-
-        let success = exit_code == 0;
-        let error_message = if success {
-            String::new()
-        } else {
-            format!("Pipeline exited with code {}", exit_code)
-        };
-
-        let result = PipelineResult {
-            success,
-            exit_code,
-            total_lines: line_count,
-            json_result,
-            error_message,
-        };
-
-        let _ = app_for_blocking.emit("pipeline:complete", &result);
-        Ok(result)
-    }).await.map_err(|e| format!("Pipeline task failed: {}", e))??;
-
-    Ok(result)
-}
-
-#[tauri::command]
-fn cancel_generation_pipeline(state: State<'_, AppState>) -> Result<(), String> {
-    let mut active = state
-        .active_child
-        .lock()
-        .map_err(|e| format!("Failed to acquire active child lock: {}", e))?;
-
-    if let Some(pid) = active.take() {
-        let _ = Command::new("kill").arg(pid.to_string()).status();
-    }
-
-    Ok(())
 }
 
 // ── Tauri Command: fetch_system_metrics ─────────────────────────────────────
@@ -1301,7 +1050,6 @@ fn main() {
     tauri::Builder::default()
         .manage(AppState {
             sys: Mutex::new(System::new_all()),
-            active_child: Arc::new(Mutex::new(None)),
         })
         .manage(TerminalState::new())
         .manage(ChatState::new())
@@ -1309,8 +1057,6 @@ fn main() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
-            run_generation_pipeline,
-            cancel_generation_pipeline,
             fetch_system_metrics,
             list_project_files,
             read_file_content,

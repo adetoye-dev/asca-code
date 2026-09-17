@@ -1,20 +1,20 @@
 /**
- * vite-fs-bridge.ts — Local Filesystem & Process API Bridge for Vite Dev Server
+ * vite-fs-bridge.ts — Filesystem/process API bridge for the Vite dev server.
  *
- * Provides real filesystem operations and real Python manager process execution
- * when developing or running in the browser:
- * - Native OS folder picker (via osascript on macOS or direct path resolution)
- * - Real directory tree traversal (list_project_files)
- * - Real file reading and writing on physical disk
- * - Real project scaffolding on physical disk
- * - Real child_process spawning of `python3 core-engine/manager.py` with SSE streaming
+ * A bootstrap shim: it serves the `/api/*` routes a plain browser needs so the
+ * UI can be developed without the desktop shell. The packaged app never uses
+ * it — every equivalent route is served over Tauri IPC (`engine_call`), and the
+ * frontend prefers IPC whenever it is available, including under `tauri dev`.
+ *
+ * It is being retired route by route; once the last route moves to the engine
+ * this file goes away entirely.
  */
 
 import type { Plugin, ViteDevServer } from "vite";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { exec, execFile, execFileSync, spawn, type ChildProcess } from "child_process";
+import { exec, execFile, execFileSync, spawn } from "child_process";
 import { createRequire } from "module";
 
 const _bridgeRequire = createRequire(import.meta.url);
@@ -960,7 +960,6 @@ export function realFilesystemPlugin(): Plugin {
   return {
     name: "vite-plugin-real-filesystem",
     configureServer(server: ViteDevServer) {
-      let activePipelineProc: ChildProcess | null = null;
       // Watch public/logos for live updates and notify client
       const logosDir = path.join(process.cwd(), "public", "logos");
       if (fs.existsSync(logosDir)) {
@@ -4547,302 +4546,6 @@ export function realFilesystemPlugin(): Plugin {
             } catch (err: any) {
               res.end(JSON.stringify({ ok: false, error: err.message }));
             }
-            return;
-          }
-
-          // ── POST /api/pipeline/permission (Handle interactive user approval/rejection) ──
-          if (pathname === "/api/pipeline/permission" && req.method === "POST") {
-            try {
-              const body = await parseJsonBody(req);
-              const { id, decision, feedback } = body;
-              if (activePipelineProc && activePipelineProc.exitCode === null && activePipelineProc.stdin?.writable) {
-                activePipelineProc.stdin.write(JSON.stringify({ id, decision, feedback }) + "\n");
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ ok: true, id, decision }));
-              } else {
-                res.statusCode = 404;
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ ok: false, error: "No active pipeline process awaiting permission" }));
-              }
-            } catch (err: any) {
-              res.statusCode = 500;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
-            }
-            return;
-          }
-
-          // ── POST /api/pipeline/run (Real Server-Sent Events child process) ──
-          if (pathname === "/api/pipeline/run" && req.method === "POST") {
-            if (activePipelineProc && activePipelineProc.exitCode === null) {
-              res.statusCode = 409;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ ok: false, error: "A pipeline is already running." }));
-              return;
-            }
-            const body = await parseJsonBody(req);
-            const {
-              prompt,
-              sliders,
-              projectRoot,
-              language = "python",
-              provider = "ollama",
-              model = "",
-              apiKey = "",
-              baseUrl = "",
-              activeFilePath = "",
-              conversationHistory = [],
-              images = [],
-            } = body;
-
-            // Credentials are resolved server-side: the browser only ever holds
-            // "which provider/model", never the key itself.
-            let effectiveApiKey = String(apiKey || "").trim();
-            if (!effectiveApiKey && provider && provider !== "ollama") {
-              try {
-                effectiveApiKey = ((await dbCommand<string | null>("providers.resolveKey", { id: provider })) || "").trim();
-              } catch {
-                // No stored credential; the engine will report a clear error.
-              }
-            }
-
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache");
-            res.setHeader("Connection", "keep-alive");
-
-            const sendEvent = (event: string, data: any) => {
-              res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-            };
-
-            const rootDir = resolveProjectRoot(projectRoot || process.cwd());
-            const args: string[] = [
-              "--task",
-              prompt,
-              "--project-root",
-              rootDir,
-              "--auto-scale",
-              "--language",
-              language,
-              "--provider",
-              provider,
-              "--json",
-            ];
-
-            if (activeFilePath) {
-              args.push("--active-file", activeFilePath);
-            }
-
-            let tempHistoryFile = "";
-            if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-              try {
-                tempHistoryFile = path.join(os.tmpdir(), `acsa_history_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`);
-                fs.writeFileSync(tempHistoryFile, JSON.stringify(conversationHistory), "utf-8");
-                args.push("--history-file", tempHistoryFile);
-              } catch (e) {
-                console.warn("[Bridge] Failed to write temporary history file:", e);
-              }
-            }
-
-            let tempImagesFile = "";
-            if (Array.isArray(images) && images.length > 0) {
-              try {
-                tempImagesFile = path.join(os.tmpdir(), `acsa_images_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`);
-                fs.writeFileSync(tempImagesFile, JSON.stringify(images), "utf-8");
-                args.push("--images-file", tempImagesFile);
-              } catch (e) {
-                console.warn("[Bridge] Failed to write temporary images file:", e);
-              }
-            }
-
-            const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
-              ollama: "http://127.0.0.1:11434",
-              openai: "https://api.openai.com/v1",
-              anthropic: "https://api.anthropic.com/v1",
-              google: "https://generativelanguage.googleapis.com/v1beta/openai",
-              groq: "https://api.groq.com/openai/v1",
-              deepseek: "https://api.deepseek.com/v1",
-              openrouter: "https://openrouter.ai/api/v1",
-              mistral: "https://api.mistral.ai/v1",
-              moonshot: "https://api.moonshot.cn/v1",
-              xai: "https://api.x.ai/v1",
-              together: "https://api.together.xyz/v1",
-              perplexity: "https://api.perplexity.ai",
-            };
-
-            const effectiveBaseUrl = baseUrl || DEFAULT_PROVIDER_BASE_URLS[provider] || "";
-            if (model) args.push("--model", model);
-            if (effectiveBaseUrl) args.push("--base-url", effectiveBaseUrl);
-            if (effectiveApiKey) args.push("--api-key", effectiveApiKey);
-
-            sendEvent("output", {
-              line_number: 1,
-              content: `Spawning Python Engine: python3 core-engine/manager.py on ${rootDir}`,
-              stream: "stdout",
-            });
-
-            const engine = engineInvocation("manager", args);
-            const pyProc = spawn(engine.program, engine.args, {
-              cwd: process.cwd(),
-              env: {
-                ...process.env,
-                PYTHONUNBUFFERED: "1",
-                ...(effectiveApiKey ? { AIDE_API_KEY: effectiveApiKey } : {}),
-              },
-            });
-
-            activePipelineProc = pyProc;
-
-            const killChild = () => {
-              if (pyProc.exitCode === null) pyProc.kill("SIGTERM");
-              if (activePipelineProc === pyProc) activePipelineProc = null;
-              if (tempHistoryFile && fs.existsSync(tempHistoryFile)) {
-                try { fs.unlinkSync(tempHistoryFile); } catch {}
-              }
-              if (tempImagesFile && fs.existsSync(tempImagesFile)) {
-                try { fs.unlinkSync(tempImagesFile); } catch {}
-              }
-            };
-            req.on("close", killChild);
-            pyProc.on("close", () => {
-              if (activePipelineProc === pyProc) activePipelineProc = null;
-              req.off("close", killChild);
-            });
-
-            let lineNum = 2;
-            let stdoutBuffer = "";
-            let stdoutLineBuffer = "";
-
-            pyProc.stdout.on("data", (chunk) => {
-              const text = chunk.toString();
-              stdoutBuffer += text;
-              stdoutLineBuffer += text;
-              const lines = stdoutLineBuffer.split("\n");
-              stdoutLineBuffer = lines.pop() || "";
-
-              for (const line of lines) {
-                if (!line.trim()) continue;
-
-                if (line.startsWith("@@CHUNK@@")) {
-                  try {
-                    const token = JSON.parse(line.slice("@@CHUNK@@".length));
-                    sendEvent("chunk", { text: token });
-                  } catch {}
-                  continue;
-                }
-
-                if (line.startsWith("@@STEP@@")) {
-                  try {
-                    const step = JSON.parse(line.slice("@@STEP@@".length));
-                    sendEvent("step", step);
-                    sendEvent("output", {
-                      line_number: lineNum++,
-                      content: `[Step: ${step.name}] ${step.detail || ""} (${step.status})`,
-                      stream: "stdout",
-                    });
-                  } catch {}
-                  continue;
-                }
-
-                if (line.startsWith("@@THOUGHT@@")) {
-                  try {
-                    const thought = JSON.parse(line.slice("@@THOUGHT@@".length));
-                    sendEvent("thought", { text: thought });
-                  } catch {}
-                  continue;
-                }
-
-                if (line.startsWith("@@PERMISSION_REQUEST@@")) {
-                  try {
-                    const permData = JSON.parse(line.slice("@@PERMISSION_REQUEST@@".length));
-                    sendEvent("permission_request", permData);
-                    sendEvent("output", {
-                      line_number: lineNum++,
-                      content: `[Action Approval Required] ${permData.command || ""}`,
-                      stream: "stdout",
-                    });
-                  } catch {}
-                  continue;
-                }
-
-                sendEvent("output", {
-                  line_number: lineNum++,
-                  content: line,
-                  stream: "stdout",
-                });
-              }
-            });
-
-            pyProc.stderr.on("data", (chunk) => {
-              const text = chunk.toString();
-              const lines = text.split("\n");
-              for (const line of lines) {
-                if (!line.trim()) continue;
-                sendEvent("output", {
-                  line_number: lineNum++,
-                  content: line,
-                  stream: "stderr",
-                });
-              }
-            });
-
-            pyProc.on("close", (code) => {
-              const residual = stdoutLineBuffer.trim();
-              if (residual) {
-                if (residual.startsWith("@@CHUNK@@")) {
-                  try { sendEvent("chunk", { text: JSON.parse(residual.slice("@@CHUNK@@".length)) }); } catch {}
-                } else if (residual.startsWith("@@STEP@@")) {
-                  try { sendEvent("step", JSON.parse(residual.slice("@@STEP@@".length))); } catch {}
-                } else if (residual.startsWith("@@THOUGHT@@")) {
-                  try { sendEvent("thought", { text: JSON.parse(residual.slice("@@THOUGHT@@".length)) }); } catch {}
-                } else {
-                  sendEvent("output", { line_number: lineNum++, content: residual, stream: "stdout" });
-                }
-              }
-              if (tempHistoryFile && fs.existsSync(tempHistoryFile)) {
-                try { fs.unlinkSync(tempHistoryFile); } catch {}
-              }
-              if (tempImagesFile && fs.existsSync(tempImagesFile)) {
-                try { fs.unlinkSync(tempImagesFile); } catch {}
-              }
-
-              sendEvent("output", {
-                line_number: lineNum++,
-                content: `Pipeline process exited with code ${code}`,
-                stream: code === 0 ? "stdout" : "stderr",
-              });
-
-              // Try to find JSON summary in stdout
-              let parsedResult = null;
-              try {
-                const jsonMatches = stdoutBuffer.match(/\{[\s\S]*"outcome"[\s\S]*\}/);
-                if (jsonMatches) {
-                  parsedResult = JSON.parse(jsonMatches[0]);
-                }
-              } catch {}
-
-              sendEvent("complete", {
-                success: code === 0,
-                exit_code: code,
-                parsed_result: parsedResult,
-              });
-
-              res.end();
-            });
-
-            pyProc.on("error", (procErr) => {
-              sendEvent("output", {
-                line_number: lineNum++,
-                content: `Failed to spawn Python orchestrator: ${procErr.message}`,
-                stream: "stderr",
-              });
-              sendEvent("complete", {
-                success: false,
-                exit_code: -1,
-                error: procErr.message,
-              });
-              res.end();
-            });
-
             return;
           }
 

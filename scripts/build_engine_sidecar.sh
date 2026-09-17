@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Freeze the Python engine into the single binary the desktop app ships.
 #
-# Why: the app used to run `python3 core-engine/manager.py`. macOS no longer
-# ships a usable interpreter and Windows ships none, so on a clean machine the
-# agent could not run at all. `acsa-engine` bundles the engine, the standard
-# library and a Python runtime into one executable, so the app needs nothing
-# installed.
+# Why: the app's backend is Python, and macOS no longer ships a usable
+# interpreter while Windows ships none, so on a clean machine nothing worked.
+# `acsa-engine` bundles the engine, the standard library and a Python runtime
+# into one executable, so the app needs nothing installed.
 #
 # Usage:  scripts/build_engine_sidecar.sh
 # Output: .tauri/engine/acsa-engine/acsa-engine  (an onedir tree, shipped as a resource)
@@ -50,13 +49,10 @@ mkdir -p .tauri/binaries
   --workpath "${TMPDIR:-/tmp}/acsa-freeze-build" \
   --specpath "${TMPDIR:-/tmp}/acsa-freeze-spec" \
   --paths core-engine \
-  --paths core-engine/gauntlet \
-  --paths core-engine/compiler \
   --paths core-engine/data-map \
   --paths core-engine/mcp_servers \
   --paths core-engine/skills \
   --paths scripts \
-  --hidden-import manager \
   --hidden-import db_cli \
   --hidden-import project_indexer \
   --hidden-import pty_bridge \
@@ -69,7 +65,6 @@ mkdir -p .tauri/binaries
   --hidden-import mcp_cli \
   --hidden-import ai_cli \
   --hidden-import skill_loader \
-  --hidden-import scale_detector \
   --add-data "${REPO_ROOT}/core-engine/skills:skills" \
   --hidden-import mcp_client \
   core-engine/acsa_engine.py

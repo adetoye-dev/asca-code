@@ -4,8 +4,8 @@ tree_sitter_cfg.py — Tree-sitter Language Parser Configuration
 
 Provides AST parsing for Python and TypeScript source files using
 tree-sitter bindings. Extracts function signatures, parameter types,
-return types, and precise line boundaries to feed the graph_manager
-and oracle_generator.
+return types, and precise line boundaries to feed project_indexer and
+the dependency graph.
 
 Stdlib only for the wrapper; tree-sitter is the single required
 external package (installed alongside the IDE, not via pip at runtime).
