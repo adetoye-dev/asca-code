@@ -78,6 +78,50 @@ async function runAgentOnCodex(params: {
     'wire_api = "responses"',
   ].join("\n");
 
+  // Codex ships metadata only for its own models, so without a catalog entry for ours it
+  // warns that it is "defaulting to fallback metadata" — the error the UI was showing.
+  // Verified against a working Codex install: `model_catalog_json` must point at a FILE
+  // (an inline value parses without error and is silently ignored), and this field set
+  // mirrors a known-good catalog. Context window is conservative on purpose; too small
+  // only compacts earlier.
+  const catalogJson = JSON.stringify(
+    {
+      models: (provider.availableModels?.length ? provider.availableModels : [model]).map(
+        (slug: string) => ({
+          slug,
+          display_name: slug,
+          description: `${slug} via ${provider.name || providerId}.`,
+          default_reasoning_level: "high",
+          supported_reasoning_levels: [
+            { effort: "low", description: "Low reasoning" },
+            { effort: "high", description: "High reasoning" },
+          ],
+          shell_type: "shell_command",
+          visibility: "list",
+          supported_in_api: true,
+          priority: 1,
+          base_instructions:
+            "You are a coding assistant. Help the user complete their task accurately, use available tools, and verify your changes.",
+          context_window: 131072,
+          max_context_window: 131072,
+          effective_context_window_percent: 95,
+          truncation_policy: { mode: "tokens", limit: 10000 },
+          input_modalities: ["text"],
+          apply_patch_tool_type: "freeform",
+          support_verbosity: true,
+          default_verbosity: "low",
+          default_reasoning_summary: "none",
+          supports_parallel_tool_calls: true,
+          use_responses_lite: false,
+          prefer_websockets: false,
+          experimental_supported_tools: [],
+        }),
+      ),
+    },
+    null,
+    2,
+  );
+
   let sawEvent = false;
   let finished = false;
   let failed = false;
@@ -121,6 +165,7 @@ async function runAgentOnCodex(params: {
         projectRoot: params.projectRoot,
         configToml,
         providerId,
+        catalogJson,
       });
       params.log("[agent] codex: runtime started");
     } catch (error) {

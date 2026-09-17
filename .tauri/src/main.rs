@@ -1192,6 +1192,7 @@ async fn codex_exec(
     project_root: String,
     config_toml: String,
     provider_id: String,
+    catalog_json: String,
 ) -> Result<(), String> {
     let resource_dir = app_handle.path().resource_dir().ok();
     let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
@@ -1206,7 +1207,28 @@ async fn codex_exec(
         .join("codex");
     std::fs::create_dir_all(&codex_home).map_err(|e| format!("could not create {}: {}", codex_home.display(), e))?;
     if !config_toml.trim().is_empty() {
-        std::fs::write(codex_home.join("config.toml"), config_toml)
+        // `model_catalog_json` is a *path* to a catalog file, not inline JSON — verified
+        // against a working Codex install, after an inline attempt parsed without error and
+        // silently did nothing. Without the catalog Codex warns that it is "defaulting to
+        // fallback metadata" for our provider's models, which is the error the UI showed.
+        let config = if catalog_json.trim().is_empty() {
+            config_toml.clone()
+        } else {
+            let dir = codex_home.join("model-catalogs");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
+            let path = dir.join(format!("{}.json", provider_id));
+            std::fs::write(&path, &catalog_json)
+                .map_err(|e| format!("could not write the model catalog: {}", e))?;
+            // Prepended, because TOML tables come last — a top-level key written after the
+            // provider table would land inside it and be rejected.
+            format!(
+                "model_catalog_json = \"{}\"\n{}",
+                path.to_string_lossy(),
+                config_toml
+            )
+        };
+        std::fs::write(codex_home.join("config.toml"), config)
             .map_err(|e| format!("could not write Codex config: {}", e))?;
     }
 
