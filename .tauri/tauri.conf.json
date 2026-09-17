@@ -40,6 +40,7 @@
       "../core-engine": "core-engine",
       "../scripts": "scripts",
       "engine": "engine",
+      "engine-codex": "engine-codex",
       "../LICENSE": "LICENSE",
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },

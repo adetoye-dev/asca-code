@@ -111,6 +111,9 @@ jobs:
       - name: Build the engine sidecar
         run: scripts/build_engine_sidecar.sh
 
+      - name: Fetch the Codex agent runtime
+        run: scripts/fetch_codex_sidecar.sh
+
       - name: Bundle the app
         working-directory: .tauri
         run: ../node_modules/.bin/tauri build --bundles app
