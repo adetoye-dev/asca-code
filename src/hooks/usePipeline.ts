@@ -24,6 +24,141 @@ import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
+
+/**
+ * Run an agent task on Codex, when its runtime is present.
+ *
+ * Replaces our own loop, which could not do native tool calling: the model narrated
+ * `read_file` in prose and the harness answered with a guard message, so nothing was
+ * ever edited. Verified by driving Codex headlessly against a configured provider — it
+ * edited a file correctly and streamed `thread`/`turn`/`item` events.
+ *
+ * Returns true when Codex handled the run (including a mid-run failure, so the caller
+ * does not then also run our pipeline and edit the project twice). False means the
+ * runtime is absent and the caller should fall back.
+ */
+async function runAgentOnCodex(params: {
+  prompt: string;
+  projectRoot: string;
+  onEvent: (event: any) => void;
+}): Promise<boolean> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  const { getActiveSelectedModel, loadAllProviders } = await import("../services/aiModelManager");
+
+  // The pipeline entry point does not receive the provider, so use the saved selection —
+  // exactly "what the user chose" — falling back to the default provider.
+  const saved = getActiveSelectedModel() as { providerId?: string; model?: string } | null;
+  const providers = loadAllProviders() as Record<string, any>;
+  const providerId =
+    saved?.providerId || (Object.values(providers).find((p: any) => p.isDefault) as any)?.id;
+  const provider = providerId ? providers[providerId] : undefined;
+  const model = saved?.model || provider?.selectedModel;
+  if (!providerId || !model || !provider?.baseUrl) return false;
+
+  // `wire_api` must be "responses": this Codex version rejects "chat" outright. The key
+  // name matches what the Rust side sets in the child's environment, so the credential
+  // itself never travels over IPC.
+  const configToml = [
+    `model = "${model}"`,
+    `model_provider = "${providerId}"`,
+    'approval_policy = "never"',
+    'sandbox_mode = "workspace-write"',
+    "",
+    `[model_providers.${providerId}]`,
+    `name = "${provider.name || providerId}"`,
+    `base_url = "${provider.baseUrl}"`,
+    'env_key = "ACSA_CODEX_API_KEY"',
+    'wire_api = "responses"',
+  ].join("\n");
+
+  let sawEvent = false;
+  let finished = false;
+  const unlisten: Array<() => void> = [];
+  try {
+    unlisten.push(
+      await listen<string>("codex:event", (event) => {
+        sawEvent = true;
+        try {
+          params.onEvent(JSON.parse(String(event.payload)));
+        } catch {
+          /* a partial or non-JSON line carries nothing to show */
+        }
+      }),
+    );
+    unlisten.push(await listen("codex:exit", () => { finished = true; }));
+
+    await invoke("codex_exec", {
+      prompt: params.prompt,
+      projectRoot: params.projectRoot,
+      configToml,
+      providerId,
+    });
+
+    // Wait for the stream to end, so the caller only continues once the run is over.
+    for (let i = 0; i < 7200 && !finished; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return true;
+  } catch {
+    // "not installed" is the expected miss; anything after a real event is a mid-run
+    // failure, which is ours to report rather than retry underneath.
+    return sawEvent;
+  } finally {
+    unlisten.forEach((off) => off());
+  }
+}
+
+/**
+ * Map one Codex stream event onto the progress surfaces the chat already renders.
+ * Separate from the runner so the mapping is readable and testable on its own.
+ */
+function applyCodexEvent(
+  event: any,
+  update: {
+    setSteps: (fn: (prev: any[]) => any[]) => void;
+    appendAnswer: (text: string) => void;
+    logOutput: (line: any) => void;
+  },
+): void {
+  if (event?.type === "thread.started") {
+    update.setSteps(() => []);
+    return;
+  }
+  const item = event?.item;
+  if (event?.type !== "item.completed" || !item) return;
+
+  if (item.type === "agent_message" && item.text) {
+    update.appendAnswer(String(item.text));
+    return;
+  }
+  if (item.type === "command_execution") {
+    update.setSteps((prev) => {
+      const step = {
+        id: item.id || `codex-${Date.now()}-${prev.length}`,
+        name: "Run Command",
+        detail: String(item.command || "").slice(0, 120),
+        status: item.exit_code === 0 || item.exit_code === undefined ? "done" : "failed",
+      };
+      const idx = prev.findIndex((s: any) => s.id === step.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...step };
+        return next;
+      }
+      return [...prev, step];
+    });
+    return;
+  }
+  if (item.type === "error") {
+    update.logOutput({
+      line_number: 0,
+      content: String(item.message || "Agent error"),
+      stream: "stderr",
+      is_json: false,
+    });
+  }
+}
 import { hydrateChatHistory } from "../services/aiChatPersistence";
 import { appStore } from "../services/appStore";
 import {
@@ -842,7 +977,21 @@ export function usePipeline(): UsePipelineReturn {
             });
           }
         });
+        // Agent mode runs on Codex when its runtime is present; otherwise our own
+        // pipeline runs, so the feature degrades instead of breaking.
+        const codexHandled = await runAgentOnCodex({
+          prompt: activePrompt,
+          projectRoot: activeProject.path,
+          onEvent: (event) =>
+            applyCodexEvent(event, {
+              setSteps: setAgentSteps,
+              appendAnswer: (text) => setStreamingAnswer((prev) => prev + text),
+              logOutput: (line) => setActivityLog((prev) => [...prev, line]),
+            }),
+        });
+
         try {
+          if (!codexHandled) {
           const { invoke } = await import("@tauri-apps/api/core");
           const result: any = await invoke("run_generation_pipeline", {
             prompt: activePrompt,
@@ -856,6 +1005,7 @@ export function usePipeline(): UsePipelineReturn {
           if (result && result.parsed_result) {
             setOrchestrationResult(result.parsed_result);
             setStatus(result.parsed_result.outcome === "success" ? "success" : "failed");
+          }
           }
           await refreshProjectFiles();
         } catch (err: any) {
