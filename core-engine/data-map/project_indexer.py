@@ -109,6 +109,45 @@ def compute_file_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
+# Files this tool used to write into a project and no longer does. They are
+# private artifacts, never user content, so a project still carrying them has
+# dead bytes and an untracked entry nobody can account for.
+RETIRED_STATE_FILES = ("context-index.json", "usage.jsonl", ".context-index.json")
+
+# Everything in `.acsa/` is derived. A `.gitignore` inside the directory ignores
+# its own contents, which keeps the folder out of `git status` without editing
+# the project's own `.gitignore` — verified: with this file present, git reports
+# nothing at all for the directory.
+_STATE_GITIGNORE = (
+    "# Written by ACSA Code. Everything in here is derived; it is safe to delete.\n*\n"
+)
+
+
+def prepare_state_dir(project_root: Path) -> Path:
+    """Create `.acsa/`, keep it out of git, and clear out retired artifacts."""
+    acsa_dir = project_root / ".acsa"
+    acsa_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        # Written every time rather than only when absent: it was missing from a
+        # real project, and the whole directory then showed as an untracked
+        # change. Rewriting a two-line file costs nothing.
+        ignore_file = acsa_dir / ".gitignore"
+        if not ignore_file.exists() or ignore_file.read_text(encoding="utf-8") != _STATE_GITIGNORE:
+            ignore_file.write_text(_STATE_GITIGNORE, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write %s: %s", acsa_dir / ".gitignore", exc)
+
+    for name in RETIRED_STATE_FILES:
+        stale = acsa_dir / name
+        if stale.exists():
+            try:
+                stale.unlink()
+                logger.info("Removed retired state file %s", stale)
+            except OSError as exc:
+                logger.warning("Could not remove %s: %s", stale, exc)
+    return acsa_dir
+
+
 def write_json_atomic(target: Path, payload: Any) -> None:
     """Write JSON via a temp file + rename so readers never see a partial file.
 
@@ -802,15 +841,8 @@ def index_entire_project(project_root_str: str) -> dict[str, Any]:
         },
     }
 
-    acsa_dir = project_root / ".acsa"
     try:
-        acsa_dir.mkdir(parents=True, exist_ok=True)
-        # Keep the index out of the user's `git status` without editing their
-        # .gitignore: the directory ignores itself. Landing `.acsa/` as an untracked
-        # entry in every project we touch is noise the user did not ask for.
-        self_ignore = acsa_dir / ".gitignore"
-        if not self_ignore.exists():
-            self_ignore.write_text("# Written by ACSA Code. Its index lives here.\n*\n", encoding="utf-8")
+        acsa_dir = prepare_state_dir(project_root)
         write_json_atomic(acsa_dir / "index.json", index_data)
         logger.info("Saved index to %s", acsa_dir / "index.json")
     except Exception as exc:
@@ -893,6 +925,7 @@ def update_file_incremental(project_root_str: str, relative_path: str) -> Option
     }
 
     try:
+        prepare_state_dir(project_root)
         write_json_atomic(index_file, existing_index)
         logger.info("Incrementally updated %s in index", relative_path)
     except Exception as exc:
