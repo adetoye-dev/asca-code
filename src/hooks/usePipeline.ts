@@ -813,8 +813,13 @@ export function usePipeline(): UsePipelineReturn {
         // consumed it, so the packaged app had no live data and filled the gap with
         // invented spinners, while the dev SSE branch below showed real steps.
         const { listen } = await import("@tauri-apps/api/event");
-        const offOutput = await listen<string>("pipeline:output", (event) => {
-          const match = String(event.payload ?? "").match(/^@@(STEP|THOUGHT|CHUNK|PERMISSION)@@([\s\S]*)$/);
+        const offOutput = await listen<{ content?: string } | string>("pipeline:output", (event) => {
+          // Rust emits a `PipelineOutputLine` struct ({line_number, content, stream,
+          // is_json}), not a raw line — reading the payload as a string yielded
+          // "[object Object]" and the markers never matched, so nothing reached the UI.
+          const payload = event.payload;
+          const line = typeof payload === "string" ? payload : String(payload?.content ?? "");
+          const match = line.match(/^@@(STEP|THOUGHT|CHUNK|PERMISSION)@@([\s\S]*)$/);
           if (!match) return;
           let value: any;
           try {
