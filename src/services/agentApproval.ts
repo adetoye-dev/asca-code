@@ -48,3 +48,20 @@ export const DEFAULT_AGENT_APPROVAL_MODE: AgentApprovalMode = "approve-for-me";
 export function isAgentApprovalMode(value: unknown): value is AgentApprovalMode {
   return typeof value === "string" && value in AGENT_APPROVAL_MODES;
 }
+
+/**
+ * Provider ids that are a local runtime rather than an OpenAI-compatible API.
+ *
+ * These have to be handed to the agent runtime through its own local-provider
+ * switch. A custom `model_providers` entry cannot reach them: that path is
+ * OpenAI-compatible HTTP and is configured with `wire_api = "responses"`, which
+ * Ollama does not implement, so the run fails before its first token.
+ */
+export const LOCAL_PROVIDER_IDS = new Set(["ollama", "lmstudio", "local"]);
+
+export function localProviderFor(providerId: string | undefined): string | null {
+  const id = (providerId || "").toLowerCase();
+  if (id === "ollama") return "ollama";
+  if (id === "lmstudio") return "lmstudio";
+  return null;
+}

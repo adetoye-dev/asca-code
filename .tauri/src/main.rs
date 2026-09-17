@@ -1396,64 +1396,6 @@ fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<S
 /// calls — verified by driving it headlessly against the user's provider, where it
 /// edited a file correctly in ~14s and streamed `thread`/`turn`/`item` events.
 ///
-/// Token usage for a finished run, read from Codex's own session rollout.
-///
-/// `codex exec --json` reports thread/turn/item events but no token counts, so
-/// without this the usage ledger would record nothing for agent runs — the one
-/// place the work actually costs money. Codex writes them to
-/// `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl`, one `token_usage_record`
-/// per model response, each carrying the thread's running total; the last one is
-/// therefore the whole run. This is our own CODEX_HOME — created by this app and
-/// never the user's — so those files exist only for runs we started.
-fn rollout_token_usage(codex_home: &Path, thread_id: &str) -> Option<(u64, u64)> {
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    let mut dirs = vec![codex_home.join("sessions")];
-    while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                dirs.push(path);
-                continue;
-            }
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-            if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
-                continue;
-            }
-            if !thread_id.is_empty() && !name.contains(thread_id) {
-                continue;
-            }
-            if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
-                if newest.as_ref().map(|(seen, _)| modified > *seen).unwrap_or(true) {
-                    newest = Some((modified, path));
-                }
-            }
-        }
-    }
-    let (_, path) = newest?;
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut totals: Option<(u64, u64)> = None;
-    for line in text.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if value.get("type").and_then(|t| t.as_str()) != Some("token_usage_record") {
-            continue;
-        }
-        let usage = value.get("payload").and_then(|p| p.get("thread_token_usage"));
-        let field = |key: &str| {
-            usage
-                .and_then(|u| u.get(key))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-        };
-        totals = Some((field("input_tokens"), field("output_tokens")));
-    }
-    totals
-}
-
 /// `config_toml` is written to this app's own `CODEX_HOME` before launch, so the
 /// provider the user configured in our settings is the one Codex uses, and we never
 /// touch their personal Codex configuration.
@@ -1466,6 +1408,14 @@ async fn codex_exec(
     config_toml: String,
     provider_id: String,
     catalog_json: String,
+    // The model the run should use. Needed as a CLI argument for local runs,
+    // where `--oss` would otherwise choose (and download) its own default.
+    model: String,
+    // Set for a local runtime (Ollama, LM Studio). Codex then talks to it over
+    // its own adapter instead of a custom OpenAI-compatible provider — which
+    // matters because Ollama does not implement the Responses API, so a
+    // `wire_api = "responses"` provider entry simply cannot reach it.
+    local_provider: Option<String>,
 ) -> Result<(), String> {
     let resource_dir = app_handle.path().resource_dir().ok();
     let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
@@ -1520,7 +1470,22 @@ async fn codex_exec(
         .arg("exec")
         .arg("--json")
         // The project may not be a git repo; Codex refuses to start otherwise.
-        .arg("--skip-git-repo-check")
+        .arg("--skip-git-repo-check");
+    if let Some(local) = local_provider.as_deref().filter(|p| !p.trim().is_empty()) {
+        // `-m` is not optional here. `--oss` has its own default model and will go
+        // and download it — verified the hard way: without this, a run against the
+        // installed 1.5b model started fetching a 12.85 GB one instead of using
+        // what the user had. Pinning the model makes it run on the chosen model, or
+        // fail, rather than quietly pulling gigabytes.
+        command
+            .arg("--oss")
+            .arg("--local-provider")
+            .arg(local)
+            .arg("-m")
+            .arg(&model);
+    }
+    // The prompt is positional, so it goes last.
+    command
         .arg(&prompt)
         .current_dir(&working_dir)
         .env("CODEX_HOME", &codex_home)
@@ -1545,7 +1510,6 @@ async fn codex_exec(
     *state.child.lock().map_err(|e| e.to_string())? = Some(child);
 
     let app_for_reader = app_handle.clone();
-    let codex_home_for_usage = codex_home.clone();
     std::thread::spawn(move || {
         use std::io::{BufRead, BufReader, Read};
         let stderr_handle = app_for_reader.clone();
@@ -1555,19 +1519,25 @@ async fn codex_exec(
             text
         });
 
-        // The thread id names the rollout file, so it is read off the first frame
-        // rather than guessed; an empty id falls back to the newest rollout.
-        let mut thread_id = String::new();
+        // Token counts ride on `turn.completed`, one per turn, so a run's total is
+        // their sum. Verified against a live run:
+        //   {"type":"turn.completed","usage":{"input_tokens":2050,…,"output_tokens":2,…}}
+        // They are collected here because the UI is the only other reader of this
+        // stream, and it does not need to do arithmetic on tokens.
+        let mut prompt_tokens: u64 = 0;
+        let mut completion_tokens: u64 = 0;
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim().is_empty() {
                 continue;
             }
-            if thread_id.is_empty() {
+            if line.contains("\"turn.completed\"") {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if value.get("type").and_then(|t| t.as_str()) == Some("thread.started") {
-                        if let Some(id) = value.get("thread_id").and_then(|v| v.as_str()) {
-                            thread_id = id.to_string();
-                        }
+                    if let Some(usage) = value.get("usage") {
+                        let field = |key: &str| {
+                            usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0)
+                        };
+                        prompt_tokens += field("input_tokens");
+                        completion_tokens += field("output_tokens");
                     }
                 }
             }
@@ -1576,9 +1546,7 @@ async fn codex_exec(
         }
         // Emitted before `codex:exit` so the UI has the numbers by the time it
         // considers the run over.
-        if let Some((prompt_tokens, completion_tokens)) =
-            rollout_token_usage(&codex_home_for_usage, &thread_id)
-        {
+        if prompt_tokens > 0 || completion_tokens > 0 {
             let _ = app_for_reader.emit(
                 "codex:usage",
                 AiFrame {

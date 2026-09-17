@@ -26,6 +26,7 @@ import { loadAllProviders } from "../services/aiModelManager";
 import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
+  localProviderFor,
   type AgentApprovalMode,
 } from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
@@ -52,6 +53,8 @@ async function runAgentOnCodex(params: {
   approvalMode?: AgentApprovalMode;
   onEvent: (event: any) => void;
   log: (line: string) => void;
+  /** Something the run itself should say, beyond the model's own messages. */
+  note?: (note: { name: string; detail: string; status: "done" | "failed" }) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -87,18 +90,28 @@ async function runAgentOnCodex(params: {
   // runtime says "requires approval, but approval policy is never"), so the working
   // default routes them through the automatic reviewer instead. Verified against the
   // binary: `on-request` + `auto_review` completes tool calls that `never` refuses.
+  //
+  // A local runtime is different: Ollama speaks OpenAI-compatible
+  // `/v1/chat/completions`, not the Responses API, so a `model_providers` table with
+  // `wire_api = "responses"` cannot reach it at all. Those runs go through the
+  // runtime's own local-provider switch instead, and get no provider table.
+  const localProvider = localProviderFor(providerId);
   const configToml = [
     `model = "${model}"`,
-    `model_provider = "${providerId}"`,
+    ...(localProvider ? [] : [`model_provider = "${providerId}"`]),
     `approval_policy = "${approval.approvalPolicy}"`,
     `approvals_reviewer = "${approval.approvalsReviewer}"`,
     `sandbox_mode = "${approval.sandboxMode}"`,
-    "",
-    `[model_providers.${providerId}]`,
-    `name = "${provider.name || providerId}"`,
-    `base_url = "${provider.baseUrl}"`,
-    'env_key = "ACSA_CODEX_API_KEY"',
-    'wire_api = "responses"',
+    ...(localProvider
+      ? []
+      : [
+          "",
+          `[model_providers.${providerId}]`,
+          `name = "${provider.name || providerId}"`,
+          `base_url = "${provider.baseUrl}"`,
+          'env_key = "ACSA_CODEX_API_KEY"',
+          'wire_api = "responses"',
+        ]),
   ].join("\n");
 
   // Codex ships metadata only for its own models, so without a catalog entry for ours it
@@ -181,6 +194,14 @@ async function runAgentOnCodex(params: {
 
   let finished = false;
   let failed = false;
+  // Did the run actually *do* anything? A model that cannot drive the tool
+  // protocol answers in prose — or writes the tool call out as text — and the
+  // turn still completes. Observed with a local 7B coder: it emitted
+  // `{"name":"spawn_agent",…}` as its message, edited nothing, and the run
+  // reported success. Saying so is the difference between a silent no-op and a
+  // diagnosable one.
+  // Boxed for the same reason as `usageBox` below.
+  const toolCallCount = { value: 0 };
   // Token counts arrive on their own event just before `codex:exit`; the ledger
   // is the only place a run's real cost shows up, so they are worth carrying.
   // Boxed because it is written from a listener closure: a bare `let` would be
@@ -202,6 +223,7 @@ async function runAgentOnCodex(params: {
         if (!sawEvent) params.log(`[agent] codex: first frame — ${line.slice(0, 180)}`);
         try {
           const parsed = JSON.parse(line);
+          const itemType = parsed?.item?.type;
           // Codex reports a missing *model metadata* entry as an `error` item, and that is
           // a warning about capability hints, not a failed task. Counting it as failure
           // marked a run that edited the file correctly as "needs attention".
@@ -209,6 +231,14 @@ async function runAgentOnCodex(params: {
             parsed?.item?.type === "error" &&
             !/metadata/i.test(String(parsed?.item?.message ?? ""));
           if (fatal) failed = true;
+          if (
+            itemType === "command_execution" ||
+            itemType === "file_change" ||
+            itemType === "mcp_tool_call" ||
+            itemType === "web_search"
+          ) {
+            toolCallCount.value += 1;
+          }
           params.onEvent(parsed);
         } catch {
           /* a partial or non-JSON line carries nothing to show */
@@ -245,6 +275,8 @@ async function runAgentOnCodex(params: {
         configToml: configToml + mcpToml,
         providerId,
         catalogJson,
+        model,
+        localProvider,
       });
       params.log("[agent] codex: runtime started");
     } catch (error) {
@@ -281,6 +313,21 @@ async function runAgentOnCodex(params: {
           /* metering is diagnostics; never let it surface as a run failure */
         }
       })();
+    }
+    if (toolCallCount.value === 0 && !failed) {
+      // A run that finished without touching a single tool is either a genuine
+      // question or a model that could not act. Both are worth one line, because
+      // the second looks identical to the first from the transcript.
+      params.note?.({
+        name: "No tools used",
+        detail:
+          "The model replied without running any tool, so nothing in the project changed.",
+        status: "done",
+      });
+      params.log(
+        "[agent] no tool calls this run. If you asked for a change, the model could not drive " +
+          "tool calling — smaller local models often cannot. Try a cloud model or a larger local one.",
+      );
     }
     return failed ? "failed" : "success";
   } catch {
@@ -1200,6 +1247,15 @@ export function usePipeline(): UsePipelineReturn {
               ...prev,
               { line_number: prev.length + 1, content: line, stream: "stdout", is_json: false },
             ]),
+          note: (note) =>
+            setAgentSteps((prev) => {
+              const step = { id: `note-${note.name}`, ...note };
+              const idx = prev.findIndex((s) => s.id === step.id);
+              if (idx < 0) return [...prev, step];
+              const next = [...prev];
+              next[idx] = { ...next[idx], ...step };
+              return next;
+            }),
         });
 
         // No fallback to our own loop. It narrated tool calls in prose and answered
