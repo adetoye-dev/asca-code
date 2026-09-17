@@ -411,6 +411,38 @@ def _clean_extracted_path(raw: str) -> str:
     return p.strip()
 
 
+# Entity decoding for parameter values. Applied only when the value *looks* escaped,
+# so a legitimate `&amp;` in a file is never rewritten. `&amp;` is replaced last, so
+# `&amp;lt;` decodes to `&lt;` rather than jumping straight to `<`.
+_ESCAPED_ENTITIES = (
+    ("&lt;", "<"),
+    ("&gt;", ">"),
+    ("&quot;", '"'),
+    ("&#39;", "'"),
+    ("&apos;", "'"),
+    ("&amp;", "&"),
+)
+
+
+def _unwrap_tool_content(value: str) -> str:
+    """Undo the escaping models apply when they embed code inside XML parameters.
+
+    DeepSeek sends a replacement body as `&lt;code&gt;…&lt;/code&gt;`. Written verbatim
+    that corrupts the file — escaped tags, and often a duplicated tail, because the
+    model also re-emits the surrounding lines. Decoding is the exact inverse of what
+    the model did; the guard keeps it from touching code that merely *contains* an
+    entity on purpose (the model would have double-escaped that).
+    """
+    if "&lt;" not in value and "&gt;" not in value and "&quot;" not in value:
+        return value
+    decoded = value
+    for entity, char in _ESCAPED_ENTITIES:
+        decoded = decoded.replace(entity, char)
+    # A wrapper the model added around the body is never part of the file.
+    wrapper = re.fullmatch(r"\s*<(code|pre)[^>]*>\n?([\s\S]*?)\n?</\1>\s*", decoded)
+    return wrapper.group(2) if wrapper else decoded
+
+
 def _parse_xml_param_value(val_str: str, param_name: str = "") -> Any:
     """Safely coerce parameter values from XML strings."""
     if param_name in ("search", "replace", "patch", "content", "code"):
@@ -421,6 +453,7 @@ def _parse_xml_param_value(val_str: str, param_name: str = "") -> Any:
             val = val.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
         if val.startswith("\n") and val.endswith("\n") and len(val) > 2:
             val = val[1:-1]
+        val = _unwrap_tool_content(val)
         return val
 
     s = val_str.strip()
