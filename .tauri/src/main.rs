@@ -1123,6 +1123,119 @@ fn chat_cancel(state: State<'_, ChatState>) -> Result<(), String> {
     Ok(())
 }
 
+// ── Codex agent runtime ─────────────────────────────────────────────────────
+
+const CODEX_BIN_NAME: &str = "codex";
+
+/// Locate the Codex CLI fetched by `scripts/fetch_codex_sidecar.sh`.
+///
+/// Packaged builds read it from their own resources; a source checkout reads the
+/// git-ignored `.tauri/engine-codex/` copy, the same arrangement as the engine.
+fn resolve_codex_bin(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(resources) = resource_dir {
+        candidates.push(resources.join("engine-codex").join(CODEX_BIN_NAME));
+        candidates.push(resources.join(CODEX_BIN_NAME));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("engine-codex")
+            .join(CODEX_BIN_NAME),
+    );
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(CODEX_BIN_NAME));
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Run Codex as the agent and forward its JSON stream to the UI.
+///
+/// This is the replacement for our own agent loop. That loop could not do native
+/// tool calling: the model narrated `read_file` in prose and the harness answered
+/// with a guard message, so nothing was ever edited. Codex does emit real tool
+/// calls — verified by driving it headlessly against the user's provider, where it
+/// edited a file correctly in ~14s and streamed `thread`/`turn`/`item` events.
+///
+/// `config_toml` is written to this app's own `CODEX_HOME` before launch, so the
+/// provider the user configured in our settings is the one Codex uses, and we never
+/// touch their personal Codex configuration.
+#[tauri::command]
+async fn codex_exec(
+    app_handle: tauri::AppHandle,
+    state: State<'_, ChatState>,
+    prompt: String,
+    project_root: String,
+    config_toml: String,
+) -> Result<(), String> {
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
+        "The agent runtime is not installed. Run scripts/fetch_codex_sidecar.sh.".to_string()
+    })?;
+
+    // Its own home, beside our data: config and auth stay ours, not the user's CLI setup.
+    let codex_home = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {}", e))?
+        .join("codex");
+    std::fs::create_dir_all(&codex_home).map_err(|e| format!("could not create {}: {}", codex_home.display(), e))?;
+    if !config_toml.trim().is_empty() {
+        std::fs::write(codex_home.join("config.toml"), config_toml)
+            .map_err(|e| format!("could not write Codex config: {}", e))?;
+    }
+
+    if let Some(mut previous) = state.child.lock().map_err(|e| e.to_string())?.take() {
+        let _ = previous.kill();
+    }
+
+    let mut child = Command::new(&program)
+        .arg("exec")
+        .arg("--json")
+        // The project may not be a git repo; Codex refuses to start otherwise.
+        .arg("--skip-git-repo-check")
+        .arg(&prompt)
+        .current_dir(if Path::new(&project_root).is_dir() {
+            project_root.clone()
+        } else {
+            ".".to_string()
+        })
+        .env("CODEX_HOME", &codex_home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the agent ({}): {}", program.display(), e))?;
+
+    let stdout = child.stdout.take().ok_or("could not capture agent output")?;
+    let mut stderr = child.stderr.take().ok_or("could not capture agent errors")?;
+    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
+
+    let app_for_reader = app_handle.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read};
+        let stderr_handle = app_for_reader.clone();
+        let stderr_thread = std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text);
+            text
+        });
+
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // Each line is one JSON event; the UI decides what to show.
+            let _ = app_for_reader.emit("codex:event", AiFrame { line });
+        }
+        let stderr_text = stderr_thread.join().unwrap_or_default();
+        let _ = stderr_handle.emit("codex:exit", stderr_text.trim().to_string());
+    });
+
+    Ok(())
+}
+
 // ── Application Entry Point ─────────────────────────────────────────────────
 
 fn main() {
@@ -1153,6 +1266,7 @@ fn main() {
             terminal_resize,
             chat_stream,
             chat_cancel,
+            codex_exec,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
