@@ -41,6 +41,7 @@ async function runAgentOnCodex(params: {
   prompt: string;
   projectRoot: string;
   onEvent: (event: any) => void;
+  log: (line: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -54,6 +55,11 @@ async function runAgentOnCodex(params: {
     saved?.providerId || (Object.values(providers).find((p: any) => p.isDefault) as any)?.id;
   const provider = providerId ? providers[providerId] : undefined;
   const model = saved?.model || provider?.selectedModel;
+  params.log(
+    `[agent] codex: provider=${providerId ?? "none"} model=${model ?? "none"} baseUrl=${
+      provider?.baseUrl ? "set" : "missing"
+    }`,
+  );
   if (!providerId || !model || !provider?.baseUrl) return "unavailable";
 
   // `wire_api` must be "responses": this Codex version rejects "chat" outright. The key
@@ -85,6 +91,7 @@ async function runAgentOnCodex(params: {
         // the chat and terminal streams; the field is the point.
         const payload = event.payload;
         const line = typeof payload === "string" ? payload : String(payload?.line ?? "");
+        if (!sawEvent) params.log(`[agent] codex: first frame — ${line.slice(0, 180)}`);
         try {
           const parsed = JSON.parse(line);
           if (parsed?.item?.type === "error") failed = true;
@@ -94,14 +101,28 @@ async function runAgentOnCodex(params: {
         }
       }),
     );
-    unlisten.push(await listen("codex:exit", () => { finished = true; }));
+    unlisten.push(
+      await listen<string>("codex:exit", (event) => {
+        finished = true;
+        const note = String(event.payload ?? "").trim();
+        params.log(`[agent] codex: exited${note ? ` — ${note.slice(0, 180)}` : ""}`);
+      }),
+    );
 
-    await invoke("codex_exec", {
-      prompt: params.prompt,
-      projectRoot: params.projectRoot,
-      configToml,
-      providerId,
-    });
+    try {
+      await invoke("codex_exec", {
+        prompt: params.prompt,
+        projectRoot: params.projectRoot,
+        configToml,
+        providerId,
+      });
+      params.log("[agent] codex: runtime started");
+    } catch (error) {
+      // A missing or unusable runtime has to be visible here — otherwise it is
+      // indistinguishable from a run that simply produced no events.
+      params.log(`[agent] codex: not started — ${String(error)}`);
+      return "unavailable";
+    }
 
     // Wait for the stream to end, so the caller only continues once the run is over.
     for (let i = 0; i < 7200 && !finished; i += 1) {
@@ -997,6 +1018,13 @@ export function usePipeline(): UsePipelineReturn {
               appendAnswer: (text) => setStreamingAnswer((prev) => prev + text),
               logOutput: (line) => setActivityLog((prev) => [...prev, line]),
             }),
+          // Diagnostics go to the OUTPUT panel: this is read by a human when the chat
+          // shows nothing, so it says which branch ran and what actually arrived.
+          log: (line) =>
+            setActivityLog((prev) => [
+              ...prev,
+              { line_number: prev.length + 1, content: line, stream: "stdout", is_json: false },
+            ]),
         });
 
         // The chat derives its state from `status`, and a Codex run leaves it on
