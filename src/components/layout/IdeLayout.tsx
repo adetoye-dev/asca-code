@@ -1471,6 +1471,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                   {fullPage === "monitor" && (
                     <PerformanceDashboard
                       systemMetrics={systemMetrics}
+                      projectRoot={activeProject.path}
                       onRefreshMetrics={() => {
                         refreshBranch();
                         systemMetricsService.fetchMetrics();

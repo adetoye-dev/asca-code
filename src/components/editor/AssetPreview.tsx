@@ -16,6 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { readTextFile, readFileAsDataUrl } from "../../services/fileAccess";
 
 export interface AssetPreviewParams {
   filePath: string;
@@ -124,21 +125,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
     const loadAsset = async () => {
       if (isVector) {
         try {
-          let text = "";
-          if (isTauri) {
-            try {
-              const { invoke } = await import("@tauri-apps/api/core");
-              text = await invoke<string>("read_file_content", { filePath, projectRoot });
-            } catch { /* fall through */ }
-          }
-          if (!text) {
-            const res = await fetch("/api/fs/read", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ filePath, projectRoot }),
-            });
-            if (res.ok) { const d = await res.json(); text = d.content || ""; }
-          }
+          const text = await readTextFile(filePath, projectRoot);
           if (text && active) {
             setRawSvg(text);
             const prepared = parseAndPrepareSvg(text);
@@ -153,23 +140,16 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
       }
 
       try {
-        const res = await fetch("/api/fs/read-base64", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filePath, projectRoot }),
-        });
-        if (res.ok) {
-          const d = await res.json();
-          if (d.dataUrl && active) {
-            setSrc(d.dataUrl);
-            if (d.size) setMetadata((p) => ({ ...p, size: d.size, format: ext }));
-            setIsLoading(false);
-            return;
-          }
+        const dataUrl = await readFileAsDataUrl(filePath, projectRoot);
+        if (dataUrl && active) {
+          setSrc(dataUrl);
+          setIsLoading(false);
+          return;
         }
       } catch { /* fall through */ }
 
       if (active) {
+        // Browser-only last resort: the dev bridge streams the bytes directly.
         const q = new URLSearchParams({ path: filePath, ...(projectRoot ? { projectRoot } : {}) });
         setSrc(`/api/fs/raw?${q}`);
         setIsLoading(false);

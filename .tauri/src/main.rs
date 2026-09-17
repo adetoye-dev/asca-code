@@ -222,6 +222,71 @@ fn write_file_content(file_path: String, content: String, project_root: String) 
 }
 
 #[tauri::command]
+fn read_file_base64(file_path: String, project_root: String) -> Result<String, String> {
+    let path = resolve_project_path(&project_root, &file_path)?;
+    if !path.is_file() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let mime = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "pdf" => "application/pdf",
+        other => match other {
+            "ttf" | "otf" | "woff" | "woff2" => "font/ttf",
+            _ => "application/octet-stream",
+        },
+    };
+    Ok(format!(
+        "data:{};base64,{}",
+        mime,
+        base64_encode(&bytes)
+    ))
+}
+
+/// Standard base64. Hand-rolled because the alternative is another crate for
+/// twenty lines, and this is only ever used to inline a preview asset.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHABET[((triple >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+#[tauri::command]
 fn create_file_or_folder(path: String, is_dir: bool, project_root: String) -> Result<(), String> {
     let p = resolve_project_path(&project_root, &path)?;
     if is_dir {
@@ -552,6 +617,323 @@ fn fetch_system_metrics(state: State<'_, AppState>) -> Result<SystemMetrics, Str
     })
 }
 
+// ── Tauri Commands: storage, processes, cleanup ─────────────────────────────
+//
+// These lived only in `vite-fs-bridge.ts`, so the Health & Performance page
+// showed its defaults in a packaged build. Worse, its process list was
+// hardcoded — invented CPU and memory numbers, including a row for a gauntlet
+// that no longer exists. Real numbers come from `sysinfo` instead.
+
+const MB: f64 = 1024.0 * 1024.0;
+
+/// Total bytes under a directory, skipping the trees that must never be walked.
+fn dir_size_bytes(dir: &Path) -> u64 {
+    // `node_modules` and `.git` are huge and are never what is being cleaned;
+    // walking them made the storage panel take seconds on a real project.
+    let skip = ["node_modules", ".git", "target"];
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if skip.contains(&name.as_ref()) {
+                    continue;
+                }
+                stack.push(path);
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+/// Every directory named in `names` under `dir`, and what they add up to.
+fn scan_named_dirs(dir: &Path, names: &[&str]) -> (usize, u64) {
+    let mut count = 0usize;
+    let mut size = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if names.contains(&name.as_ref()) {
+                count += 1;
+                size += dir_size_bytes(&path);
+            } else if name != "node_modules" && name != ".git" {
+                stack.push(path);
+            }
+        }
+    }
+    (count, size)
+}
+
+fn round1(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageCategory {
+    pub id: String,
+    pub name: String,
+    pub objects: usize,
+    pub size_mb: f64,
+    pub reclaimable_mb: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageMetrics {
+    pub total_gb: f64,
+    pub free_gb: f64,
+    pub used_gb: f64,
+    pub used_percent: f64,
+    pub build_artifacts_mb: f64,
+    pub cache_reclaimable_mb: f64,
+    pub categories: Vec<StorageCategory>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunningProcessItem {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f64,
+    pub memory_mb: f64,
+    pub status: String,
+    /// True for processes this app owns, so the panel can separate "what this
+    /// app costs me" from whatever else the machine is doing.
+    pub is_ours: bool,
+}
+
+/// Disk usage for the volume holding the project, plus what its caches occupy.
+#[tauri::command]
+fn fetch_system_storage(project_root: String) -> Result<StorageMetrics, String> {
+    let root = PathBuf::from(if project_root.trim().is_empty() {
+        ".".to_string()
+    } else {
+        project_root
+    });
+    let root = root.canonicalize().unwrap_or(root);
+
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    // The volume the project lives on, not simply the boot disk — they differ
+    // whenever someone works from an external drive.
+    let disk = disks
+        .list()
+        .iter()
+        .filter(|d| root.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .or_else(|| disks.list().first());
+    let (total_bytes, free_bytes) = disk
+        .map(|d| (d.total_space(), d.available_space()))
+        .unwrap_or((0, 0));
+    let total_gb = round1(total_bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+    let free_gb = round1(free_bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+    let used_gb = round1(total_gb - free_gb);
+    let used_percent = if total_gb > 0.0 {
+        round1((used_gb / total_gb) * 100.0)
+    } else {
+        0.0
+    };
+
+    let dist = root.join("dist");
+    let vite_cache = root.join("node_modules").join(".vite");
+    let logs_temp = root.join("logs-temp");
+    let (pycache_count, pycache_bytes) =
+        scan_named_dirs(&root, &["__pycache__", ".pytest_cache", ".mypy_cache"]);
+
+    let dist_bytes = if dist.is_dir() { dir_size_bytes(&dist) } else { 0 };
+    let vite_bytes = if vite_cache.is_dir() {
+        dir_size_bytes(&vite_cache)
+    } else {
+        0
+    };
+    let logs_bytes = if logs_temp.is_dir() {
+        dir_size_bytes(&logs_temp)
+    } else {
+        0
+    };
+    let dist_objects = std::fs::read_dir(&dist).map(|it| it.count()).unwrap_or(0);
+
+    let categories = vec![
+        StorageCategory {
+            id: "build-artifacts".into(),
+            name: "Build Output (dist)".into(),
+            objects: dist_objects,
+            size_mb: round1(dist_bytes as f64 / MB),
+            reclaimable_mb: round1(dist_bytes as f64 / MB),
+        },
+        StorageCategory {
+            id: "vite-cache".into(),
+            name: "Vite Cache".into(),
+            objects: usize::from(vite_bytes > 0),
+            size_mb: round1(vite_bytes as f64 / MB),
+            reclaimable_mb: round1(vite_bytes as f64 / MB),
+        },
+        StorageCategory {
+            id: "pycache".into(),
+            name: "Python Bytecode (__pycache__)".into(),
+            objects: pycache_count,
+            size_mb: round1(pycache_bytes as f64 / MB),
+            reclaimable_mb: round1(pycache_bytes as f64 / MB),
+        },
+        StorageCategory {
+            id: "logs-temp".into(),
+            name: "Logs & Temp Buffers".into(),
+            objects: 0,
+            size_mb: round1(logs_bytes as f64 / MB),
+            reclaimable_mb: round1(logs_bytes as f64 / MB),
+        },
+    ];
+
+    Ok(StorageMetrics {
+        total_gb,
+        free_gb,
+        used_gb,
+        used_percent,
+        build_artifacts_mb: round1(dist_bytes as f64 / MB),
+        cache_reclaimable_mb: round1(
+            (dist_bytes + vite_bytes + pycache_bytes + logs_bytes) as f64 / MB,
+        ),
+        categories,
+    })
+}
+
+/// The heaviest processes on the host, with this app's own children marked.
+#[tauri::command]
+fn fetch_system_processes(state: State<'_, AppState>) -> Result<Vec<RunningProcessItem>, String> {
+    let mut sys = state
+        .sys
+        .lock()
+        .map_err(|e| format!("Failed to acquire system lock: {}", e))?;
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let mut items: Vec<RunningProcessItem> = sys
+        .processes()
+        .values()
+        .map(|p| {
+            let cmdline = p
+                .cmd()
+                .iter()
+                .map(|c| c.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let exe = p
+                .exe()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let haystack = format!("{} {}", exe, cmdline);
+            let name = p.name().to_string_lossy().to_string();
+            RunningProcessItem {
+                pid: p.pid().as_u32(),
+                name: if name.is_empty() {
+                    cmdline.chars().take(40).collect()
+                } else {
+                    name
+                },
+                cpu_percent: round1(f64::from(p.cpu_usage())),
+                memory_mb: round1(p.memory() as f64 / MB),
+                status: p.status().to_string(),
+                is_ours: haystack.contains("acsa-engine")
+                    || haystack.contains("engine-codex")
+                    || haystack.contains("pty_bridge")
+                    || haystack.contains("ACSA Code"),
+            }
+        })
+        .collect();
+
+    // Ours first, then the machine's heaviest.
+    items.sort_by(|a, b| {
+        b.is_ours.cmp(&a.is_ours).then(
+            b.memory_mb
+                .partial_cmp(&a.memory_mb)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    items.truncate(10);
+    Ok(items)
+}
+
+/// Delete regenerable caches inside the project and report what came back.
+#[tauri::command]
+fn system_cleanup(project_root: String) -> Result<serde_json::Value, String> {
+    let root = PathBuf::from(project_root.trim());
+    if !root.is_dir() {
+        return Err("The project folder is not open, so there is nothing to clean.".into());
+    }
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    // Refuse a filesystem root: this deletes directories, and "clean everything
+    // under /" is not a thing anyone means.
+    if root.parent().is_none() {
+        return Err("Refusing to clean a filesystem root.".into());
+    }
+
+    let mut reclaimed = 0u64;
+    let mut removed: Vec<String> = Vec::new();
+    for (label, path) in [
+        ("dist", root.join("dist")),
+        ("node_modules/.vite", root.join("node_modules").join(".vite")),
+        ("logs-temp", root.join("logs-temp")),
+    ] {
+        if path.is_dir() {
+            let size = dir_size_bytes(&path);
+            if std::fs::remove_dir_all(&path).is_ok() {
+                reclaimed += size;
+                removed.push(label.to_string());
+            }
+        }
+    }
+
+    // `__pycache__` has no single parent, so it is cleared by walking. Anything
+    // else under the root is left exactly where it is.
+    let mut stack = vec![root.clone()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(name.as_ref(), "__pycache__" | ".pytest_cache" | ".mypy_cache") {
+                let size = dir_size_bytes(&path);
+                if std::fs::remove_dir_all(&path).is_ok() {
+                    reclaimed += size;
+                    removed.push(name.to_string());
+                }
+            } else if name != "node_modules" && name != ".git" && name != "target" {
+                stack.push(path);
+            }
+        }
+    }
+
+    let reclaimed_mb = round1(reclaimed as f64 / MB);
+    Ok(serde_json::json!({
+        "success": true,
+        "reclaimedMb": reclaimed_mb,
+        "removed": removed,
+        "message": format!(
+            "Reclaimed {:.1} MB of regenerable caches — build output, bytecode and temporary buffers only.",
+            reclaimed_mb
+        ),
+    }))
+}
+
 // ── Tauri Command: engine_call ──────────────────────────────────────────────
 
 /// Run an engine subcommand and return its JSON envelope.
@@ -571,8 +953,8 @@ async fn engine_call(
     subcommand: String,
     args: Vec<String>,
 ) -> Result<String, String> {
-    const ALLOWED: [&str; 8] = [
-        "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai",
+    const ALLOWED: [&str; 10] = [
+        "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs",
     ];
     if !ALLOWED.contains(&subcommand.as_str()) {
         return Err(format!("engine subcommand not allowed: {}", subcommand));
@@ -872,6 +1254,90 @@ fn chat_cancel(state: State<'_, ChatState>) -> Result<(), String> {
     Ok(())
 }
 
+// ── Ollama model downloads ──────────────────────────────────────────────────
+
+/// Its own slot, not the chat's: cancelling a chat must not kill a model
+/// download, and cancelling a download must not kill a chat.
+pub struct OllamaState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+impl OllamaState {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+        }
+    }
+}
+
+/// Download a model, streaming progress as `ollama:frame` events.
+///
+/// A download is the one Ollama action that takes minutes and can fail halfway,
+/// so it needs the same streaming treatment as chat. The engine talks to
+/// Ollama's own `/api/pull`; this only forwards its frames.
+#[tauri::command]
+async fn ollama_pull(
+    app_handle: tauri::AppHandle,
+    state: State<'_, OllamaState>,
+    model: String,
+) -> Result<(), String> {
+    if let Some(mut previous) = state.child.lock().map_err(|e| e.to_string())?.take() {
+        let _ = previous.kill();
+    }
+
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "ollama");
+    argv.push("pull".to_string());
+    argv.push(format!("{{\"model\":\"{}\"}}", model));
+
+    let mut child = Command::new(&program)
+        .args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the download ({}): {}", program.display(), e))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "could not capture download output".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "could not capture download errors".to_string())?;
+    *state.child.lock().map_err(|e| e.to_string())? = Some(child);
+
+    let app_for_reader = app_handle.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read};
+        let stderr_handle = app_for_reader.clone();
+        let stderr_thread = std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text);
+            text
+        });
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let _ = app_for_reader.emit("ollama:frame", AiFrame { line });
+        }
+        let stderr_text = stderr_thread.join().unwrap_or_default();
+        let _ = stderr_handle.emit("ollama:exit", stderr_text.trim().to_string());
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn ollama_cancel(state: State<'_, OllamaState>) -> Result<(), String> {
+    if let Some(mut child) = state.child.lock().map_err(|e| e.to_string())?.take() {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
 // ── Codex agent runtime ─────────────────────────────────────────────────────
 
 const CODEX_BIN_NAME: &str = "codex";
@@ -1139,13 +1605,18 @@ fn main() {
         })
         .manage(TerminalState::new())
         .manage(ChatState::new())
+        .manage(OllamaState::new())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             fetch_system_metrics,
+            fetch_system_storage,
+            fetch_system_processes,
+            system_cleanup,
             list_project_files,
             read_file_content,
+            read_file_base64,
             write_file_content,
             create_file_or_folder,
             delete_project_file,
@@ -1157,6 +1628,8 @@ fn main() {
             terminal_resize,
             chat_stream,
             chat_cancel,
+            ollama_pull,
+            ollama_cancel,
             codex_exec,
         ])
         .setup(|app| {
@@ -1173,4 +1646,35 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("Failed to launch ACSA Code");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_matches_the_reference_encoder() {
+        // A preview that decodes wrong is a broken image, so the padding and the
+        // partial-chunk cases are the whole point of this test.
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_encode(&[0xff, 0x00, 0xfe]), "/wD+");
+    }
+
+    #[test]
+    fn dir_size_skips_node_modules() {
+        let root = std::env::temp_dir().join("acsa-dir-size-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.txt"), b"12345").unwrap();
+        std::fs::write(root.join("node_modules").join("big.bin"), vec![0u8; 4096]).unwrap();
+        assert_eq!(dir_size_bytes(&root), 5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

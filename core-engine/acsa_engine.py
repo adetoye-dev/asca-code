@@ -62,6 +62,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "skills": ("skills_cli", "run"),
     "mcp": ("mcp_cli", "run"),
     "ai": ("ai_cli", "run"),
+    "project": ("project_cli", "run"),
+    "fs": ("fs_cli", "run"),
 }
 
 

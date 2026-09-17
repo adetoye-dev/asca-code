@@ -28,10 +28,15 @@ export const ProjectSetupCard: React.FC<ProjectSetupCardProps> = ({ status, busy
 
   const actions: SetupAction[] = [];
   if (status.needsInstall) {
-    actions.push({ label: "Install dependencies", command: "npm install", icon: Download, primary: true });
+    actions.push({
+      label: `Install dependencies (${status.manager})`,
+      command: status.installCommand || "npm install",
+      icon: Download,
+      primary: true,
+    });
   } else {
-    if (status.scripts.dev) actions.push({ label: "Run dev server", command: "npm run dev", icon: Play, primary: true });
-    if (status.scripts.build) actions.push({ label: "Build", command: "npm run build", icon: Hammer });
+    if (status.devCommand) actions.push({ label: "Run dev server", command: status.devCommand, icon: Play, primary: true });
+    if (status.buildCommand) actions.push({ label: "Build", command: status.buildCommand, icon: Hammer });
   }
   if (!actions.length) return null;
 

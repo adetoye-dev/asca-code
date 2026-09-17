@@ -36,6 +36,7 @@ import {
 import { CodeMapGraph } from "./CodeMapGraph";
 import { streamChatCompletion } from "../../services/aiChatService";
 import { getAutoSelectedLocalWorker, resolveEditorAiConfig } from "../../services/aiModelManager";
+import { readTextFile } from "../../services/fileAccess";
 import type { AISettings } from "../SettingsModal";
 import {
   fetchBlastRadius,
@@ -228,12 +229,7 @@ export function CodeMapDashboard({
       try {
         let source = "";
         try {
-          const res = await fetch("/api/fs/read", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectRoot, filePath: entry.path }),
-          });
-          if (res.ok) source = (await res.json()).content || "";
+          source = await readTextFile(entry.path, projectRoot);
         } catch {
           /* index facts alone are still enough to explain the role */
         }

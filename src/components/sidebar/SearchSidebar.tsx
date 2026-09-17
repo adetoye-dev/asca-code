@@ -16,6 +16,7 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import { Search, MoreHorizontal, ChevronRight, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, RefreshCw, AlertCircle, X, WholeWord, Replace, ReplaceAll } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { searchWorkspace, replaceInWorkspace } from "../../services/workspaceSearch";
 
 import { FileIcon } from "../ui/FileIcon";
 
@@ -113,24 +114,18 @@ export function SearchSidebar({
       setErrorMessage(null);
 
       try {
-        const res = await fetch("/api/fs/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectRoot: projectCwd,
-            query: searchTerm,
-            matchCase,
-            matchWholeWord,
-            useRegex,
-            includePattern,
-            excludePattern,
-            maxResults: 1000,
-          }),
+        const data = await searchWorkspace({
+          projectRoot: projectCwd,
+          query: searchTerm,
+          matchCase,
+          matchWholeWord,
+          useRegex,
+          includePattern,
+          excludePattern,
+          maxResults: 1000,
         });
 
-        const data = await res.json();
-
-        if (!res.ok || data.error) {
+        if (data.error) {
           setErrorMessage(data.error || "Search failed");
           setResults([]);
         } else {
@@ -228,10 +223,7 @@ export function SearchSidebar({
 
     setIsReplacing(true);
     try {
-      const res = await fetch("/api/fs/replace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await replaceInWorkspace({
           projectRoot: projectCwd,
           query,
           replaceText,
@@ -241,10 +233,7 @@ export function SearchSidebar({
           preserveCase,
           filePath,
           lineNumbers: [match.lineNumber],
-        }),
-      });
-
-      const data = await res.json();
+        });
       if (data.success && data.updatedFiles) {
         for (const uf of data.updatedFiles) {
           onUpdateTabContent(uf.filePath, uf.newContent);
@@ -270,10 +259,7 @@ export function SearchSidebar({
 
     setIsReplacing(true);
     try {
-      const res = await fetch("/api/fs/replace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await replaceInWorkspace({
           projectRoot: projectCwd,
           query,
           replaceText,
@@ -282,10 +268,7 @@ export function SearchSidebar({
           useRegex,
           preserveCase,
           filePath,
-        }),
-      });
-
-      const data = await res.json();
+        });
       if (data.success && data.updatedFiles) {
         for (const uf of data.updatedFiles) {
           onUpdateTabContent(uf.filePath, uf.newContent);
@@ -309,10 +292,7 @@ export function SearchSidebar({
 
     setIsReplacing(true);
     try {
-      const res = await fetch("/api/fs/replace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await replaceInWorkspace({
           projectRoot: projectCwd,
           query,
           replaceText,
@@ -320,10 +300,7 @@ export function SearchSidebar({
           matchWholeWord,
           useRegex,
           preserveCase,
-        }),
-      });
-
-      const data = await res.json();
+        });
       if (data.success && data.updatedFiles) {
         for (const uf of data.updatedFiles) {
           onUpdateTabContent(uf.filePath, uf.newContent);

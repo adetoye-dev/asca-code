@@ -10,6 +10,8 @@ so the packaged IPC path and the dev bridge can share one implementation.
 
 Usage: python3 ollama_cli.py status
        python3 ollama_cli.py start
+       python3 ollama_cli.py pull '{"model": "qwen2.5-coder:7b"}'
+       python3 ollama_cli.py delete '{"model": "qwen2.5-coder:7b"}'
 """
 
 from __future__ import annotations
@@ -137,7 +139,7 @@ def _model_detail(entry: dict) -> dict:
     }
 
 
-def status() -> dict:
+def status(payload: dict | None = None) -> dict:
     """Install/running state plus the model inventory.
 
     A server that is not answering is reported as `running: false`, not as an
@@ -161,7 +163,7 @@ def status() -> dict:
     }
 
 
-def start() -> dict:
+def start(payload: dict | None = None) -> dict:
     """Start the daemon, then wait for it to answer."""
     if _get("/api/tags", timeout=1.0) is not None:
         return {"started": True, "alreadyRunning": True}
@@ -187,7 +189,102 @@ def start() -> dict:
     return {"started": False, "error": "Ollama did not report ready in time."}
 
 
-COMMANDS = {"status": status, "start": start}
+def pull(payload: dict | None = None) -> None:
+    """Download a model, writing one NDJSON progress frame per line.
+
+    Streaming, because a download is minutes long and a silent wait is
+    indistinguishable from a hang. Frames carry `percent`/`status` while it runs
+    and exactly one terminal frame: `{"done": true, "model": …}` or
+    `{"done": true, "error": …}`.
+    """
+    model = str((payload or {}).get("model") or "").strip()
+    if not model:
+        _emit({"done": True, "error": "No model was given."})
+        return
+    if _get("/api/tags", timeout=1.5) is None:
+        _emit({"done": True, "error": "Ollama is not running. Start it and try again."})
+        return
+
+    request = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/pull",
+        data=json.dumps({"model": model, "stream": True}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        # No timeout: a large model on a slow line is legitimately slow, and a
+        # deadline here would abort a download that is still making progress.
+        with urllib.request.urlopen(request) as response:
+            for raw in response:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    frame = json.loads(line)
+                except ValueError:
+                    continue
+                if frame.get("error"):
+                    _emit({"done": True, "error": str(frame["error"])})
+                    return
+                total = frame.get("total") or 0
+                completed = frame.get("completed") or 0
+                percent = round((completed / total) * 100) if total else 0
+                _emit(
+                    {
+                        "percent": percent,
+                        "status": frame.get("status") or f"Downloading {model}",
+                    }
+                )
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        _emit({"done": True, "error": f"Download failed: {exc}"})
+        return
+    _emit({"done": True, "model": model, "percent": 100, "status": "Ready"})
+
+
+def _emit(frame: dict) -> None:
+    sys.stdout.write(json.dumps(frame) + "\n")
+    sys.stdout.flush()
+
+
+def _require_model(payload: dict | None) -> str:
+    model = str((payload or {}).get("model") or "").strip()
+    if not model:
+        raise ValueError("No model was given.")
+    return model
+
+
+def delete(payload: dict | None = None) -> dict:
+    """Remove a downloaded model. There is no undo, so it reports what happened."""
+    model = _require_model(payload)
+    request = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/delete",
+        data=json.dumps({"model": model}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {"ok": False, "error": f"{model} is not installed."}
+        return {"ok": False, "error": f"Ollama refused the delete ({exc.code})."}
+    except (urllib.error.URLError, OSError) as exc:
+        return {"ok": False, "error": f"Ollama is not reachable: {exc}"}
+    return {"ok": True, "model": model}
+
+
+def show(payload: dict | None = None) -> dict:
+    """The model's own manifest: parameters, template, capabilities."""
+    model = _require_model(payload)
+    document = _post("/api/show", {"model": model}, timeout=10)
+    if document is None:
+        return {"ok": False, "error": f"Ollama could not describe {model}."}
+    return {"ok": True, "model": model, **document}
+
+
+COMMANDS = {"status": status, "start": start, "pull": pull, "delete": delete, "show": show}
+STREAMING = {"pull"}
 
 
 def run(argv: list[str]) -> int:
@@ -201,7 +298,13 @@ def run(argv: list[str]) -> int:
         return 2
 
     try:
-        print(json.dumps({"ok": True, "data": handler()}))
+        raw = argv[2] if len(argv) > 2 else (sys.stdin.read() or "{}")
+        payload = json.loads(raw or "{}")
+        result = handler(payload)
+        # `pull` writes its own frames and has no envelope.
+        if argv[1] in STREAMING:
+            return 0
+        print(json.dumps({"ok": True, "data": result}))
         return 0
     except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not raise
         print(json.dumps({"ok": False, "error": str(exc)}))

@@ -25,11 +25,14 @@ import { Icon } from "../ui/Icon";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { systemMetricsService } from "../../services/systemMetricsService";
 import { aiFetch } from "../../services/aiClient";
+import { fetchStorageMetrics, fetchRunningProcesses, runSafeCleanup } from "../../services/hostMetrics";
 import type { SystemMetrics, StorageMetrics, RunningProcessItem } from "../../types/workbench";
 
 interface PerformanceDashboardProps {
   systemMetrics: SystemMetrics | null;
   onRefreshMetrics?: () => void;
+  /** The open project. Storage and cleanup are scoped to it, not to the app. */
+  projectRoot?: string;
 }
 
 // ── 1. Diagonal Hatched Progress Gauge Component ─────────────────────────────
@@ -294,6 +297,7 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
 export function PerformanceDashboard({
   systemMetrics,
   onRefreshMetrics,
+  projectRoot = "",
 }: PerformanceDashboardProps) {
   const [metrics, setMetrics] = useState<SystemMetrics | null>(
     () => systemMetricsService.getMetrics() || systemMetrics
@@ -338,8 +342,8 @@ export function PerformanceDashboard({
     setIsRefreshing(true);
     try {
       const [storageRes, procRes, sysMetrics, usageRes] = await Promise.all([
-        fetch("/api/system/storage"),
-        fetch("/api/system/processes"),
+        fetchStorageMetrics(projectRoot),
+        fetchRunningProcesses(),
         systemMetricsService.fetchMetrics(),
         // Through the AI transport, so a packaged build reads the ledger over
         // IPC instead of asking its own asset protocol for a dev-only route.
@@ -356,8 +360,8 @@ export function PerformanceDashboard({
         } catch {}
       }
 
-      if (storageRes.ok) {
-        const data = await storageRes.json();
+      if (storageRes) {
+        const data = storageRes;
         setHasStorageMetrics(true);
         setStorage((previous) => {
           const safeNumber = (value: unknown, fallback: number) =>
@@ -383,11 +387,10 @@ export function PerformanceDashboard({
           };
         });
       }
-      if (procRes.ok) {
-        const data = await procRes.json();
-        setProcesses(data.processes || []);
+      if (procRes) {
+        setProcesses(procRes);
       }
-      setIsTelemetryOnline(Boolean(storageRes.ok && procRes.ok && sysMetrics && systemMetricsService.isHealthy()));
+      setIsTelemetryOnline(Boolean(storageRes && procRes && sysMetrics && systemMetricsService.isHealthy()));
       setLastChecked(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } catch {
       setIsTelemetryOnline(false);
@@ -408,18 +411,15 @@ export function PerformanceDashboard({
     setCleanupResult(null);
 
     try {
-      const res = await fetch("/api/system/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
+      const data = await runSafeCleanup(projectRoot);
+      if (data) {
         setCleanupResult({
           reclaimedMb: data.reclaimedMb ?? 0,
           message: data.message || "Build caches cleared successfully.",
         });
         await fetchStorageAndProcesses();
+      } else {
+        setCleanupResult({ reclaimedMb: 0, message: "Cleanup did not run." });
       }
     } catch (err: any) {
       setCleanupResult({

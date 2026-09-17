@@ -1,7 +1,8 @@
 /**
  * ollamaSetup.ts — Automatic Ollama Detection & Setup Service
  *
- * Wraps the /api/ollama/* bridge endpoints to:
+ * Detection, install and downloads for the local model runtime. Every call
+ * prefers the desktop shell and falls back to the dev bridge for a browser:
  * 1. Silently detect whether Ollama is installed and running on startup.
  * 2. Install Ollama via clean passwordless unpack with structured progress streaming.
  * 3. Pull the RAM-appropriate default model with structured progress streaming.
@@ -140,7 +141,7 @@ export async function pullOllamaModel(
   model: string,
   onProgress: (evt: OllamaProgressEvent) => void
 ): Promise<string> {
-  requireDevBridge("Downloading a model");
+  if (hasIpc()) return pullViaIpc(model, onProgress);
   return new Promise((resolve, reject) => {
     fetch("/api/ollama/pull", {
       method: "POST",
@@ -193,6 +194,88 @@ export async function pullOllamaModel(
   });
 }
 
+/**
+ * Download through the desktop shell.
+ *
+ * The engine streams one NDJSON frame per progress update on its stdout and Rust
+ * forwards each as an `ollama:frame` event, so the wizard shows the same percent
+ * it did over the dev bridge — this is the path the packaged app uses.
+ */
+async function pullViaIpc(
+  model: string,
+  onProgress: (evt: OllamaProgressEvent) => void,
+): Promise<string> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+
+  let finished = false;
+  let unlisten: Array<() => void> = [];
+  const cleanup = () => {
+    unlisten.forEach((off) => off());
+    unlisten = [];
+  };
+
+  return new Promise<string>((resolve, reject) => {
+    void (async () => {
+      const handle = (line: string) => {
+        if (finished) return;
+        try {
+          const obj = JSON.parse(line) as {
+            percent?: number;
+            status?: string;
+            done?: boolean;
+            model?: string;
+            error?: string;
+          };
+          if (obj.error && !obj.done) {
+            onProgress({ percent: obj.percent ?? 0, status: obj.error });
+            return;
+          }
+          if (obj.percent !== undefined || obj.status) {
+            onProgress({
+              percent: obj.percent ?? 0,
+              status: obj.status || `Downloading ${model}…`,
+              log: obj.status,
+            });
+          }
+          if (obj.done) {
+            finished = true;
+            cleanup();
+            if (obj.error) reject(new Error(obj.error));
+            else resolve(obj.model || model);
+          }
+        } catch {
+          /* a partial or non-JSON line carries nothing to show */
+        }
+      };
+
+      unlisten.push(
+        await listen<{ line?: string } | string>("ollama:frame", (event) => {
+          const payload = event.payload;
+          handle(typeof payload === "string" ? payload : String(payload?.line ?? ""));
+        }),
+      );
+      unlisten.push(
+        await listen<string>("ollama:exit", (event) => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          const note = String(event.payload ?? "").trim();
+          reject(new Error(note || "The download stopped before finishing."));
+        }),
+      );
+
+      try {
+        await invoke("ollama_pull", { model });
+      } catch (error) {
+        finished = true;
+        cleanup();
+        reject(new Error(String(error)));
+      }
+    })();
+  });
+}
+
 /** Start the Ollama server and wait for it to become healthy (up to 6s). */
 export async function startOllamaServer(): Promise<boolean> {
   try {
@@ -230,6 +313,13 @@ export function dismissOllamaNotice(): void {
 /** Delete an installed Ollama model to free disk space. */
 export async function deleteOllamaModel(model: string): Promise<boolean> {
   try {
+    if (hasIpc()) {
+      const result = await engineCall<{ ok: boolean }>("ollama", [
+        "delete",
+        JSON.stringify({ model }),
+      ]);
+      return Boolean(result?.ok);
+    }
     const res = await fetch("/api/ollama/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -394,6 +484,13 @@ export function formatContextLength(tokens?: number): string {
  */
 export async function getOllamaModelShow(model: string): Promise<any> {
   try {
+    if (hasIpc()) {
+      const result = await engineCall<{ ok: boolean }>("ollama", [
+        "show",
+        JSON.stringify({ model }),
+      ]);
+      return result?.ok ? result : null;
+    }
     const res = await fetch("/api/ollama/show", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
