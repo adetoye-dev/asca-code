@@ -24,6 +24,7 @@ import {
 import { Icon } from "../ui/Icon";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { systemMetricsService } from "../../services/systemMetricsService";
+import { aiFetch } from "../../services/aiClient";
 import type { SystemMetrics, StorageMetrics, RunningProcessItem } from "../../types/workbench";
 
 interface PerformanceDashboardProps {
@@ -340,7 +341,9 @@ export function PerformanceDashboard({
         fetch("/api/system/storage"),
         fetch("/api/system/processes"),
         systemMetricsService.fetchMetrics(),
-        fetch("/api/ai/usage").catch(() => null),
+        // Through the AI transport, so a packaged build reads the ledger over
+        // IPC instead of asking its own asset protocol for a dev-only route.
+        aiFetch("/api/ai/usage").catch(() => null),
       ]);
 
       if (sysMetrics) {

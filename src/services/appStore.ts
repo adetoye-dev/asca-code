@@ -38,12 +38,38 @@ export interface StoredMessage {
 }
 
 export interface UsageSummary {
-  calls: number;
-  promptTokens: number;
-  completionTokens: number;
-  costUsd: number;
-  avgLatencyMs: number;
-  byModel: Array<{ provider: string; model: string; calls: number; cost_usd: number; tokens: number }>;
+  total_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  total_latency_ms: number;
+  by_model: Array<{
+    provider: string;
+    model: string;
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    cost_usd: number;
+    latency_ms: number;
+  }>;
+  daily: Array<{
+    date: string;
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    cost_usd: number;
+  }>;
+  recent: Array<{
+    ts: number;
+    provider: string;
+    model: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    latency_ms: number;
+    cost_usd: number;
+    project_path: string | null;
+  }>;
 }
 
 export interface Account {

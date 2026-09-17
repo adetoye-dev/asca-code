@@ -930,6 +930,64 @@ fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<S
 /// calls — verified by driving it headlessly against the user's provider, where it
 /// edited a file correctly in ~14s and streamed `thread`/`turn`/`item` events.
 ///
+/// Token usage for a finished run, read from Codex's own session rollout.
+///
+/// `codex exec --json` reports thread/turn/item events but no token counts, so
+/// without this the usage ledger would record nothing for agent runs — the one
+/// place the work actually costs money. Codex writes them to
+/// `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl`, one `token_usage_record`
+/// per model response, each carrying the thread's running total; the last one is
+/// therefore the whole run. This is our own CODEX_HOME — created by this app and
+/// never the user's — so those files exist only for runs we started.
+fn rollout_token_usage(codex_home: &Path, thread_id: &str) -> Option<(u64, u64)> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut dirs = vec![codex_home.join("sessions")];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
+                continue;
+            }
+            if !thread_id.is_empty() && !name.contains(thread_id) {
+                continue;
+            }
+            if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+                if newest.as_ref().map(|(seen, _)| modified > *seen).unwrap_or(true) {
+                    newest = Some((modified, path));
+                }
+            }
+        }
+    }
+    let (_, path) = newest?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut totals: Option<(u64, u64)> = None;
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(|t| t.as_str()) != Some("token_usage_record") {
+            continue;
+        }
+        let usage = value.get("payload").and_then(|p| p.get("thread_token_usage"));
+        let field = |key: &str| {
+            usage
+                .and_then(|u| u.get(key))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+        };
+        totals = Some((field("input_tokens"), field("output_tokens")));
+    }
+    totals
+}
+
 /// `config_toml` is written to this app's own `CODEX_HOME` before launch, so the
 /// provider the user configured in our settings is the one Codex uses, and we never
 /// touch their personal Codex configuration.
@@ -1021,6 +1079,7 @@ async fn codex_exec(
     *state.child.lock().map_err(|e| e.to_string())? = Some(child);
 
     let app_for_reader = app_handle.clone();
+    let codex_home_for_usage = codex_home.clone();
     std::thread::spawn(move || {
         use std::io::{BufRead, BufReader, Read};
         let stderr_handle = app_for_reader.clone();
@@ -1030,12 +1089,39 @@ async fn codex_exec(
             text
         });
 
+        // The thread id names the rollout file, so it is read off the first frame
+        // rather than guessed; an empty id falls back to the newest rollout.
+        let mut thread_id = String::new();
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim().is_empty() {
                 continue;
             }
+            if thread_id.is_empty() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if value.get("type").and_then(|t| t.as_str()) == Some("thread.started") {
+                        if let Some(id) = value.get("thread_id").and_then(|v| v.as_str()) {
+                            thread_id = id.to_string();
+                        }
+                    }
+                }
+            }
             // Each line is one JSON event; the UI decides what to show.
             let _ = app_for_reader.emit("codex:event", AiFrame { line });
+        }
+        // Emitted before `codex:exit` so the UI has the numbers by the time it
+        // considers the run over.
+        if let Some((prompt_tokens, completion_tokens)) =
+            rollout_token_usage(&codex_home_for_usage, &thread_id)
+        {
+            let _ = app_for_reader.emit(
+                "codex:usage",
+                AiFrame {
+                    line: format!(
+                        "{{\"promptTokens\":{},\"completionTokens\":{}}}",
+                        prompt_tokens, completion_tokens
+                    ),
+                },
+            );
         }
         let stderr_text = stderr_thread.join().unwrap_or_default();
         let _ = stderr_handle.emit("codex:exit", stderr_text.trim().to_string());

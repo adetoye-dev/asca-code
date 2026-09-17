@@ -180,13 +180,29 @@ class UsageLedgerTests(AppDbTestCase):
         app_db.record_usage("ollama", "qwen2.5-coder:7b", 10, 5, 100.0, 0.0, "/tmp/b")
 
         everything = app_db.usage_summary()
-        self.assertEqual(everything["calls"], 3)
-        self.assertEqual(everything["promptTokens"], 310)
-        self.assertAlmostEqual(everything["costUsd"], 0.03, places=6)
+        self.assertEqual(everything["total_calls"], 3)
+        self.assertEqual(everything["prompt_tokens"], 310)
+        self.assertEqual(everything["total_tokens"], 310 + 135)
+        self.assertAlmostEqual(everything["cost_usd"], 0.03, places=6)
+        # One entry per day of the window, even on days with no activity.
+        self.assertEqual(len(everything["daily"]), 14)
+        self.assertEqual(sum(day["calls"] for day in everything["daily"]), 3)
+        self.assertEqual(len(everything["recent"]), 3)
 
         scoped = app_db.usage_summary("/tmp/a")
-        self.assertEqual(scoped["calls"], 2)
-        self.assertEqual([row["model"] for row in scoped["byModel"]], ["deepseek-flash"])
+        self.assertEqual(scoped["total_calls"], 2)
+        self.assertEqual([row["model"] for row in scoped["by_model"]], ["deepseek-flash"])
+
+    def test_cost_is_derived_when_the_caller_omits_it(self):
+        # Callers used to pass cost_usd=0 for hosted providers, so the spend
+        # panel read $0.00 while real money was being spent.
+        app_db.record_usage("deepseek", "deepseek-flash", 1_000_000, 1_000_000)
+        row = app_db.usage_summary()["recent"][0]
+        self.assertAlmostEqual(row["cost_usd"], 0.27 + 1.10, places=6)
+
+    def test_local_models_are_free(self):
+        app_db.record_usage("ollama", "qwen2.5-coder:7b", 10_000, 10_000)
+        self.assertEqual(app_db.usage_summary()["recent"][0]["cost_usd"], 0.0)
 
 
 class AccountTests(AppDbTestCase):

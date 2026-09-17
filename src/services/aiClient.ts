@@ -1,13 +1,11 @@
 /**
- * aiClient.ts — AI calls that have been moved off the dev bridge.
+ * aiClient.ts — the AI transport.
  *
- * Only `test-connection` is migrated so far. The rest (`chat`, `inline-edit`,
- * `review-file`, `usage`) still live in the dev bridge and are passed straight
- * through to `fetch`, because migrating them means choosing which of two AI
- * implementations survives rather than just moving a route — that is a deliberate
- * change, not a transport swap.
- *
- * Once every route is listed here, this file is the whole AI transport.
+ * Every `/api/ai/*` route the UI uses is listed here with the engine action
+ * that serves it. Under the desktop shell the call goes over IPC, which is the
+ * only channel a packaged build has; the dev bridge is the fallback for a plain
+ * browser. `chat` is absent because it streams: it uses `chat_stream` and the
+ * `ai:frame` events instead.
  */
 
 import { engineCall, hasIpc } from "./engineBridge";
@@ -17,6 +15,7 @@ const MIGRATED: Record<string, string> = {
   "test-connection": "test-connection",
   "review-file": "review-file",
   "inline-edit": "inline-edit",
+  "usage": "usage",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -27,11 +26,16 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 export async function aiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const action = path.replace(/^\/api\/ai\//, "").split("?")[0];
+  const [route, query] = path.replace(/^\/api\/ai\//, "").split("?");
+  const action = route;
   // No IPC, or not migrated yet: keep using whatever the dev bridge provides.
   if (!hasIpc() || !MIGRATED[action]) return fetch(path, init);
 
   let payload: Record<string, unknown> = {};
+  // GET routes carry their arguments in the query string.
+  for (const [key, value] of new URLSearchParams(query || "")) {
+    payload[key] = value;
+  }
   if (init?.body) {
     try {
       payload = JSON.parse(String(init.body)) as Record<string, unknown>;

@@ -176,6 +176,50 @@ def _post_json(url: str, headers: dict[str, str], body: dict, timeout: float):
         return 0, {"error": str(exc)}
 
 
+def _record_usage(
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    latency_ms: float,
+    project_root: Any = "",
+) -> None:
+    """Append one call to the app's usage ledger. Best-effort by design.
+
+    Metering is diagnostics: it must never be the reason a review, an inline
+    edit or a chat reply fails, so every failure here is swallowed. Cost is left
+    to the ledger, which owns the pricing table.
+    """
+    try:
+        import db_cli
+
+        db_cli._cmd_usage_record(
+            {
+                "provider": provider,
+                "model": model or provider,
+                "prompt_tokens": int(prompt_tokens or 0),
+                "completion_tokens": int(completion_tokens or 0),
+                "latency_ms": float(latency_ms or 0.0),
+                "project_path": str(project_root or "") or None,
+            }
+        )
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+
+
+def usage(payload: dict) -> dict:
+    """Aggregated usage for the Performance page."""
+    import db_cli
+
+    return db_cli._cmd_usage_summary(
+        {
+            "projectPath": payload.get("projectRoot") or payload.get("projectPath"),
+            "sinceTs": payload.get("sinceTs") or payload.get("since_ts") or 0,
+            "days": payload.get("days") or 14,
+        }
+    )
+
+
 # The review prompt is the behaviour, so it is ported verbatim: strict JSON, real
 # line numbers from the gutter, and a hard cap on how much of a big file is sent.
 REVIEW_SYSTEM_PROMPT = (
@@ -246,8 +290,12 @@ def _extract_issues(raw: str) -> list[dict]:
 
 def _review_completion(
     provider: str, model: str, base_url: str, api_key: str, system: str, user: str
-) -> tuple[bool, str, str]:
-    """One non-streaming completion. Returns (ok, text, error)."""
+) -> tuple[bool, str, str, tuple[int, int]]:
+    """One non-streaming completion. Returns (ok, text, error, (in_tokens, out_tokens)).
+
+    Providers report real token counts on the same response, so metering uses
+    them instead of guessing from character counts.
+    """
     timeout = 180.0
     if provider == "ollama":
         status, body = _post_json(
@@ -265,11 +313,16 @@ def _review_completion(
             timeout,
         )
         if status != 200:
-            return False, "", body.get("error") or f"Ollama request failed ({status})"
-        return True, ((body.get("message") or {}).get("content") or "").strip(), ""
+            return False, "", body.get("error") or f"Ollama request failed ({status})", (0, 0)
+        return (
+            True,
+            ((body.get("message") or {}).get("content") or "").strip(),
+            "",
+            (int(body.get("prompt_eval_count") or 0), int(body.get("eval_count") or 0)),
+        )
 
     if not api_key:
-        return False, "", f"An API key is required for provider '{provider}'."
+        return False, "", f"An API key is required for provider '{provider}'.", (0, 0)
 
     if provider == "anthropic":
         status, body = _post_json(
@@ -284,9 +337,15 @@ def _review_completion(
             timeout,
         )
         if status != 200:
-            return False, "", body.get("error") or f"Anthropic request failed ({status})"
+            return False, "", body.get("error") or f"Anthropic request failed ({status})", (0, 0)
         content = body.get("content") or [{}]
-        return True, (content[0].get("text") or "").strip(), ""
+        tokens = body.get("usage") or {}
+        return (
+            True,
+            (content[0].get("text") or "").strip(),
+            "",
+            (int(tokens.get("input_tokens") or 0), int(tokens.get("output_tokens") or 0)),
+        )
 
     status, body = _post_json(
         f"{base_url or DEFAULT_BASE_URLS.get(provider, 'https://api.openai.com/v1')}/chat/completions",
@@ -302,9 +361,15 @@ def _review_completion(
         timeout,
     )
     if status != 200:
-        return False, "", body.get("error") or f"Provider request failed ({status})"
+        return False, "", body.get("error") or f"Provider request failed ({status})", (0, 0)
     choices = body.get("choices") or [{}]
-    return True, ((choices[0].get("message") or {}).get("content") or "").strip(), ""
+    tokens = body.get("usage") or {}
+    return (
+        True,
+        ((choices[0].get("message") or {}).get("content") or "").strip(),
+        "",
+        (int(tokens.get("prompt_tokens") or 0), int(tokens.get("completion_tokens") or 0)),
+    )
 
 
 def review_file(payload: dict) -> dict:
@@ -331,7 +396,9 @@ def review_file(payload: dict) -> dict:
     )
 
     started = time.monotonic()
-    ok, raw, error = _review_completion(provider, model, base_url, api_key, REVIEW_SYSTEM_PROMPT, user_prompt)
+    ok, raw, error, tokens = _review_completion(
+        provider, model, base_url, api_key, REVIEW_SYSTEM_PROMPT, user_prompt
+    )
     elapsed_ms = int((time.monotonic() - started) * 1000)
     if not ok:
         return {"ok": False, "error": error, "issues": []}
@@ -348,21 +415,9 @@ def review_file(payload: dict) -> dict:
         seen.add(key)
         issues.append(issue)
 
-    # `usage.record` is best-effort: metrics must never break the review itself.
-    try:
-        import db_cli
-
-        db_cli._cmd_usage_record(
-            {
-                "provider": provider,
-                "model": model or provider,
-                "prompt_tokens": round((len(REVIEW_SYSTEM_PROMPT) + len(user_prompt)) / 4),
-                "completion_tokens": round(len(raw) / 4),
-                "latency_ms": elapsed_ms,
-            }
-        )
-    except Exception:  # noqa: BLE001 - see above
-        pass
+    _record_usage(
+        provider, model, tokens[0], tokens[1], elapsed_ms, payload.get("projectRoot")
+    )
 
     return {
         "ok": True,
@@ -456,7 +511,8 @@ def inline_edit(payload: dict) -> dict:
         f"Instruction: {payload.get('instruction') or ''}\n\nEmit updated code:"
     )
 
-    ok, raw, error = _review_completion(
+    started = time.monotonic()
+    ok, raw, error, tokens = _review_completion(
         provider,
         model,
         str(payload.get("baseUrl") or "").rstrip("/"),
@@ -464,11 +520,15 @@ def inline_edit(payload: dict) -> dict:
         INLINE_SYSTEM_PROMPT,
         user_prompt,
     )
+    elapsed_ms = int((time.monotonic() - started) * 1000)
     if not ok:
         return {"ok": False, "error": error, "replacement": ""}
     if not raw:
         return {"ok": False, "error": "The provider returned an empty replacement.", "replacement": ""}
 
+    _record_usage(
+        provider, model, tokens[0], tokens[1], elapsed_ms, payload.get("projectRoot")
+    )
     cleaned = _sanitize_inline_replacement(raw, selected, prefix, suffix)
     if not cleaned["replacement"]:
         return {"ok": False, "reason": cleaned["reason"], "replacement": ""}
@@ -479,6 +539,7 @@ COMMANDS = {
     "test-connection": test_connection,
     "review-file": review_file,
     "inline-edit": inline_edit,
+    "usage": usage,
 }
 
 
@@ -558,8 +619,15 @@ def _iter_sse(response):
             yield line[5:].strip()
 
 
-def _stream_completion(provider, model, base_url, api_key, messages, images, on_delta):
-    """Stream one completion, calling on_delta per token. Returns (ok, error)."""
+def _stream_completion(provider, model, base_url, api_key, messages, images, on_delta, on_usage):
+    """Stream one completion, calling on_delta per token. Returns (ok, error).
+
+    `on_usage(prompt_tokens, completion_tokens)` is called once when the provider
+    reports real counts — Ollama's final chunk, Anthropic's `message_start`/
+    `message_delta`, or the OpenAI-compatible final chunk. Providers that never
+    report counts simply do not call it, and the ledger falls back to an
+    estimate rather than inventing a number here.
+    """
     if provider == "ollama":
         payload_messages = [dict(m) for m in messages]
         if images:
@@ -596,15 +664,31 @@ def _stream_completion(provider, model, base_url, api_key, messages, images, on_
             "messages": messages,
             "stream": True,
             "temperature": 0.7,
+            # Ask for a final chunk carrying token counts. Retried without it below
+            # if the provider rejects the field.
+            "stream_options": {"include_usage": True},
         }
         url = f"{base_url or DEFAULT_BASE_URLS.get(provider, 'https://api.openai.com/v1')}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
 
-    request = urllib.request.Request(
-        url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
-    )
+    def open_stream(payload_body):
+        request = urllib.request.Request(
+            url, data=json.dumps(payload_body).encode("utf-8"), headers=headers, method="POST"
+        )
+        return urllib.request.urlopen(request, timeout=300.0)
+
     try:
-        with urllib.request.urlopen(request, timeout=300.0) as response:
+        try:
+            response = open_stream(body)
+        except urllib.error.HTTPError as exc:
+            # Not every OpenAI-compatible gateway knows `stream_options`; a 400 on
+            # it must cost the token counts, not the whole reply.
+            if exc.code == 400 and "stream_options" in body:
+                body.pop("stream_options", None)
+                response = open_stream(body)
+            else:
+                raise
+        with response:
             if provider == "ollama":
                 for raw in response:  # newline-delimited JSON
                     line = raw.decode("utf-8", "replace").strip()
@@ -615,6 +699,10 @@ def _stream_completion(provider, model, base_url, api_key, messages, images, on_
                     if token:
                         on_delta(token)
                     if chunk.get("done"):
+                        on_usage(
+                            int(chunk.get("prompt_eval_count") or 0),
+                            int(chunk.get("eval_count") or 0),
+                        )
                         break
             else:
                 for payload in _iter_sse(response):
@@ -624,6 +712,9 @@ def _stream_completion(provider, model, base_url, api_key, messages, images, on_
                         chunk = json.loads(payload)
                     except ValueError:
                         continue
+                    if chunk.get("type") == "message_start":
+                        usage = (chunk.get("message") or {}).get("usage") or {}
+                        on_usage(int(usage.get("input_tokens") or 0), 0)
                     if chunk.get("type") == "content_block_delta":
                         text = (chunk.get("delta") or {}).get("text")
                     else:
@@ -631,6 +722,15 @@ def _stream_completion(provider, model, base_url, api_key, messages, images, on_
                         text = (choices[0].get("delta") or {}).get("content")
                     if text:
                         on_delta(text)
+                    if chunk.get("type") == "message_delta":
+                        usage = chunk.get("usage") or {}
+                        on_usage(0, int(usage.get("output_tokens") or 0))
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict) and usage:
+                        on_usage(
+                            int(usage.get("prompt_tokens") or 0),
+                            int(usage.get("completion_tokens") or 0),
+                        )
     except urllib.error.HTTPError as exc:
         return False, f"Provider request failed ({exc.code})"
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -656,19 +756,51 @@ def chat_stream(payload: dict) -> None:
             sent.append({"role": role, "content": str(message.get("content") or "")})
 
     started = time.monotonic()
+    answer: list[str] = []
+    # Providers report counts in pieces (`message_start` gives input, the last
+    # `message_delta` gives output), so keep the high-water mark per field rather
+    # than letting a later zero-clamp overwrite a real number.
+    tokens = [0, 0]
+
+    def on_delta(token: str) -> None:
+        answer.append(token)
+        _emit({"delta": token})
+
+    def on_usage(prompt_tokens: int, completion_tokens: int) -> None:
+        tokens[0] = max(tokens[0], int(prompt_tokens or 0))
+        tokens[1] = max(tokens[1], int(completion_tokens or 0))
+
     ok, error = _stream_completion(
         provider, model, str(payload.get("baseUrl") or "").rstrip("/"), api_key, sent,
-        images, lambda token: _emit({"delta": token}),
+        images, on_delta, on_usage,
     )
+    elapsed_ms = int((time.monotonic() - started) * 1000)
     if not ok:
         _emit({"error": error, "done": True})
         return
+    # A provider that does not report counts still gets metered — roughly. Four
+    # characters per token is the usual English/ASCII ratio and is stated in the
+    # ledger's own docs rather than presented as a measurement.
+    estimated = tokens[0] == 0 and tokens[1] == 0
+    prompt_tokens = tokens[0] or max(1, len(json.dumps(sent)) // 4)
+    completion_tokens = tokens[1] or max(1, len("".join(answer)) // 4)
+    _record_usage(
+        provider,
+        model,
+        prompt_tokens,
+        completion_tokens,
+        elapsed_ms,
+        payload.get("projectRoot"),
+    )
     _emit(
         {
             "done": True,
             "provider": provider,
             "model": model,
-            "elapsedMs": int((time.monotonic() - started) * 1000),
+            "elapsedMs": elapsed_ms,
+            "promptTokens": prompt_tokens,
+            "completionTokens": completion_tokens,
+            "usageEstimated": estimated,
         }
     )
 

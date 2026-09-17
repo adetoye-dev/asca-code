@@ -169,6 +169,14 @@ async function runAgentOnCodex(params: {
 
   let finished = false;
   let failed = false;
+  // Token counts arrive on their own event just before `codex:exit`; the ledger
+  // is the only place a run's real cost shows up, so they are worth carrying.
+  // Boxed because it is written from a listener closure: a bare `let` would be
+  // narrowed to `null` at the read below, since TypeScript cannot see the write.
+  const usageBox: { value: { promptTokens: number; completionTokens: number } | null } = {
+    value: null,
+  };
+  const startedAt = Date.now();
   const unlisten: Array<() => void> = [];
   try {
     unlisten.push(
@@ -192,6 +200,21 @@ async function runAgentOnCodex(params: {
           params.onEvent(parsed);
         } catch {
           /* a partial or non-JSON line carries nothing to show */
+        }
+      }),
+    );
+    unlisten.push(
+      await listen<{ line?: string } | string>("codex:usage", (event) => {
+        const payload = event.payload;
+        const line = typeof payload === "string" ? payload : String(payload?.line ?? "");
+        try {
+          const parsed = JSON.parse(line);
+          usageBox.value = {
+            promptTokens: Number(parsed?.promptTokens) || 0,
+            completionTokens: Number(parsed?.completionTokens) || 0,
+          };
+        } catch {
+          /* no counts to record */
         }
       }),
     );
@@ -222,6 +245,30 @@ async function runAgentOnCodex(params: {
     // Wait for the stream to end, so the caller only continues once the run is over.
     for (let i = 0; i < 7200 && !finished; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const usage = usageBox.value;
+    if (usage) {
+      // Fire and forget: a spent ledger row must not delay the chat's own update,
+      // and the engine computes the cost from its pricing table.
+      const elapsed = Date.now() - startedAt;
+      void (async () => {
+        try {
+          const { engineCall } = await import("../services/engineBridge");
+          await engineCall("db", [
+            "usage.record",
+            JSON.stringify({
+              provider: providerId,
+              model,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              latencyMs: elapsed,
+              projectPath: params.projectRoot,
+            }),
+          ]);
+        } catch {
+          /* metering is diagnostics; never let it surface as a run failure */
+        }
+      })();
     }
     return failed ? "failed" : "success";
   } catch {

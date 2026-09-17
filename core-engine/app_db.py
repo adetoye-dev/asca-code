@@ -29,6 +29,7 @@ Design notes
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 import json
@@ -551,15 +552,54 @@ def clear_chat(project_path: str) -> None:
 # ── Usage ledger ────────────────────────────────────────────────────────────
 
 
+# ── Usage & cost ledger ─────────────────────────────────────────────────────
+
+# Approximate USD per 1M tokens: (input, output). Local models bill nothing, so
+# an unknown provider is priced at zero rather than guessed at.
+_PRICING: dict[str, tuple[float, float]] = {
+    "openai": (2.50, 10.00),
+    "anthropic": (3.00, 15.00),
+    "google": (1.25, 5.00),
+    "groq": (0.79, 0.79),
+    "deepseek": (0.27, 1.10),
+    "mistral": (0.20, 0.60),
+    "moonshot": (0.60, 0.60),
+    "xai": (2.00, 8.00),
+    "together": (0.88, 0.88),
+    "perplexity": (1.00, 1.00),
+    "openrouter": (1.00, 3.00),
+}
+
+
+def estimate_cost_usd(
+    provider: Optional[str], prompt_tokens: int, completion_tokens: int
+) -> float:
+    """Estimated USD for one call. Local and unknown providers cost 0."""
+    price = _PRICING.get((provider or "").lower())
+    if not price:
+        return 0.0
+    return (int(prompt_tokens or 0) / 1_000_000) * price[0] + (
+        int(completion_tokens or 0) / 1_000_000
+    ) * price[1]
+
+
 def record_usage(
     provider: str,
     model: str,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     latency_ms: float = 0.0,
-    cost_usd: float = 0.0,
+    cost_usd: Optional[float] = None,
     project_path: Optional[str] = None,
 ) -> None:
+    """Append one call. Cost is derived from the pricing table when not given.
+
+    Callers were passing `cost_usd=0` for every hosted provider, which made the
+    cost panel read `$0.00` while real money was being spent. Deriving it here
+    means a caller cannot forget.
+    """
+    if cost_usd is None:
+        cost_usd = estimate_cost_usd(provider, prompt_tokens, completion_tokens)
     with connect() as conn:
         conn.execute(
             "INSERT INTO usage_events"
@@ -578,7 +618,14 @@ def record_usage(
         )
 
 
-def usage_summary(project_path: Optional[str] = None, since_ts: float = 0.0) -> dict[str, Any]:
+def usage_summary(
+    project_path: Optional[str] = None, since_ts: float = 0.0, days: int = 14
+) -> dict[str, Any]:
+    """Totals, a per-model breakdown, a filled daily window and the latest rows.
+
+    One shape serves the Performance page directly, so the UI does no arithmetic
+    and there is no second aggregation to drift from this one.
+    """
     clauses = ["ts >= ?"]
     params: list[Any] = [float(since_ts)]
     if project_path:
@@ -590,23 +637,69 @@ def usage_summary(project_path: Optional[str] = None, since_ts: float = 0.0) -> 
             f"SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,"
             f" COALESCE(SUM(completion_tokens),0) AS completion_tokens,"
             f" COALESCE(SUM(cost_usd),0) AS cost_usd,"
-            f" COALESCE(AVG(latency_ms),0) AS avg_latency_ms"
+            f" COALESCE(SUM(latency_ms),0) AS total_latency_ms"
             f" FROM usage_events WHERE {where}",
             params,
         ).fetchone()
         by_model = conn.execute(
-            f"SELECT provider, model, COUNT(*) AS calls, COALESCE(SUM(cost_usd),0) AS cost_usd,"
-            f" COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens"
+            f"SELECT provider, model, COUNT(*) AS calls,"
+            f" COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,"
+            f" COALESCE(SUM(completion_tokens),0) AS completion_tokens,"
+            f" COALESCE(SUM(cost_usd),0) AS cost_usd,"
+            f" COALESCE(SUM(latency_ms),0) AS latency_ms"
             f" FROM usage_events WHERE {where} GROUP BY provider, model ORDER BY calls DESC",
             params,
         ).fetchall()
+        daily_rows = conn.execute(
+            f"SELECT ts, prompt_tokens, completion_tokens, cost_usd"
+            f" FROM usage_events WHERE {where}",
+            params,
+        ).fetchall()
+        recent = conn.execute(
+            f"SELECT ts, provider, model, prompt_tokens, completion_tokens, latency_ms, cost_usd,"
+            f" project_path FROM usage_events WHERE {where} ORDER BY ts DESC LIMIT 20",
+            params,
+        ).fetchall()
+
+    # A complete window, so one busy day is a bar among quiet ones instead of
+    # the whole chart.
+    today = datetime.date.today()
+    buckets: dict[str, dict[str, Any]] = {
+        (today - datetime.timedelta(days=offset)).isoformat(): {
+            "date": (today - datetime.timedelta(days=offset)).isoformat(),
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0.0,
+        }
+        for offset in range(max(1, days) - 1, -1, -1)
+    }
+    for row in daily_rows:
+        key = datetime.datetime.fromtimestamp(row["ts"]).date().isoformat()
+        bucket = buckets.get(key)
+        if bucket is None:
+            continue
+        bucket["calls"] += 1
+        bucket["prompt_tokens"] += int(row["prompt_tokens"] or 0)
+        bucket["completion_tokens"] += int(row["completion_tokens"] or 0)
+        bucket["cost_usd"] = round(bucket["cost_usd"] + float(row["cost_usd"] or 0.0), 6)
+
     return {
-        "calls": totals["calls"],
-        "promptTokens": totals["prompt_tokens"],
-        "completionTokens": totals["completion_tokens"],
-        "costUsd": round(totals["cost_usd"], 6),
-        "avgLatencyMs": round(totals["avg_latency_ms"], 1),
-        "byModel": [dict(row) for row in by_model],
+        "total_calls": totals["calls"],
+        "prompt_tokens": totals["prompt_tokens"],
+        "completion_tokens": totals["completion_tokens"],
+        "total_tokens": totals["prompt_tokens"] + totals["completion_tokens"],
+        "cost_usd": round(totals["cost_usd"], 6),
+        "total_latency_ms": round(totals["total_latency_ms"], 1),
+        "by_model": [
+            {**dict(row), "cost_usd": round(row["cost_usd"], 6), "latency_ms": round(row["latency_ms"], 1)}
+            for row in by_model
+        ],
+        "daily": list(buckets.values()),
+        "recent": [
+            {**dict(row), "cost_usd": round(row["cost_usd"], 6)}
+            for row in recent
+        ],
     }
 
 

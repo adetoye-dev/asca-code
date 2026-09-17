@@ -127,20 +127,37 @@ def _cmd_chat_clear(p: dict) -> Any:
 
 
 def _cmd_usage_record(p: dict) -> Any:
+    # Both spellings are accepted: the review/inline-edit paths sent snake_case
+    # while this read camelCase, so every one of those calls was recorded as 0
+    # tokens and $0.00 — a silent hole in the ledger.
+    def pick(*names: str, default: Any = 0) -> Any:
+        for name in names:
+            if p.get(name) is not None:
+                return p[name]
+        return default
+
     app_db.record_usage(
         provider=str(p.get("provider") or ""),
         model=str(p.get("model") or ""),
-        prompt_tokens=int(p.get("promptTokens") or 0),
-        completion_tokens=int(p.get("completionTokens") or 0),
-        latency_ms=float(p.get("latencyMs") or 0),
-        cost_usd=float(p.get("costUsd") or 0),
-        project_path=p.get("projectPath"),
+        prompt_tokens=int(pick("promptTokens", "prompt_tokens")),
+        completion_tokens=int(pick("completionTokens", "completion_tokens")),
+        latency_ms=float(pick("latencyMs", "latency_ms")),
+        cost_usd=(
+            float(pick("costUsd", "cost_usd"))
+            if ("costUsd" in p or "cost_usd" in p)
+            else None
+        ),
+        project_path=pick("projectPath", "project_path", default=None),
     )
     return True
 
 
 def _cmd_usage_summary(p: dict) -> Any:
-    return app_db.usage_summary(p.get("projectPath"), float(p.get("sinceTs") or 0))
+    return app_db.usage_summary(
+        p.get("projectPath") or p.get("project_path"),
+        float(p.get("sinceTs") or p.get("since_ts") or 0),
+        int(p.get("days") or 14),
+    )
 
 
 def _cmd_auth_register(p: dict) -> Any:

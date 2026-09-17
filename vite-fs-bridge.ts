@@ -809,51 +809,6 @@ function extractReviewIssues(raw: string): any[] {
 }
 
 
-/** Approximate USD per 1M tokens: [input, output]. Keep in sync with usage_metrics.py. */
-const PROVIDER_PRICING: Record<string, [number, number]> = {
-  openai: [2.5, 10],
-  anthropic: [3, 15],
-  google: [1.25, 5],
-  groq: [0.79, 0.79],
-  deepseek: [0.27, 1.1],
-  mistral: [0.2, 0.6],
-  moonshot: [0.6, 0.6],
-  xai: [2, 8],
-  together: [0.88, 0.88],
-  perplexity: [1, 1],
-  openrouter: [1, 3],
-};
-
-function estimateCostUsd(provider: string, promptTokens: number, completionTokens: number): number {
-  const price = PROVIDER_PRICING[(provider || "").toLowerCase()];
-  if (!price) return 0;
-  return (promptTokens / 1_000_000) * price[0] + (completionTokens / 1_000_000) * price[1];
-}
-
-/** Append one LLM call to the project's usage ledger. */
-function recordUsageEntry(
-  projectRoot: string,
-  provider: string,
-  model: string,
-  promptTokens: number,
-  completionTokens: number,
-  latencyMs: number
-): void {
-  try {
-    const dir = path.join(resolveProjectRoot(projectRoot), ".acsa");
-    fs.mkdirSync(dir, { recursive: true });
-    const entry = {
-      ts: Date.now() / 1000,
-      provider: provider || "unknown",
-      model: model || "unknown",
-      prompt_tokens: Math.max(0, Math.round(promptTokens)),
-      completion_tokens: Math.max(0, Math.round(completionTokens)),
-      latency_ms: Math.round(latencyMs * 10) / 10,
-      cost_usd: Number(estimateCostUsd(provider, promptTokens, completionTokens).toFixed(6)),
-    };
-    fs.appendFileSync(path.join(dir, "usage.jsonl"), JSON.stringify(entry) + "\n", "utf-8");
-  } catch {}
-}
 
 /** Pick the most capable installed local Ollama model (null if unreachable). */
 async function pickBestLocalOllamaModel(baseUrl = "http://127.0.0.1:11434"): Promise<string | null> {
@@ -2925,109 +2880,6 @@ export function realFilesystemPlugin(): Plugin {
           }
 
           // ── POST /api/ai/test-connection ────────────────────────────────────
-          if (pathname === "/api/ai/usage" && req.method === "GET") {
-            const usageRoot = resolveProjectRoot(
-              parsedUrl.searchParams.get("projectRoot") || process.cwd()
-            );
-            const usagePath = path.join(usageRoot, ".acsa", "usage.jsonl");
-            const rows: any[] = [];
-            if (fs.existsSync(usagePath)) {
-              const raw = fs.readFileSync(usagePath, "utf-8");
-              for (const line of raw.split("\n")) {
-                const trimmed = line.trim();
-                if (!trimmed) continue;
-                try {
-                  rows.push(JSON.parse(trimmed));
-                } catch {}
-              }
-            }
-
-            const totals = {
-              total_calls: rows.length,
-              prompt_tokens: 0,
-              completion_tokens: 0,
-              cost_usd: 0,
-              total_latency_ms: 0,
-            };
-            const byModel = new Map<string, any>();
-            for (const r of rows) {
-              totals.prompt_tokens += Number(r.prompt_tokens || 0);
-              totals.completion_tokens += Number(r.completion_tokens || 0);
-              totals.cost_usd += Number(r.cost_usd || 0);
-              totals.total_latency_ms += Number(r.latency_ms || 0);
-              const key = `${r.provider || "?"}/${r.model || "?"}`;
-              if (!byModel.has(key)) {
-                byModel.set(key, {
-                  provider: r.provider,
-                  model: r.model,
-                  calls: 0,
-                  prompt_tokens: 0,
-                  completion_tokens: 0,
-                  cost_usd: 0,
-                  latency_ms: 0,
-                });
-              }
-              const bucket = byModel.get(key);
-              bucket.calls += 1;
-              bucket.prompt_tokens += Number(r.prompt_tokens || 0);
-              bucket.completion_tokens += Number(r.completion_tokens || 0);
-              bucket.cost_usd += Number(r.cost_usd || 0);
-              bucket.latency_ms += Number(r.latency_ms || 0);
-            }
-            // Always emit a full 14-day window: a single day of activity must not
-            // stretch into one giant bar, and empty days show as quiet slots.
-            const byDate = new Map<string, any>();
-            for (const r of rows) {
-              const when = new Date(Number(r.ts || 0) * 1000);
-              if (Number.isNaN(when.getTime())) continue;
-              const key = when.toISOString().slice(0, 10);
-              if (!byDate.has(key)) {
-                byDate.set(key, {
-                  date: key,
-                  calls: 0,
-                  prompt_tokens: 0,
-                  completion_tokens: 0,
-                  cost_usd: 0,
-                });
-              }
-              const bucket = byDate.get(key);
-              bucket.calls += 1;
-              bucket.prompt_tokens += Number(r.prompt_tokens || 0);
-              bucket.completion_tokens += Number(r.completion_tokens || 0);
-              bucket.cost_usd += Number(r.cost_usd || 0);
-            }
-            const daily: any[] = [];
-            const today = new Date();
-            for (let offset = 13; offset >= 0; offset -= 1) {
-              const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
-              const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(
-                day.getDate()
-              ).padStart(2, "0")}`;
-              const found = byDate.get(key);
-              daily.push(
-                found
-                  ? { ...found, cost_usd: Number(Number(found.cost_usd).toFixed(6)) }
-                  : { date: key, calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0 }
-              );
-            }
-
-            const roundedTotals = {
-              ...totals,
-              cost_usd: Number(totals.cost_usd.toFixed(6)),
-              total_latency_ms: Number(totals.total_latency_ms.toFixed(1)),
-            };
-            res.setHeader("Content-Type", "application/json");
-            res.end(
-              JSON.stringify({
-                ...roundedTotals,
-                daily,
-                by_model: Array.from(byModel.values()).sort((a, b) => b.calls - a.calls),
-                recent: rows.slice(-20).reverse(),
-              })
-            );
-            return;
-          }
-
           if (pathname === "/api/ai/test-connection" && req.method === "POST") {
             const body = await parseJsonBody(req);
             const { provider, baseUrl } = body;
@@ -3297,7 +3149,6 @@ export function realFilesystemPlugin(): Plugin {
                 return;
               }
 
-              const reviewStartedAt = Date.now();
               const resolved = await resolveEditorProvider({ provider, model, apiKey, baseUrl });
               provider = resolved.provider;
               model = resolved.model;
@@ -3381,14 +3232,6 @@ export function realFilesystemPlugin(): Plugin {
                 raw = (data.choices?.[0]?.message?.content || "").trim();
               }
 
-              recordUsageEntry(
-                process.cwd(),
-                provider,
-                effectiveModel,
-                Math.round((systemPrompt.length + userPrompt.length) / 4),
-                Math.round(raw.length / 4),
-                Date.now() - reviewStartedAt
-              );
               // Drop citations that point outside the excerpt we actually sent
               // (the model cannot have seen that code) and de-duplicate exact
               // repeats, so the inline threads cannot stack on a phantom line.
