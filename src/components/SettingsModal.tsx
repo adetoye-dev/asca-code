@@ -19,6 +19,12 @@ import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight,
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 import { aiFetch } from "../services/aiClient";
+import {
+  AGENT_APPROVAL_MODES,
+  DEFAULT_AGENT_APPROVAL_MODE,
+  isAgentApprovalMode,
+  type AgentApprovalMode,
+} from "../services/agentApproval";
 
 export interface AISettings {
   /**
@@ -37,6 +43,8 @@ export interface AISettings {
   insertSpaces?: boolean;
   wordWrap?: boolean;
   terminalFontSize?: number;
+  /** How much the agent may do unattended. See AGENT_APPROVAL_MODES. */
+  approvalMode?: AgentApprovalMode;
 }
 
 export interface SettingsModalProps {
@@ -88,7 +96,10 @@ const SETTINGS_TREE: TreeNode[] = [
   {
     id: "ai-assistant-group",
     label: "AI Assistant",
-    children: [{ id: "providers", label: "Providers & API keys" }],
+    children: [
+      { id: "agent", label: "Agent" },
+      { id: "providers", label: "Providers & API keys" },
+    ],
   },
   { id: "marketplace", label: "Marketplace" },
 ];
@@ -97,7 +108,7 @@ function resolveInitialSection(tab?: string): string {
   if (tab === "appearance") return "appearance";
   if (tab === "ai") return "providers";
   if (tab) return tab;
-  return "agents";
+  return "agent";
 }
 
 export function SettingsModal({
@@ -157,6 +168,9 @@ export function SettingsModal({
   // Terminal state
   const [terminalFontSize, setTerminalFontSize] = useState(13);
 
+  // Agent state: how much the agent may do without asking.
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>(DEFAULT_AGENT_APPROVAL_MODE);
+
   // Tree filter logic (unconditional hook)
   const filteredTree = useMemo(() => {
     if (!navSearch?.trim()) return SETTINGS_TREE;
@@ -204,6 +218,11 @@ export function SettingsModal({
     setInsertSpaces(safeSettings.insertSpaces ?? true);
     setWordWrap(safeSettings.wordWrap ?? false);
     setTerminalFontSize(safeSettings.terminalFontSize ?? 13);
+    setApprovalMode(
+      isAgentApprovalMode(safeSettings.approvalMode)
+        ? safeSettings.approvalMode
+        : DEFAULT_AGENT_APPROVAL_MODE,
+    );
     setTestStatus("idle");
     setTestMessage("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,6 +304,7 @@ export function SettingsModal({
         insertSpaces,
         wordWrap,
         terminalFontSize,
+        approvalMode,
       });
     }
   };
@@ -303,6 +323,7 @@ export function SettingsModal({
         insertSpaces,
         wordWrap,
         terminalFontSize,
+        approvalMode,
       });
     }
     if (onClose) {
@@ -846,6 +867,65 @@ export function SettingsModal({
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ── SECTION: AGENT ───────────────────────────────────────────── */}
+              {selectedSection === "agent" && (
+                <div className="space-y-4 max-w-2xl">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-100">Agent</h3>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      Decide up front what the agent may do on its own. This is the
+                      approval step — pick one mode and runs stop interrupting you.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {(Object.keys(AGENT_APPROVAL_MODES) as AgentApprovalMode[]).map((mode) => {
+                      const option = AGENT_APPROVAL_MODES[mode];
+                      const selected = approvalMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setApprovalMode(mode)}
+                          className={`w-full text-left rounded-panel border p-3 transition-colors cursor-pointer ${
+                            selected
+                              ? "border-purple-500/60 bg-purple-950/30"
+                              : "border-hairline bg-surface hover:bg-workbench"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-3 h-3 rounded-full border ${
+                                selected
+                                  ? "border-purple-400 bg-purple-500"
+                                  : "border-zinc-600 bg-transparent"
+                              }`}
+                            />
+                            <span className="text-xs font-medium text-zinc-100">
+                              {option.label}
+                            </span>
+                            {mode === DEFAULT_AGENT_APPROVAL_MODE && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                                Recommended
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                            {option.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    These map onto the agent runtime&apos;s own sandbox and approval
+                    settings. &ldquo;Read only&rdquo; and &ldquo;Approve for me&rdquo;
+                    both keep the agent inside your project folder.
+                  </p>
                 </div>
               )}
 

@@ -23,7 +23,13 @@ import type {
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
+import {
+  AGENT_APPROVAL_MODES,
+  DEFAULT_AGENT_APPROVAL_MODE,
+  type AgentApprovalMode,
+} from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
+
 
 /**
  * Run an agent task on Codex, when its runtime is present.
@@ -42,6 +48,8 @@ async function runAgentOnCodex(params: {
   projectRoot: string;
   /** Provider/model the user picked for this message; wins over the saved default. */
   selection?: { providerId: string; model: string };
+  /** How much the agent may do unattended. Defaults to "approve for me". */
+  approvalMode?: AgentApprovalMode;
   onEvent: (event: any) => void;
   log: (line: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
@@ -67,20 +75,24 @@ async function runAgentOnCodex(params: {
   );
   if (!providerId || !model || !provider?.baseUrl) return "unavailable";
 
+  const approval =
+    AGENT_APPROVAL_MODES[params.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE] ??
+    AGENT_APPROVAL_MODES[DEFAULT_AGENT_APPROVAL_MODE];
+
   // `wire_api` must be "responses": this Codex version rejects "chat" outright. The key
   // name matches what the Rust side sets in the child's environment, so the credential
   // itself never travels over IPC.
+  //
+  // Approvals: `approval_policy = "never"` DENIES tool calls that need approval (the
+  // runtime says "requires approval, but approval policy is never"), so the working
+  // default routes them through the automatic reviewer instead. Verified against the
+  // binary: `on-request` + `auto_review` completes tool calls that `never` refuses.
   const configToml = [
     `model = "${model}"`,
     `model_provider = "${providerId}"`,
-    // "Approve for me", as Codex's own picker calls it: a reviewer decides instead of
-    // prompting, so safe actions proceed unattended. Verified against the binary — with
-    // `approval_policy = "never"` every MCP tool call was DENIED ("requires approval, but
-    // approval policy is never"), and with these two lines the same call COMPLETES. Only
-    // "auto_review" is accepted; "model" and "auto" are config errors.
-    'approval_policy = "on-request"',
-    'approvals_reviewer = "auto_review"',
-    'sandbox_mode = "workspace-write"',
+    `approval_policy = "${approval.approvalPolicy}"`,
+    `approvals_reviewer = "${approval.approvalsReviewer}"`,
+    `sandbox_mode = "${approval.sandboxMode}"`,
     "",
     `[model_providers.${providerId}]`,
     `name = "${provider.name || providerId}"`,
@@ -472,8 +484,6 @@ export interface UsePipelineReturn {
   streamingAnswer: string;
   streamingThought: string;
   agentSteps: AgentStep[];
-  pendingPermission: { id: string; command: string; description: string } | null;
-  respondToPermission: (id: string, decision: "approved" | "rejected") => Promise<void>;
 
   runPipeline: (
     customPrompt?: string,
@@ -499,6 +509,7 @@ const DEFAULT_AI_SETTINGS: AISettings = {
   model: "qwen2.5-coder:7b",
   apiKey: "",
   baseUrl: "http://127.0.0.1:11434",
+  approvalMode: DEFAULT_AGENT_APPROVAL_MODE,
 };
 
 /**
@@ -549,6 +560,9 @@ export function usePipeline(): UsePipelineReturn {
       insertSpaces: newSettings?.insertSpaces,
       wordWrap: newSettings?.wordWrap,
       terminalFontSize: newSettings?.terminalFontSize,
+      // Without this the field is dropped on save, and the picker in Settings
+      // silently reverts to the default on the next launch.
+      approvalMode: newSettings?.approvalMode,
     };
     setAiSettingsState(hydrateAiSettings(safeSettings));
     // Only the non-secret parts are persisted; credentials live in the app
@@ -692,20 +706,6 @@ export function usePipeline(): UsePipelineReturn {
   const [streamingAnswer, setStreamingAnswer] = useState<string>("");
   const [streamingThought, setStreamingThought] = useState<string>("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
-  const [pendingPermission, setPendingPermission] = useState<{
-    id: string;
-    command: string;
-    description: string;
-  } | null>(null);
-
-  // The agent runtime currently runs with its tool calls pre-approved, so this
-  // never fires. It is kept wired to the chat's approve/reject UI for the
-  // approval-policy picker, which will deliver the decision over IPC.
-  const respondToPermission = useCallback(async (id: string, decision: "approved" | "rejected") => {
-    console.warn(`Permission ${decision} for ${id} — the approval channel is not wired yet.`);
-    setPendingPermission(null);
-  }, []);
-
   // Code Intelligence & Symbol Graph Indexer state
   const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
     indexed: false,
@@ -1155,7 +1155,6 @@ export function usePipeline(): UsePipelineReturn {
       setStreamingAnswer("");
       setStreamingThought("");
       setAgentSteps([]);
-      setPendingPermission(null);
       setTouchedPaths([]);
 
       const agentPrompt = buildAgentPrompt(
@@ -1185,6 +1184,7 @@ export function usePipeline(): UsePipelineReturn {
           selection: modelOverride
             ? { providerId: modelOverride.provider, model: modelOverride.model }
             : undefined,
+          approvalMode: aiSettings.approvalMode,
           onEvent: (event) =>
             applyCodexEvent(event, {
               setSteps: setAgentSteps,
@@ -1256,7 +1256,6 @@ export function usePipeline(): UsePipelineReturn {
         await invoke("chat_cancel");
       } catch {}
     }
-    setPendingPermission(null);
     setStatus("idle");
   }, [isTauriAvailable]);
 
@@ -1313,8 +1312,6 @@ export function usePipeline(): UsePipelineReturn {
     streamingAnswer,
     streamingThought,
     agentSteps,
-    pendingPermission,
-    respondToPermission,
   };
 }
 

@@ -71,8 +71,6 @@ interface AiAssistantChatProps {
   streamingAnswer?: string;
   streamingThought?: string;
   agentSteps?: AgentStep[];
-  pendingPermission?: { id: string; command: string; description: string } | null;
-  respondToPermission?: (id: string, decision: "approved" | "rejected") => Promise<void>;
   activeAiSettings?: { provider: string; model: string } | null;
 }
 
@@ -114,8 +112,6 @@ export function AiAssistantChat({
   streamingAnswer = "",
   streamingThought = "",
   agentSteps = [],
-  pendingPermission = null,
-  respondToPermission,
   activeAiSettings = null,
 }: AiAssistantChatProps) {
 
@@ -477,7 +473,7 @@ export function AiAssistantChat({
   // Scroll chat bottom on new messages, logs, or streaming updates
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, pendingPermission]);
+  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps]);
 
   // ── Handle Send ─────────────────────────────────────────────────────────
   const handleSend = async (textToSend = prompt) => {
@@ -1560,17 +1556,6 @@ Click to re-index project.`}
                       ) : null
                     )}
 
-                    {/* Live Permission Authorization Alert in Running Turn */}
-                    {pendingPermission && (
-                      <div className="mt-2.5 p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/40 flex items-center justify-between text-xs text-amber-300">
-                        <div className="flex items-center gap-2">
-                          <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-                          <span>Awaiting your authorization to run: <code className="font-mono bg-black/60 px-1.5 py-0.5 rounded text-amber-200">{pendingPermission.command}</code></span>
-                        </div>
-                        <span className="text-[10px] text-amber-400/80 font-mono shrink-0 ml-2">Action Required Below</span>
-                      </div>
-                    )}
-
                     {/* Stop Generating Button & Active Step */}
                     <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
                       <span className="text-[11px] text-zinc-400 truncate max-w-[70%]">
@@ -1608,47 +1593,6 @@ Click to re-index project.`}
       {(!isWide || chatMessages.length > 0 || status === "running") && (
         <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
-            {/* Interactive Action Approval Card (Sensitive Commands Gate) */}
-            {pendingPermission && (
-              <div className="mb-3 p-3.5 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs tracking-wider uppercase">
-                    <Icon icon={Shield} className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
-                    <span>Action Approval Required</span>
-                  </div>
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full font-mono border border-amber-500/30">
-                    Sensitive Command
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-300 mb-2.5 leading-relaxed">
-                  {pendingPermission.description || "The agent is requesting authorization to execute a sensitive command:"}
-                </p>
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-black/80 border border-zinc-800 font-mono text-xs text-emerald-400 overflow-x-auto select-all mb-3">
-                  <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                  <span className="text-zinc-500 select-none">$</span>
-                  <span>{pendingPermission.command}</span>
-                </div>
-                <div className="flex items-center justify-end gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => void respondToPermission?.(pendingPermission.id, "rejected")}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer shadow-sm"
-                  >
-                    <Icon icon={X} className="w-3.5 h-3.5 text-red-400" />
-                    <span>Reject</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void respondToPermission?.(pendingPermission.id, "approved")}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg hover:shadow-amber-500/25 transition-all cursor-pointer"
-                  >
-                    <Icon icon={Check} className="w-3.5 h-3.5" />
-                    <span>Approve &amp; Run</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Unified Omnibar Input Card */}
             <div className="relative rounded-2xl bg-zinc-900/90 border border-zinc-800/90 focus-within:border-purple-500/50 focus-within:ring-1 focus-within:ring-purple-500/20 p-2.5 transition-all shadow-lg">
               {/* Attached Image Previews */}

@@ -209,8 +209,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingAnswer,
     streamingThought,
     agentSteps,
-    pendingPermission,
-    respondToPermission,
   } = pipeline;
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
@@ -839,8 +837,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingAnswer,
     streamingThought,
     agentSteps,
-    pendingPermission,
-    respondToPermission,
     onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
       // Leave full canvas and dock the assistant back to the side tool window.
@@ -1560,8 +1556,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               streamingAnswer={streamingAnswer}
               streamingThought={streamingThought}
               agentSteps={agentSteps}
-              pendingPermission={pendingPermission}
-              respondToPermission={respondToPermission}
             />
           </aside>
         )}
