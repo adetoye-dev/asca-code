@@ -488,6 +488,36 @@ export function usePipeline(): UsePipelineReturn {
 
       let content = "";
       if (isTauriAvailable) {
+        // The engine streams progress on stdout (`@@STEP@@`, `@@THOUGHT@@`,
+        // `@@CHUNK@@`) and Rust forwards every line as `pipeline:output` — but nothing
+        // consumed it, so the packaged app had no live data and filled the gap with
+        // invented spinners, while the dev SSE branch below showed real steps. Same
+        // markers, same setters, different transport.
+        const { listen } = await import("@tauri-apps/api/event");
+        const offOutput = await listen<string>("pipeline:output", (event) => {
+          const match = String(event.payload ?? "").match(/^@@(STEP|THOUGHT|CHUNK|PERMISSION)@@([\s\S]*)$/);
+          if (!match) return;
+          let value: any;
+          try {
+            value = JSON.parse(match[2]);
+          } catch {
+            value = match[2];
+          }
+          if (match[1] === "CHUNK") setStreamingAnswer((prev) => prev + String(value));
+          else if (match[1] === "THOUGHT") setStreamingThought((prev) => prev + String(value));
+          else if (match[1] === "PERMISSION") setPendingPermission(value);
+          else if (match[1] === "STEP" && value && typeof value === "object") {
+            setAgentSteps((prev) => {
+              const idx = prev.findIndex((s) => s.name === value.name);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...value };
+                return next;
+              }
+              return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...value }];
+            });
+          }
+        });
         try {
           const { invoke } = await import("@tauri-apps/api/core");
           content = await invoke<string>("read_file_content", {
@@ -835,6 +865,8 @@ export function usePipeline(): UsePipelineReturn {
               is_json: false,
             },
           ]);
+        } finally {
+          offOutput();
         }
       } else {
         // Real Server-Sent Events from local Vite dev backend process
