@@ -94,7 +94,13 @@ async function runAgentOnCodex(params: {
         if (!sawEvent) params.log(`[agent] codex: first frame — ${line.slice(0, 180)}`);
         try {
           const parsed = JSON.parse(line);
-          if (parsed?.item?.type === "error") failed = true;
+          // Codex reports a missing *model metadata* entry as an `error` item, and that is
+          // a warning about capability hints, not a failed task. Counting it as failure
+          // marked a run that edited the file correctly as "needs attention".
+          const fatal =
+            parsed?.item?.type === "error" &&
+            !/metadata/i.test(String(parsed?.item?.message ?? ""));
+          if (fatal) failed = true;
           params.onEvent(parsed);
         } catch {
           /* a partial or non-JSON line carries nothing to show */
