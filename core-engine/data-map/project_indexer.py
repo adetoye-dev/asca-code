@@ -805,6 +805,12 @@ def index_entire_project(project_root_str: str) -> dict[str, Any]:
     acsa_dir = project_root / ".acsa"
     try:
         acsa_dir.mkdir(parents=True, exist_ok=True)
+        # Keep the index out of the user's `git status` without editing their
+        # .gitignore: the directory ignores itself. Landing `.acsa/` as an untracked
+        # entry in every project we touch is noise the user did not ask for.
+        self_ignore = acsa_dir / ".gitignore"
+        if not self_ignore.exists():
+            self_ignore.write_text("# Written by ACSA Code. Its index lives here.\n*\n", encoding="utf-8")
         write_json_atomic(acsa_dir / "index.json", index_data)
         logger.info("Saved index to %s", acsa_dir / "index.json")
     except Exception as exc:
