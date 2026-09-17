@@ -763,6 +763,23 @@ def _clean_thought_text(raw_text: str) -> str:
     return cleaned.strip()
 
 
+# Bound the whole request, not each loop. `manager.py` runs this loop up to three times
+# per request (main pass plus one or two repair passes), so a per-call cap composed into
+# roughly twelve minutes — a run that should have stopped kept going, which the user
+# experiences as an infinite loop. One process handles one request, so a module-level
+# deadline is the correct scope and needs no plumbing through the call sites.
+REQUEST_BUDGET_SECONDS = 240.0
+_request_deadline: Optional[float] = None
+
+
+def _remaining_request_budget() -> float:
+    """Seconds left in this request, starting the clock on first use."""
+    global _request_deadline
+    if _request_deadline is None:
+        _request_deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
+    return _request_deadline - time.monotonic()
+
+
 def run_agent_loop(
     user_request: str,
     project_root: str,
@@ -856,10 +873,17 @@ def run_agent_loop(
         # synthesized "Completed N steps" below would otherwise present a timeout as
         # success.
         elapsed = time.monotonic() - start_time
-        if elapsed > max_wall_seconds:
+        remaining = _remaining_request_budget()
+        if elapsed > max_wall_seconds or remaining <= 0:
+            over_request_budget = remaining <= 0
             final_answer = (
-                f"Stopped after {int(elapsed)}s without finishing: the {int(max_wall_seconds)}s "
-                f"time budget was reached after {round_idx - 1} round(s). "
+                f"Stopped after {int(elapsed)}s without finishing: "
+                + (
+                    f"the {int(REQUEST_BUDGET_SECONDS)}s budget for this request was exhausted "
+                    if over_request_budget
+                    else f"the {int(max_wall_seconds)}s budget for this pass was reached "
+                )
+                + f"after {round_idx - 1} round(s). "
                 f"{len(edited_files)} file(s) had been changed. Re-run with a narrower task to finish it."
             )
             report("Time budget reached", f"{int(elapsed)}s after {round_idx - 1} round(s)", "failed")
