@@ -27,6 +27,40 @@ class EditFileTests(unittest.TestCase):
         self.assertTrue(result.startswith("Success"), result)
         self.assertIn("return (a + b)", self.file.read_text())
 
+    def test_edits_leave_no_stray_files_behind(self):
+        """An edit must not litter the user's working tree.
+
+        The editor used to drop a `<file>.bak` beside every edit. Nothing ever read it,
+        and it shared a filename with the pipeline's own rollback point — so it could
+        overwrite the state a failed verification restores from. Covers both outcomes:
+        an applied edit and a refused one.
+        """
+        edit_file(
+            project_root=str(self.root),
+            path="calc.py",
+            search="    return a + b",
+            replace="    return (a + b)",
+        )
+        self.assertEqual(
+            sorted(p.name for p in self.root.iterdir()),
+            ["calc.py"],
+            "a successful edit left stray files behind",
+        )
+
+        self.file.write_text(
+            "def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n",
+            encoding="utf-8",
+        )
+        refused = edit_file(
+            project_root=str(self.root), path="calc.py", search="    return", replace="    pass"
+        )
+        self.assertTrue(refused.startswith("Error"), refused)
+        self.assertEqual(
+            sorted(p.name for p in self.root.iterdir()),
+            ["calc.py"],
+            "a refused edit left stray files behind",
+        )
+
     def test_refuses_ambiguous_search_block(self):
         self.file.write_text(
             "def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n",
