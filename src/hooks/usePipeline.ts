@@ -41,7 +41,7 @@ async function runAgentOnCodex(params: {
   prompt: string;
   projectRoot: string;
   onEvent: (event: any) => void;
-}): Promise<boolean> {
+}): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
   const { getActiveSelectedModel, loadAllProviders } = await import("../services/aiModelManager");
@@ -54,7 +54,7 @@ async function runAgentOnCodex(params: {
     saved?.providerId || (Object.values(providers).find((p: any) => p.isDefault) as any)?.id;
   const provider = providerId ? providers[providerId] : undefined;
   const model = saved?.model || provider?.selectedModel;
-  if (!providerId || !model || !provider?.baseUrl) return false;
+  if (!providerId || !model || !provider?.baseUrl) return "unavailable";
 
   // `wire_api` must be "responses": this Codex version rejects "chat" outright. The key
   // name matches what the Rust side sets in the child's environment, so the credential
@@ -74,13 +74,21 @@ async function runAgentOnCodex(params: {
 
   let sawEvent = false;
   let finished = false;
+  let failed = false;
   const unlisten: Array<() => void> = [];
   try {
     unlisten.push(
-      await listen<string>("codex:event", (event) => {
+      await listen<{ line?: string } | string>("codex:event", (event) => {
         sawEvent = true;
+        // Rust emits `AiFrame { line }` — a struct. Reading the payload as a string
+        // yields "[object Object]", so nothing rendered at all. Same shape mistake as
+        // the chat and terminal streams; the field is the point.
+        const payload = event.payload;
+        const line = typeof payload === "string" ? payload : String(payload?.line ?? "");
         try {
-          params.onEvent(JSON.parse(String(event.payload)));
+          const parsed = JSON.parse(line);
+          if (parsed?.item?.type === "error") failed = true;
+          params.onEvent(parsed);
         } catch {
           /* a partial or non-JSON line carries nothing to show */
         }
@@ -99,11 +107,12 @@ async function runAgentOnCodex(params: {
     for (let i = 0; i < 7200 && !finished; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return true;
+    return failed ? "failed" : "success";
   } catch {
-    // "not installed" is the expected miss; anything after a real event is a mid-run
-    // failure, which is ours to report rather than retry underneath.
-    return sawEvent;
+    // A missing runtime is the expected miss and the caller must fall back. Anything
+    // thrown after a real event is a mid-run failure, which is ours to report rather
+    // than retry underneath — retrying would edit the project twice.
+    return sawEvent ? (failed ? "failed" : "success") : "unavailable";
   } finally {
     unlisten.forEach((off) => off());
   }
@@ -979,7 +988,7 @@ export function usePipeline(): UsePipelineReturn {
         });
         // Agent mode runs on Codex when its runtime is present; otherwise our own
         // pipeline runs, so the feature degrades instead of breaking.
-        const codexHandled = await runAgentOnCodex({
+        const codexStatus = await runAgentOnCodex({
           prompt: activePrompt,
           projectRoot: activeProject.path,
           onEvent: (event) =>
@@ -990,8 +999,13 @@ export function usePipeline(): UsePipelineReturn {
             }),
         });
 
+        // The chat derives its state from `status`, and a Codex run leaves it on
+        // "running" unless something clears it — which is why the panel sat on
+        // "Working (195s)" after a perfectly good edit.
+        if (codexStatus !== "unavailable") setStatus(codexStatus);
+
         try {
-          if (!codexHandled) {
+          if (codexStatus === "unavailable") {
           const { invoke } = await import("@tauri-apps/api/core");
           const result: any = await invoke("run_generation_pipeline", {
             prompt: activePrompt,
