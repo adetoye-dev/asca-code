@@ -566,9 +566,7 @@ def edit_file(
         if "\r\n" in content:
             new_content = new_content.replace("\n", "\r\n")
 
-        backup = target.with_suffix(target.suffix + ".bak")
         try:
-            backup.write_text(content, encoding="utf-8")
             _block_reason = _destructive_edit_reason(content, new_content)
             if _block_reason:
                 return (
@@ -619,9 +617,7 @@ def edit_file(
         if "\r\n" in content:
             new_content = new_content.replace("\n", "\r\n")
 
-        backup = target.with_suffix(target.suffix + ".bak")
         try:
-            backup.write_text(content, encoding="utf-8")
             _block_reason = _destructive_edit_reason(content, new_content)
             if _block_reason:
                 return (
@@ -672,9 +668,7 @@ def edit_file(
             if "\r\n" in content:
                 new_content = new_content.replace("\n", "\r\n")
 
-            backup = target.with_suffix(target.suffix + ".bak")
             try:
-                backup.write_text(content, encoding="utf-8")
                 _block_reason = _destructive_edit_reason(content, new_content)
                 if _block_reason:
                     return (
