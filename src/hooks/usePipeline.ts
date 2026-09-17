@@ -68,7 +68,13 @@ async function runAgentOnCodex(params: {
   const configToml = [
     `model = "${model}"`,
     `model_provider = "${providerId}"`,
-    'approval_policy = "never"',
+    // "Approve for me", as Codex's own picker calls it: a reviewer decides instead of
+    // prompting, so safe actions proceed unattended. Verified against the binary — with
+    // `approval_policy = "never"` every MCP tool call was DENIED ("requires approval, but
+    // approval policy is never"), and with these two lines the same call COMPLETES. Only
+    // "auto_review" is accepted; "model" and "auto" are config errors.
+    'approval_policy = "on-request"',
+    'approvals_reviewer = "auto_review"',
     'sandbox_mode = "workspace-write"',
     "",
     `[model_providers.${providerId}]`,
