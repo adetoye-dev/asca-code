@@ -123,6 +123,39 @@ async function runAgentOnCodex(params: {
   );
 
   let sawEvent = false;
+  // Installed MCP servers, emitted in Codex's own format so what the marketplace installs
+  // is actually usable by the agent. Shape taken from a working Codex install:
+  // `[mcp_servers.x]` with either `command`+`args` or a streamable-HTTP `url`, and an
+  // optional `[mcp_servers.x.env]` table. Read from our registry rather than written into
+  // Codex's config by the engine, because this run regenerates that config each time.
+  let mcpToml = "";
+  try {
+    const { marketplaceFetch } = await import("../services/marketplaceClient");
+    const res = await marketplaceFetch(
+      `/api/mcp/servers?projectRoot=${encodeURIComponent(params.projectRoot)}`,
+    );
+    const servers = ((await res.json())?.servers ?? {}) as Record<string, any>;
+    for (const [id, cfg] of Object.entries(servers)) {
+      if (!cfg || typeof cfg !== "object") continue;
+      if (cfg.url) {
+        mcpToml += `\n[mcp_servers.${id}]\nurl = "${cfg.url}"\n`;
+        continue;
+      }
+      if (!cfg.command) continue;
+      mcpToml += `\n[mcp_servers.${id}]\ncommand = "${cfg.command}"\n`;
+      if (Array.isArray(cfg.args)) {
+        mcpToml += `args = [${cfg.args.map((a: any) => `"${String(a)}"`).join(", ")}]\n`;
+      }
+      if (cfg.env && typeof cfg.env === "object") {
+        mcpToml += `\n[mcp_servers.${id}.env]\n`;
+        for (const [key, value] of Object.entries(cfg.env)) mcpToml += `${key} = "${value}"\n`;
+      }
+    }
+    if (mcpToml) params.log(`[agent] codex: passing ${Object.keys(servers).length} MCP server(s) to the agent`);
+  } catch {
+    /* MCP is optional; a registry that cannot be read must not block the run */
+  }
+
   let finished = false;
   let failed = false;
   const unlisten: Array<() => void> = [];
@@ -163,7 +196,7 @@ async function runAgentOnCodex(params: {
       await invoke("codex_exec", {
         prompt: params.prompt,
         projectRoot: params.projectRoot,
-        configToml,
+        configToml: configToml + mcpToml,
         providerId,
         catalogJson,
       });
