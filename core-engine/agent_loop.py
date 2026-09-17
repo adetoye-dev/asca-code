@@ -774,6 +774,7 @@ def run_agent_loop(
     conversation_history: Optional[list[dict[str, str]]] = None,
     initial_context: Optional[dict[str, str]] = None,
     images: Optional[list[str]] = None,
+    max_wall_seconds: float = 240.0,
 ) -> AgentResult:
     """Execute the autonomous ReAct agent loop with direct tools and multi-turn memory."""
     start_time = time.monotonic()
@@ -849,6 +850,22 @@ def run_agent_loop(
     previous_response = ""
 
     for round_idx in range(1, max_iterations + 1):
+        # A round budget is not a time budget: with a slow provider, eight rounds ran
+        # for ~470s with nothing surfaced, which the user reads as "the agent hung".
+        # Cap the wall clock as well, and say plainly that it stopped short — the
+        # synthesized "Completed N steps" below would otherwise present a timeout as
+        # success.
+        elapsed = time.monotonic() - start_time
+        if elapsed > max_wall_seconds:
+            final_answer = (
+                f"Stopped after {int(elapsed)}s without finishing: the {int(max_wall_seconds)}s "
+                f"time budget was reached after {round_idx - 1} round(s). "
+                f"{len(edited_files)} file(s) had been changed. Re-run with a narrower task to finish it."
+            )
+            report("Time budget reached", f"{int(elapsed)}s after {round_idx - 1} round(s)", "failed")
+            stream(final_answer)
+            break
+
         # Compact older history once it grows past the token budget so every
         # round doesn't re-send the whole conversation to the model.
         history = _compact_history(history, task_content, steps)
