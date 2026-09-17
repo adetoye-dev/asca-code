@@ -735,6 +735,11 @@ def _clean_thought_text(raw_text: str) -> str:
     """Strip out <tool_call>, diff blocks, and SEARCH/REPLACE blocks to leave only thinking / explanation text."""
     # 1. Strip <think>...</think> blocks (used by DeepSeek / Qwen reasoning models)
     cleaned = re.sub(r"<think>[\s\S]*?(?:</think>|$)", "", raw_text, flags=re.IGNORECASE)
+    # 1b. Strip harness guidance the model echoes back. The loop appends
+    #     "[Harness Guidance]: …" to observations, so a model that repeats it verbatim
+    #     re-injects the harness's own instructions into the next round — which is why a
+    #     run could spin on one line for 423s rather than making progress.
+    cleaned = re.sub(r"\[Harness Guidance\]:[\s\S]*?(?=\n\s*\n|\Z)", "", cleaned)
     # 2. Strip <tool_call>...</tool_call>
     cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|$)", "", cleaned, flags=re.IGNORECASE)
     # 3. Strip loose <invoke>...</invoke>, <function_call>...</function_call>, <call>, <action>, etc.
