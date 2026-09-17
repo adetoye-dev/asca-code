@@ -1150,6 +1150,29 @@ fn resolve_codex_bin(resource_dir: Option<&Path>) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Resolve a provider credential through the engine.
+///
+/// The key must not travel over IPC: passing it down from the frontend would undo the
+/// write-only property the credential migration established, and it is already in the
+/// engine's database. Same server-side resolution the review and inline-edit paths use.
+fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<String> {
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "db");
+    argv.push("providers.resolveKey".to_string());
+    argv.push(format!("{{\"id\":\"{}\"}}", provider));
+
+    let output = Command::new(&program).args(&argv).output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last = stdout.lines().rev().find(|l| !l.trim().is_empty())?;
+    let parsed: serde_json::Value = serde_json::from_str(last).ok()?;
+    let key = parsed.get("data")?.as_str()?.trim().to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
 /// Run Codex as the agent and forward its JSON stream to the UI.
 ///
 /// This is the replacement for our own agent loop. That loop could not do native
@@ -1168,6 +1191,7 @@ async fn codex_exec(
     prompt: String,
     project_root: String,
     config_toml: String,
+    provider_id: String,
 ) -> Result<(), String> {
     let resource_dir = app_handle.path().resource_dir().ok();
     let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
@@ -1190,21 +1214,34 @@ async fn codex_exec(
         let _ = previous.kill();
     }
 
-    let mut child = Command::new(&program)
+    let working_dir = if Path::new(&project_root).is_dir() {
+        project_root.clone()
+    } else {
+        ".".to_string()
+    };
+
+    let mut command = Command::new(&program);
+    command
         .arg("exec")
         .arg("--json")
         // The project may not be a git repo; Codex refuses to start otherwise.
         .arg("--skip-git-repo-check")
         .arg(&prompt)
-        .current_dir(if Path::new(&project_root).is_dir() {
-            project_root.clone()
-        } else {
-            ".".to_string()
-        })
+        .current_dir(&working_dir)
         .env("CODEX_HOME", &codex_home)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Codex reads the key from the environment named by `env_key`, so it is set here
+    // rather than accepted from the caller — the credential stays on this side.
+    if !provider_id.trim().is_empty() {
+        if let Some(key) = engine_resolve_key(&app_handle, provider_id.trim()) {
+            command.env("ACSA_CODEX_API_KEY", key);
+        }
+    }
+
+    let mut child = command
         .spawn()
         .map_err(|e| format!("could not start the agent ({}): {}", program.display(), e))?;
 
