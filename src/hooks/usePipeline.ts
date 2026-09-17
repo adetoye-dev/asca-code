@@ -1063,42 +1063,6 @@ export function usePipeline(): UsePipelineReturn {
       setPendingPermission(null);
 
       if (isTauriAvailable) {
-        // The engine streams progress on stdout (`@@STEP@@`, `@@THOUGHT@@`,
-        // `@@CHUNK@@`) and Rust forwards every line as `pipeline:output` — but nothing
-        // consumed it, so the packaged app had no live data and filled the gap with
-        // invented spinners, while the dev SSE branch below showed real steps.
-        const { listen } = await import("@tauri-apps/api/event");
-        const offOutput = await listen<{ content?: string } | string>("pipeline:output", (event) => {
-          // Rust emits a `PipelineOutputLine` struct ({line_number, content, stream,
-          // is_json}), not a raw line — reading the payload as a string yielded
-          // "[object Object]" and the markers never matched, so nothing reached the UI.
-          const payload = event.payload;
-          const line = typeof payload === "string" ? payload : String(payload?.content ?? "");
-          const match = line.match(/^@@(STEP|THOUGHT|CHUNK|PERMISSION)@@([\s\S]*)$/);
-          if (!match) return;
-          let value: any;
-          try {
-            value = JSON.parse(match[2]);
-          } catch {
-            value = match[2];
-          }
-          if (match[1] === "CHUNK") setStreamingAnswer((prev) => prev + String(value));
-          else if (match[1] === "THOUGHT") setStreamingThought((prev) => prev + String(value));
-          else if (match[1] === "PERMISSION") setPendingPermission(value);
-          else if (match[1] === "STEP" && value && typeof value === "object") {
-            setAgentSteps((prev) => {
-              const idx = prev.findIndex((s) => s.name === value.name);
-              if (idx >= 0) {
-                const next = [...prev];
-                next[idx] = { ...next[idx], ...value };
-                return next;
-              }
-              return [...prev, { id: `step-${Date.now()}-${prev.length}`, ...value }];
-            });
-          }
-        });
-        // Agent mode runs on Codex when its runtime is present; otherwise our own
-        // pipeline runs, so the feature degrades instead of breaking.
         const codexStatus = await runAgentOnCodex({
           prompt: activePrompt,
           projectRoot: activeProject.path,
@@ -1117,43 +1081,29 @@ export function usePipeline(): UsePipelineReturn {
             ]),
         });
 
-        // The chat derives its state from `status`, and a Codex run leaves it on
-        // "running" unless something clears it — which is why the panel sat on
-        // "Working (195s)" after a perfectly good edit.
-        if (codexStatus !== "unavailable") setStatus(codexStatus);
-
-        try {
-          if (codexStatus === "unavailable") {
-          const { invoke } = await import("@tauri-apps/api/core");
-          const result: any = await invoke("run_generation_pipeline", {
-            prompt: activePrompt,
-            sliders,
-            projectRoot: activeProject.path,
-            language: detectedLanguage,
-            skipPerformance: false,
-            dryRun: false,
-          });
-
-          if (result && result.parsed_result) {
-            setOrchestrationResult(result.parsed_result);
-            setStatus(result.parsed_result.outcome === "success" ? "success" : "failed");
-          }
-          }
-          await refreshProjectFiles();
-        } catch (err: any) {
-          setStatus("error");
+        // No fallback to our own loop. It narrated tool calls in prose and answered
+        // refusals with a guard message, editing nothing — degrading to it silently is
+        // worse than failing. If the runtime is missing, say so and how to fix it.
+        if (codexStatus === "unavailable") {
+          setStatus("failed");
           setActivityLog((prev) => [
             ...prev,
             {
               line_number: prev.length + 1,
-              content: `Error: ${err?.message || err}`,
+              content:
+                "[agent] The Codex runtime is unavailable. Run scripts/fetch_codex_sidecar.sh and relaunch the app.",
               stream: "stderr",
               is_json: false,
             },
           ]);
-        } finally {
-          offOutput();
+        } else {
+          // The chat derives its state from `status`, and a finished run leaves it on
+          // "running" unless something clears it — which is why the panel once sat on
+          // "Working (195s)" after a perfectly good edit.
+          setStatus(codexStatus);
         }
+
+        await refreshProjectFiles();
       } else {
         // Real Server-Sent Events from local Vite dev backend process
         try {
