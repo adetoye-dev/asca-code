@@ -462,13 +462,20 @@ fn user_home() -> Option<PathBuf> {
 /// process working directory — `/` for a bundle launched from Finder — the write
 /// is denied, and scaffolding from the default location fails for every user.
 fn expand_home(path: &str) -> PathBuf {
+    expand_home_against(path, user_home().as_deref())
+}
+
+/// `expand_home` with the home directory supplied, so the rules are testable
+/// without mutating the process environment (which cargo's parallel test threads
+/// would share).
+fn expand_home_against(path: &str, home: Option<&Path>) -> PathBuf {
     let trimmed = path.trim();
     if trimmed == "~" {
-        if let Some(home) = user_home() {
-            return home;
+        if let Some(home) = home {
+            return home.to_path_buf();
         }
     } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        if let Some(home) = user_home() {
+        if let Some(home) = home {
             return home.join(rest);
         }
     }
@@ -612,94 +619,552 @@ fn create_project_template(
         },
     };
 
+    // Resolved before anything is created, so an unrecognised id cannot leave a
+    // half-built directory behind.
+    let files = template_files(&template.to_lowercase()).ok_or_else(|| {
+        format!(
+            "\"{}\" is not a template this build can scaffold — the New Project dialog and the scaffolder are out of step.",
+            template
+        )
+    })?;
+
     let project_dir = base.join(&clean_name);
     std::fs::create_dir_all(&project_dir)
         .map_err(|e| format!("Failed to create project directory: {}", e))?;
-
-    match template.to_lowercase().as_str() {
-        "fastapi" => {
-            let _ = std::fs::write(
-                project_dir.join("main.py"),
-                format!(
-                    "from fastapi import FastAPI\n\napp = FastAPI(title=\"{}\")\n\n@app.get(\"/\")\ndef root():\n    return {{\"status\": \"online\", \"project\": \"{}\"}}\n",
-                    clean_name, clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("models.py"),
-                "from pydantic import BaseModel\n\nclass Item(BaseModel):\n    name: str\n    description: str | None = None\n",
-            );
-            let _ = std::fs::write(
-                project_dir.join("requirements.txt"),
-                "fastapi>=0.110.0\nuvicorn>=0.28.0\npydantic>=2.0.0\n",
-            );
-            let _ = std::fs::write(
-                project_dir.join("README.md"),
-                format!("# {}\n\nFastAPI service created with ACSA Code.\n", clean_name),
-            );
-        }
-        "express" => {
-            let _ = std::fs::write(
-                project_dir.join("server.js"),
-                format!(
-                    "const express = require('express');\nconst app = express();\nconst port = process.env.PORT || 3000;\n\napp.use(express.json());\n\napp.get('/', (req, res) => {{\n  res.json({{ status: 'online', project: '{}' }});\n}});\n\napp.listen(port, () => console.log(`Server running on port ${{port}}`));\n",
-                    clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("package.json"),
-                format!(
-                    "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"main\": \"server.js\",\n  \"dependencies\": {{\n    \"express\": \"^4.19.2\"\n  }}\n}}\n",
-                    clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("README.md"),
-                format!("# {}\n\nExpress service created with ACSA Code.\n", clean_name),
-            );
-        }
-        "typescript" => {
-            let src_dir = project_dir.join("src");
-            let _ = std::fs::create_dir_all(&src_dir);
-            let _ = std::fs::write(
-                src_dir.join("index.ts"),
-                format!(
-                    "export function greet(name: string): string {{\n  return `Hello ${{name}}!`;\n}}\n\nconsole.log(greet('{}'));\n",
-                    clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("tsconfig.json"),
-                "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"esModuleInterop\": true\n  }\n}\n",
-            );
-            let _ = std::fs::write(
-                project_dir.join("package.json"),
-                format!(
-                    "{{\n  \"name\": \"{}\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\"\n}}\n",
-                    clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("README.md"),
-                format!("# {}\n\nTypeScript project created with ACSA Code.\n", clean_name),
-            );
-        }
-        _ => {
-            let _ = std::fs::write(
-                project_dir.join("main.py"),
-                format!(
-                    "def main():\n    print(\"Hello from {}\")\n\nif __name__ == '__main__':\n    main()\n",
-                    clean_name
-                ),
-            );
-            let _ = std::fs::write(
-                project_dir.join("README.md"),
-                format!("# {}\n\nACSA Code Project.\n", clean_name),
-            );
-        }
-    }
+    write_template_files(&project_dir, files, &clean_name)?;
 
     Ok(project_dir.to_string_lossy().to_string())
+}
+
+// ── Project templates ───────────────────────────────────────────────────────
+
+/// One template's files: `(path relative to the project root, contents)`.
+///
+/// `__PROJECT_NAME__` is substituted as the files are written. The ids match the
+/// ones `src/components/ProjectModal.tsx` offers, and a test below keeps the two
+/// in step: every template the dialog advertises must produce the files its badge
+/// promises. It did not use to — four of the six fell through to a catch-all that
+/// wrote a Python `main.py`, so choosing "Next.js 15 App Router" (the default)
+/// produced a Python hello-world.
+type TemplateFiles = &'static [(&'static str, &'static str)];
+
+const NEXTJS_TEMPLATE: TemplateFiles = &[
+    (
+        "package.json",
+        r##"{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.7",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3"
+  }
+}
+"##,
+    ),
+    (
+        "tsconfig.json",
+        r##"{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+"##,
+    ),
+    (
+        "next.config.ts",
+        r##"import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {};
+
+export default nextConfig;
+"##,
+    ),
+    (
+        "postcss.config.mjs",
+        r##"export default {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+"##,
+    ),
+    (
+        "app/globals.css",
+        r##"@import "tailwindcss";
+"##,
+    ),
+    (
+        "app/layout.tsx",
+        r##"import type { Metadata } from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "__PROJECT_NAME__",
+  description: "Created with ACSA Code",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html lang="en">
+      <body className="antialiased">{children}</body>
+    </html>
+  );
+}
+"##,
+    ),
+    (
+        "app/page.tsx",
+        r##"export default function Home() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 p-8">
+      <h1 className="text-2xl font-semibold">__PROJECT_NAME__</h1>
+      <p className="text-sm text-zinc-500">
+        Created with ACSA Code. Edit <code>app/page.tsx</code> to get started.
+      </p>
+    </main>
+  );
+}
+"##,
+    ),
+];
+
+const VITE_REACT_TEMPLATE: TemplateFiles = &[
+    (
+        "package.json",
+        r##"{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}
+"##,
+    ),
+    (
+        "tsconfig.json",
+        r##"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true
+  },
+  "include": ["src", "vite.config.ts"]
+}
+"##,
+    ),
+    (
+        "vite.config.ts",
+        r##"import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});
+"##,
+    ),
+    (
+        "index.html",
+        r##"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>__PROJECT_NAME__</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+"##,
+    ),
+    (
+        "src/main.tsx",
+        r##"import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./index.css";
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+"##,
+    ),
+    (
+        "src/App.tsx",
+        r##"import { useState } from "react";
+
+export default function App() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4">
+      <h1 className="text-2xl font-semibold">__PROJECT_NAME__</h1>
+      <p className="text-sm text-zinc-500">
+        Created with ACSA Code. Edit src/App.tsx to get started.
+      </p>
+      <button
+        type="button"
+        className="rounded-lg bg-zinc-800 px-3 py-1.5 text-sm text-white"
+        onClick={() => setCount((value) => value + 1)}
+      >
+        count is {count}
+      </button>
+    </main>
+  );
+}
+"##,
+    ),
+    (
+        "src/index.css",
+        r##"@import "tailwindcss";
+"##,
+    ),
+];
+
+const FASTAPI_TEMPLATE: TemplateFiles = &[
+    (
+        "main.py",
+        r##"from fastapi import FastAPI
+
+app = FastAPI(title="__PROJECT_NAME__")
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"status": "online", "project": "__PROJECT_NAME__"}
+"##,
+    ),
+    (
+        "models.py",
+        r##"from pydantic import BaseModel
+
+
+class Item(BaseModel):
+    name: str
+    description: str | None = None
+"##,
+    ),
+    ("requirements.txt", "fastapi>=0.110.0\nuvicorn>=0.28.0\npydantic>=2.0.0\n"),
+    ("README.md", "# __PROJECT_NAME__\n\nFastAPI service created with ACSA Code.\n"),
+];
+
+const EXPRESS_TEMPLATE: TemplateFiles = &[
+    (
+        "server.js",
+        r##"const express = require('express');
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.json({ status: 'online', project: '__PROJECT_NAME__' });
+});
+
+app.listen(port, () => console.log(`Server running on port ${port}`));
+"##,
+    ),
+    (
+        "package.json",
+        r##"{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
+"##,
+    ),
+    ("README.md", "# __PROJECT_NAME__\n\nExpress service created with ACSA Code.\n"),
+];
+
+const NESTJS_TEMPLATE: TemplateFiles = &[
+    (
+        "package.json",
+        r##"{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/platform-express": "^10.4.15",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.9",
+    "@nestjs/schematics": "^10.2.3",
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}
+"##,
+    ),
+    (
+        "tsconfig.json",
+        r##"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"]
+}
+"##,
+    ),
+    (
+        "nest-cli.json",
+        r##"{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src"
+}
+"##,
+    ),
+    (
+        "src/main.ts",
+        r##"import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  const port = Number(process.env.PORT ?? 3000);
+  await app.listen(port);
+  console.log(`Listening on http://localhost:${port}`);
+}
+
+void bootstrap();
+"##,
+    ),
+    (
+        "src/app.module.ts",
+        r##"import { Module } from "@nestjs/common";
+import { AppController } from "./app.controller";
+import { AppService } from "./app.service";
+
+@Module({
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+"##,
+    ),
+    (
+        "src/app.controller.ts",
+        r##"import { Controller, Get } from "@nestjs/common";
+import { AppService } from "./app.service";
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getStatus(): { status: string; project: string } {
+    return this.appService.status();
+  }
+}
+"##,
+    ),
+    (
+        "src/app.service.ts",
+        r##"import { Injectable } from "@nestjs/common";
+
+@Injectable()
+export class AppService {
+  status(): { status: string; project: string } {
+    return { status: "online", project: "__PROJECT_NAME__" };
+  }
+}
+"##,
+    ),
+];
+
+const SUPABASE_TEMPLATE: TemplateFiles = &[
+    (
+        "package.json",
+        r##"{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.10",
+    "express": "^4.21.2"
+  }
+}
+"##,
+    ),
+    (
+        ".env.example",
+        r##"# Copy to .env and fill in from your Supabase project settings.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+PORT=3000
+"##,
+    ),
+    (
+        "src/supabaseClient.js",
+        r##"import { createClient } from "@supabase/supabase-js";
+
+const url = process.env.SUPABASE_URL;
+const anonKey = process.env.SUPABASE_ANON_KEY;
+
+if (!url || !anonKey) {
+  console.warn(
+    "SUPABASE_URL / SUPABASE_ANON_KEY are unset - copy .env.example to .env first.",
+  );
+}
+
+// A placeholder keeps the process bootable while the credentials are missing, so
+// the first thing the user sees is the warning above rather than a crash.
+export const supabase = createClient(
+  url ?? "http://localhost:54321",
+  anonKey ?? "missing-anon-key",
+);
+"##,
+    ),
+    (
+        "src/server.js",
+        r##"import express from "express";
+import { supabase } from "./supabaseClient.js";
+
+const app = express();
+app.use(express.json());
+
+app.get("/", (_req, res) => {
+  res.json({ status: "online", project: "__PROJECT_NAME__" });
+});
+
+app.get("/health", async (_req, res) => {
+  const { error } = await supabase.auth.getSession();
+  res.json({ status: error ? "degraded" : "ok" });
+});
+
+const port = Number(process.env.PORT ?? 3000);
+app.listen(port, () => console.log(`Listening on http://localhost:${port}`));
+"##,
+    ),
+];
+
+/// The files a template id produces, or `None` when the id is not one this build
+/// can scaffold. `None` is an error, not a default: silently substituting some
+/// other project is how the picker came to lie about what it creates.
+fn template_files(template: &str) -> Option<TemplateFiles> {
+    match template {
+        "nextjs" => Some(NEXTJS_TEMPLATE),
+        "vite-react" => Some(VITE_REACT_TEMPLATE),
+        "nestjs" => Some(NESTJS_TEMPLATE),
+        "supabase" => Some(SUPABASE_TEMPLATE),
+        "fastapi" => Some(FASTAPI_TEMPLATE),
+        "express" => Some(EXPRESS_TEMPLATE),
+        _ => None,
+    }
+}
+
+/// Write a template out, creating directories as needed and reporting the first
+/// failure. The previous code discarded every `write` result with `let _ =`, so a
+/// template that could not be written still reported success.
+fn write_template_files(
+    project_dir: &Path,
+    files: TemplateFiles,
+    name: &str,
+) -> Result<(), String> {
+    for (relative, body) in files {
+        let target = project_dir.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {}", relative, e))?;
+        }
+        std::fs::write(&target, body.replace("__PROJECT_NAME__", name))
+            .map_err(|e| format!("Failed to write {}: {}", relative, e))?;
+    }
+    Ok(())
 }
 
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
@@ -3406,16 +3871,128 @@ for line in sys.stdin:
     /// the modal closes before the write is attempted.
     #[test]
     fn a_leading_tilde_expands_to_the_home_directory() {
-        let home = user_home().expect("the test environment has a home directory");
+        let home = Path::new("/Users/example");
 
-        assert_eq!(expand_home("~/AcsaProjects"), home.join("AcsaProjects"));
-        assert_eq!(expand_home("~"), home);
-        assert_eq!(expand_home("  ~/Desktop  "), home.join("Desktop"));
+        // The dialog's default destination, and the shape its placeholder
+        // suggests.
+        assert_eq!(
+            expand_home_against("~/AcsaProjects", Some(home)),
+            PathBuf::from("/Users/example/AcsaProjects")
+        );
+        assert_eq!(expand_home_against("~", Some(home)), home.to_path_buf());
+        assert_eq!(
+            expand_home_against("  ~/Desktop  ", Some(home)),
+            PathBuf::from("/Users/example/Desktop")
+        );
 
         // Not a home shorthand: left exactly as given.
-        assert_eq!(expand_home("/tmp/absolute"), PathBuf::from("/tmp/absolute"));
-        assert_eq!(expand_home("relative/dir"), PathBuf::from("relative/dir"));
-        assert_eq!(expand_home("~someone-else"), PathBuf::from("~someone-else"));
-        assert_eq!(expand_home("~/"), home);
+        assert_eq!(
+            expand_home_against("/tmp/absolute", Some(home)),
+            PathBuf::from("/tmp/absolute")
+        );
+        assert_eq!(
+            expand_home_against("relative/dir", Some(home)),
+            PathBuf::from("relative/dir")
+        );
+        assert_eq!(
+            expand_home_against("~someone-else", Some(home)),
+            PathBuf::from("~someone-else")
+        );
+
+        // With no home to expand to, the shorthand stays literal instead of
+        // quietly becoming a relative path.
+        assert_eq!(
+            expand_home_against("~/AcsaProjects", None),
+            PathBuf::from("~/AcsaProjects")
+        );
+    }
+
+    /// The half `expand_home` cannot cover: the template really is written out.
+    /// Uses an explicit destination, so it never touches a real home directory.
+    #[test]
+    fn scaffolding_writes_the_template_under_the_given_directory() {
+        let root = std::env::temp_dir().join(format!("acsa-scaffold-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let created = create_project_template(
+            "My Test App!".to_string(),
+            "vite-react".to_string(),
+            Some(root.to_string_lossy().to_string()),
+        )
+        .expect("scaffolding should succeed");
+
+        // Spaces and punctuation become `_`; case is left alone here (the dialog
+        // lowercases before it calls).
+        let project = root.join("My_Test_App_");
+        assert_eq!(PathBuf::from(&created), project);
+        assert!(project.join("package.json").is_file());
+        assert!(project.join("src").join("App.tsx").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every template the New Project dialog offers must produce the files its
+    /// badge promises. Four of the six used to fall through to a catch-all and
+    /// write a Python `main.py` instead — including the default, so "Next.js 15
+    /// App Router" handed the user a Python hello-world.
+    ///
+    /// The pairs below are copied from `src/components/ProjectModal.tsx`; if that
+    /// list and this one ever disagree, this test is the thing that notices.
+    #[test]
+    fn every_offered_template_scaffolds_its_advertised_files() {
+        let offered: [(&str, &[&str]); 6] = [
+            ("nextjs", &["app/page.tsx", "app/layout.tsx", "package.json"]),
+            ("vite-react", &["src/App.tsx", "vite.config.ts", "package.json"]),
+            ("nestjs", &["src/main.ts", "src/app.module.ts", "nest-cli.json"]),
+            (
+                "supabase",
+                &["src/server.js", "src/supabaseClient.js", ".env.example"],
+            ),
+            ("fastapi", &["main.py", "models.py", "requirements.txt"]),
+            ("express", &["server.js", "package.json", "README.md"]),
+        ];
+
+        for (id, advertised) in offered {
+            let root = std::env::temp_dir().join(format!("acsa-tpl-{}-{}", id, std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+
+            let created = create_project_template(
+                "demo".to_string(),
+                id.to_string(),
+                Some(root.to_string_lossy().to_string()),
+            )
+            .unwrap_or_else(|e| panic!("{id} should scaffold: {e}"));
+            assert_eq!(PathBuf::from(&created), root.join("demo"));
+
+            for file in advertised {
+                let written = root.join("demo").join(file);
+                assert!(written.is_file(), "{id} did not write {file}");
+                let body = std::fs::read_to_string(&written).unwrap();
+                assert!(!body.is_empty(), "{id} wrote an empty {file}");
+                // The substitution actually happened.
+                assert!(
+                    !body.contains("__PROJECT_NAME__"),
+                    "{id}/{file} still holds the placeholder"
+                );
+            }
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn an_unknown_template_is_an_error_and_writes_nothing() {
+        let root = std::env::temp_dir().join(format!("acsa-tpl-unknown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let result = create_project_template(
+            "demo".to_string(),
+            "definitely-not-a-template".to_string(),
+            Some(root.to_string_lossy().to_string()),
+        );
+
+        assert!(result.is_err(), "an unknown template must not silently succeed");
+        // Nothing half-made left behind, and above all no stray main.py.
+        assert!(!root.exists(), "an unknown template created {}", root.display());
     }
 }

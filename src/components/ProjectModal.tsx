@@ -20,7 +20,7 @@ const TEMPLATES = [
   {
     id: "nextjs",
     name: "Next.js 15 App Router",
-    description: "Production fullstack React 19 app with TypeScript, Tailwind CSS, App Directory, and server components.",
+    description: "Production fullstack React 19 app with TypeScript, Tailwind CSS v4, App Directory, and server components.",
     icon: Globe,
     badge: "Fullstack",
     files: ["app/page.tsx", "app/layout.tsx", "package.json"],
@@ -28,7 +28,7 @@ const TEMPLATES = [
   {
     id: "vite-react",
     name: "Vite React + TypeScript",
-    description: "Ultra-fast frontend SPA with React 18, strict TypeScript, Tailwind CSS, and lightning HMR.",
+    description: "Ultra-fast frontend SPA with React 19, strict TypeScript, Tailwind CSS v4, and lightning HMR.",
     icon: Code2,
     badge: "Frontend",
     files: ["src/App.tsx", "vite.config.ts", "package.json"],
@@ -44,7 +44,7 @@ const TEMPLATES = [
   {
     id: "supabase",
     name: "Supabase Fullstack Starter",
-    description: "Express backend pre-configured with @supabase/supabase-js client, auth endpoints, and .env.example.",
+    description: "Express backend with a @supabase/supabase-js client, a health check, and .env.example.",
     icon: Database,
     badge: "BaaS",
     files: ["src/server.js", "src/supabaseClient.js", ".env.example"],
