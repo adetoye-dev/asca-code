@@ -1373,17 +1373,29 @@ fn run_with_timeout(
     })
 }
 
+/// Engine subcommands the renderer is allowed to reach over IPC.
+///
+/// This is a security boundary rather than a convenience list: every entry is a
+/// subcommand the *page* chooses, so everything here is reachable even if the
+/// page is compromised. `pty` and `adapter` are deliberately absent — the
+/// terminal and the local-model adapter are spawned by Rust with arguments Rust
+/// picked, not with arguments the webview supplies.
+const ALLOWED_ENGINE_SUBCOMMANDS: [&str; 12] = [
+    "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs", "backup",
+    "support",
+];
+
+fn engine_subcommand_allowed(subcommand: &str) -> bool {
+    ALLOWED_ENGINE_SUBCOMMANDS.contains(&subcommand)
+}
+
 #[tauri::command]
 async fn engine_call(
     app_handle: tauri::AppHandle,
     subcommand: String,
     args: Vec<String>,
 ) -> Result<String, String> {
-    const ALLOWED: [&str; 12] = [
-        "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs",
-        "backup", "support",
-    ];
-    if !ALLOWED.contains(&subcommand.as_str()) {
+    if !engine_subcommand_allowed(&subcommand) {
         return Err(format!("engine subcommand not allowed: {}", subcommand));
     }
 
@@ -3326,5 +3338,29 @@ for line in sys.stdin:
         std::fs::write(root.join("node_modules").join("big.bin"), vec![0u8; 4096]).unwrap();
         assert_eq!(dir_size_bytes(&root), 5);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The IPC allowlist is the boundary between "the page can ask the engine
+    /// something" and "the page can run anything". It is worth a test because
+    /// the failure mode is silent in both directions: an entry that is missing
+    /// breaks a feature, and one that should not be there hands a compromised
+    /// webview a process spawn.
+    #[test]
+    fn only_the_intended_engine_subcommands_are_reachable_from_the_page() {
+        // Used by the UI, and reached through `engine_call` with page-supplied
+        // arguments — including the two added for Data & backups.
+        for allowed in [
+            "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs",
+            "backup", "support",
+        ] {
+            assert!(engine_subcommand_allowed(allowed), "{allowed} must be reachable");
+        }
+
+        for blocked in ["pty", "adapter", "selftest", "", "rm -rf"] {
+            assert!(
+                !engine_subcommand_allowed(blocked),
+                "{blocked} must not be reachable from the page"
+            );
+        }
     }
 }
