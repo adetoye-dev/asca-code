@@ -10,7 +10,7 @@
  * reads `res.json()`, so none of them had to change.
  */
 
-import { engineCall, hasIpc } from "./engineBridge";
+import { desktopRequiredResponse, engineCall, hasIpc } from "./engineBridge";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -20,7 +20,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 export async function gitFetch(path: string, init?: RequestInit): Promise<Response> {
-  if (!hasIpc()) return fetch(path, init);
+  if (!hasIpc()) return desktopRequiredResponse("Version control");
 
   const action = path.replace(/^\/api\/git\//, "");
   let payload: Record<string, unknown> = {};

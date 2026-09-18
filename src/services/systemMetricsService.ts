@@ -78,14 +78,6 @@ class SystemMetricsService {
         }
       }
 
-      const res = await fetch("/api/system/metrics");
-      if (res.ok) {
-        const metrics: SystemMetrics = await res.json();
-        this.currentMetrics = metrics;
-        this.lastFetchSucceeded = true;
-        this.notify();
-        return metrics;
-      }
     } catch (err) {
       this.lastFetchSucceeded = false;
       console.warn("Failed to fetch system metrics:", err);

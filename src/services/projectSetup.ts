@@ -11,7 +11,7 @@
  * assume npm.
  */
 
-import { engineCall, hasIpc } from "./engineBridge";
+import { desktopRequired, engineCall, hasIpc } from "./engineBridge";
 
 export interface ProjectStatus {
   projectRoot: string;
@@ -36,9 +36,7 @@ export async function fetchProjectStatus(projectRoot: string): Promise<ProjectSt
         JSON.stringify({ projectRoot }),
       ]);
     }
-    const res = await fetch(`/api/project/status?projectRoot=${encodeURIComponent(projectRoot)}`);
-    if (!res.ok) return null;
-    return (await res.json()) as ProjectStatus;
+    return null;
   } catch {
     return null;
   }
@@ -62,14 +60,5 @@ export async function runInProjectTerminal(projectRoot: string, command: string)
     await invoke("terminal_input", { data: `${command}\n` }).catch(() => {});
     return;
   }
-  await fetch("/api/terminal/spawn", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cwd: projectRoot }),
-  }).catch(() => {});
-  await fetch("/api/terminal/input", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: `${command}\n` }),
-  }).catch(() => {});
+  throw desktopRequired("The integrated terminal");
 }

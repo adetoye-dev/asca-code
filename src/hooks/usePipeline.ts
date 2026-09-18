@@ -14,6 +14,7 @@ import type { FileNode } from "../components/FileTree";
 import type { OpenFileTab } from "../types/workbench";
 import type { AISettings } from "../components/SettingsModal";
 import type { PipelineOutputLine, SystemMetrics, PipelineStatus } from "../types/telemetry";
+import { DESKTOP_REQUIRED_MESSAGE } from "../services/engineBridge";
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
 import { loadAllProviders } from "../services/aiModelManager";
@@ -797,26 +798,7 @@ export function usePipeline(): UsePipelineReturn {
         console.warn("Tauri list_project_files failed:", err);
       }
     } else {
-      try {
-        const res = await fetch("/api/fs/list", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectPath: activeProject.path }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setProjectFiles(data.nodes || []);
-          if (data.resolvedPath && (activeProject.path === "." || activeProject.path === "./")) {
-            const folderName = data.resolvedPath.split("/").filter(Boolean).pop() || activeProject.name;
-            setActiveProject({
-              name: folderName,
-              path: data.resolvedPath,
-            });
-          }
-        }
-      } catch (err) {
-        console.warn("Vite FS list failed:", err);
-      }
+      console.warn(DESKTOP_REQUIRED_MESSAGE);
     }
   }, [isTauriAvailable, activeProject.path]);
 
@@ -837,15 +819,7 @@ export function usePipeline(): UsePipelineReturn {
         return null;
       }
     } else {
-      try {
-        const res = await fetch("/api/fs/pick-folder", { method: "POST" });
-        if (res.ok) {
-          const data = await res.json();
-          return data.path || null;
-        }
-      } catch (err) {
-        console.error("Vite pick-folder failed:", err);
-      }
+      console.warn(DESKTOP_REQUIRED_MESSAGE);
       return null;
     }
   }, [isTauriAvailable]);
@@ -904,21 +878,9 @@ export function usePipeline(): UsePipelineReturn {
           content = `# Error reading file: ${err}`;
         }
       } else {
-        try {
-          const res = await fetch("/api/fs/read", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filePath: file.path, projectRoot: activeProject.path }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            content = data.content;
-          } else {
-            content = `# Error reading file from disk`;
-          }
-        } catch (err) {
-          content = `# Failed to read file: ${err}`;
-        }
+        // Shown in the editor rather than thrown: a browser preview should say why
+        // the file is missing, not look like the file is empty.
+        content = `# ${DESKTOP_REQUIRED_MESSAGE}`;
       }
 
       const newTab: OpenFileTab = {
@@ -1004,20 +966,8 @@ export function usePipeline(): UsePipelineReturn {
           return;
         }
       } else {
-        try {
-          const res = await fetch("/api/fs/write", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filePath: path, content: tab.content, projectRoot: activeProject.path }),
-          });
-          if (!res.ok) {
-            alert("Failed to write file to disk");
-            return;
-          }
-        } catch (err) {
-          alert(`Failed to write file: ${err}`);
-          return;
-        }
+        alert(DESKTOP_REQUIRED_MESSAGE);
+        return;
       }
 
       setOpenTabs((prev) =>
@@ -1064,29 +1014,7 @@ export function usePipeline(): UsePipelineReturn {
           alert(`Failed to create: ${err}`);
         }
       } else {
-        try {
-          const res = await fetch("/api/fs/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ itemPath: targetPath, isDir, projectRoot: activeProject.path }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            alert(`Failed to create: ${data?.error || res.statusText}`);
-            return;
-          }
-          await refreshProjectFiles();
-          if (!isDir) {
-            openFile({
-              name: cleanName.split("/").pop() || cleanName,
-              path: data.path || targetPath,
-              is_dir: false,
-              size_bytes: 0,
-            });
-          }
-        } catch (err) {
-          alert(`Failed to create: ${err}`);
-        }
+        alert(DESKTOP_REQUIRED_MESSAGE);
       }
     },
     [isTauriAvailable, activeProject.path, refreshProjectFiles, openFile]
@@ -1107,17 +1035,7 @@ export function usePipeline(): UsePipelineReturn {
           console.error("Delete failed:", err);
         }
       } else {
-        try {
-          await fetch("/api/fs/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ targetPath: path, projectRoot: activeProject.path }),
-          });
-          closeTab(path);
-          await refreshProjectFiles();
-        } catch (err) {
-          console.error("Delete failed:", err);
-        }
+        console.warn(DESKTOP_REQUIRED_MESSAGE);
       }
     },
     [isTauriAvailable, activeProject.path, closeTab, refreshProjectFiles]
@@ -1141,22 +1059,7 @@ export function usePipeline(): UsePipelineReturn {
           alert(`Scaffold failed: ${err}`);
         }
       } else {
-        try {
-          const res = await fetch("/api/fs/create-project", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, template, parentDir }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setActiveProject({ name: data.name, path: data.projectPath });
-            setOpenTabs([]);
-            setActiveTabPath(null);
-            setCurrentDiff("");
-          }
-        } catch (err) {
-          alert(`Scaffold failed: ${err}`);
-        }
+        alert(DESKTOP_REQUIRED_MESSAGE);
       }
     },
     [isTauriAvailable, refreshProjectFiles]

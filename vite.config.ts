@@ -1,10 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { realFilesystemPlugin } from "./vite-fs-bridge";
+import { apiGuardPlugin } from "./vite-api-guard";
 
 // https://vitejs.dev/config/
 export default defineConfig(async ({ command }) => ({
-  plugins: [react(), ...(command === "serve" ? [realFilesystemPlugin()] : [])],
+  plugins: [react(), ...(command === "serve" ? [apiGuardPlugin()] : [])],
 
   // Vite options tailored for development and Tauri desktop integration
   clearScreen: false,

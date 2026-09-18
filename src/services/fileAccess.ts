@@ -8,7 +8,7 @@
  * all stopped working once the app was bundled.
  */
 
-import { hasIpc } from "./engineBridge";
+import { desktopRequired, hasIpc } from "./engineBridge";
 
 async function invokeTauri<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -20,15 +20,7 @@ export async function readTextFile(filePath: string, projectRoot: string): Promi
   if (hasIpc()) {
     return invokeTauri<string>("read_file_content", { filePath, projectRoot });
   }
-  const res = await fetch("/api/fs/read", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filePath, projectRoot }),
-  });
-  if (!res.ok) throw new Error(`Could not read ${filePath} (HTTP ${res.status})`);
-  const data = await res.json();
-  if (typeof data?.content !== "string") throw new Error(`Could not read ${filePath}`);
-  return data.content;
+  throw desktopRequired("Reading project files");
 }
 
 /** Read any file as a `data:` URL, for previewing images, video and audio. */
@@ -36,15 +28,7 @@ export async function readFileAsDataUrl(filePath: string, projectRoot: string): 
   if (hasIpc()) {
     return invokeTauri<string>("read_file_base64", { filePath, projectRoot });
   }
-  const res = await fetch("/api/fs/read-base64", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filePath, projectRoot }),
-  });
-  if (!res.ok) throw new Error(`Could not read ${filePath} (HTTP ${res.status})`);
-  const data = await res.json();
-  if (typeof data?.dataUrl !== "string") throw new Error(`Could not read ${filePath}`);
-  return data.dataUrl;
+  throw desktopRequired("Previewing files");
 }
 
 export async function writeTextFile(
@@ -56,10 +40,5 @@ export async function writeTextFile(
     await invokeTauri<void>("write_file_content", { filePath, content, projectRoot });
     return;
   }
-  const res = await fetch("/api/fs/write", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filePath, content, projectRoot }),
-  });
-  if (!res.ok) throw new Error(`Could not write ${filePath} (HTTP ${res.status})`);
+  throw desktopRequired("Saving files");
 }

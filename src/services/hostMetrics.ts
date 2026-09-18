@@ -1,11 +1,10 @@
 /**
  * hostMetrics.ts — disk, process and cleanup reads for the Performance page.
  *
- * Same shape as `systemMetricsService`: prefer the desktop shell, fall back to
- * the dev bridge for a plain browser. The desktop commands are the real
- * implementation — the bridge's process list was hardcoded (it still listed the
- * deleted gauntlet as a running process), and neither path worked in a bundle
- * because the page called `/api/system/*` directly and nothing served it.
+ * Desktop-only: disk, processes and cleanup come from the shell's own
+ * `sysinfo` calls. In a browser there is nothing to read and the Performance
+ * page says so rather than showing invented numbers — the old bridge returned a
+ * hardcoded process list, complete with a row for a gauntlet this app deleted.
  */
 
 import { hasIpc } from "./engineBridge";
@@ -21,11 +20,7 @@ export async function fetchStorageMetrics(projectRoot: string): Promise<StorageM
     if (hasIpc()) {
       return await invokeTauri<StorageMetrics>("fetch_system_storage", { projectRoot });
     }
-    const res = await fetch(
-      `/api/system/storage?projectRoot=${encodeURIComponent(projectRoot || "")}`,
-    );
-    if (!res.ok) return null;
-    return (await res.json()) as StorageMetrics;
+    return null;
   } catch {
     return null;
   }
@@ -36,10 +31,7 @@ export async function fetchRunningProcesses(): Promise<RunningProcessItem[] | nu
     if (hasIpc()) {
       return await invokeTauri<RunningProcessItem[]>("fetch_system_processes");
     }
-    const res = await fetch("/api/system/processes");
-    if (!res.ok) return null;
-    const data = await res.json();
-    return Array.isArray(data?.processes) ? (data.processes as RunningProcessItem[]) : null;
+    return null;
   } catch {
     return null;
   }
@@ -54,13 +46,7 @@ export async function runSafeCleanup(
         projectRoot,
       });
     }
-    const res = await fetch("/api/system/cleanup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectRoot }),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as { reclaimedMb: number; message: string };
+    return null;
   } catch {
     return null;
   }

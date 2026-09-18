@@ -11,7 +11,7 @@
  * and ask whether one is configured, but the value never comes back to the page.
  */
 
-import { engineCall, hasDevBridge, hasIpc } from "./engineBridge";
+import { desktopRequired, engineCall, hasIpc } from "./engineBridge";
 
 export interface StoredProvider {
   baseUrl: string;
@@ -174,9 +174,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const [rawPath, search] = path.split("?");
   const query = new URLSearchParams(search || "");
 
-  // IPC whenever it exists — the packaged app and `tauri dev` both take this path,
-  // so the transport that ships is the one under test. The browser bridge is the
-  // fallback. Same call, different transport.
+  // IPC whenever it exists — the packaged app and `tauri dev` both take this
+  // path, so the transport that ships is the one under test.
   if (hasIpc()) {
     const route = ENGINE_ROUTES[`${method} ${rawPath}`];
     if (!route) throw new Error(`no engine route for ${method} ${rawPath}`);
@@ -187,21 +186,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return engineCall<T>("db", [route.command, JSON.stringify(payload)]);
   }
 
-  const res = await fetch(path, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => null);
-    throw new Error(detail?.error || `${path} failed (HTTP ${res.status})`);
-  }
-  return (await res.json()) as T;
+  // No desktop shell: the database lives behind the engine and there is no other
+  // route to it. Nothing here pretends to work in a browser.
+  throw desktopRequired("App settings and history");
 }
 
 export const appStore = {
-  // Reachable in development through the bridge and in the packaged app through
-  // IPC, so the database is genuinely available in both.
-  available: hasIpc() || hasDevBridge,
+  /** True only inside the desktop shell, where the engine is reachable. */
+  available: hasIpc(),
 
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings: () => request<Record<string, unknown>>("/api/app/settings"),

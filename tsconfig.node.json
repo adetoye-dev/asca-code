@@ -1,5 +1,5 @@
 {
-  "//": "Type-checks the Vite dev-server bridge. It is a Node-side module that is NOT part of the browser bundle, so it has its own relaxed config (lots of untyped request bodies) — but it still catches undefined identifiers, bad imports and typos, which the browser-only config never saw.",
+  "//": "Type-checks the Vite config and its dev-server plugin. These are Node-side modules that are NOT part of the browser bundle, so they get their own config.",
   "compilerOptions": {
     "target": "ES2020",
     "lib": ["ES2020", "DOM"],
@@ -15,5 +15,5 @@
     "noUnusedParameters": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["vite-fs-bridge.ts"]
+  "include": ["vite-api-guard.ts", "vite.config.ts"]
 }

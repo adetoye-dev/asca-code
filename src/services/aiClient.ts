@@ -8,7 +8,7 @@
  * `ai:frame` events instead.
  */
 
-import { engineCall, hasIpc } from "./engineBridge";
+import { desktopRequiredResponse, engineCall, hasIpc } from "./engineBridge";
 
 /** Bridge action → engine subcommand action. Empty means "not migrated yet". */
 const MIGRATED: Record<string, string> = {
@@ -28,8 +28,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 export async function aiFetch(path: string, init?: RequestInit): Promise<Response> {
   const [route, query] = path.replace(/^\/api\/ai\//, "").split("?");
   const action = route;
-  // No IPC, or not migrated yet: keep using whatever the dev bridge provides.
-  if (!hasIpc() || !MIGRATED[action]) return fetch(path, init);
+  // No desktop shell, or a route with no engine action yet. There is no
+  // second implementation to fall back to any more, so say so.
+  if (!hasIpc() || !MIGRATED[action]) return desktopRequiredResponse("AI requests");
 
   let payload: Record<string, unknown> = {};
   // GET routes carry their arguments in the query string.

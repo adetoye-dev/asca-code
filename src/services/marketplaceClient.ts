@@ -9,7 +9,7 @@
  * Returns a real `Response` so the existing call sites are unchanged.
  */
 
-import { engineCall, hasIpc } from "./engineBridge";
+import { desktopRequiredResponse, engineCall, hasIpc } from "./engineBridge";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -19,7 +19,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 export async function marketplaceFetch(path: string, init?: RequestInit): Promise<Response> {
-  if (!hasIpc()) return fetch(path, init);
+  if (!hasIpc()) return desktopRequiredResponse("The marketplace");
 
   const [rawPath, search] = path.split("?");
   const method = (init?.method || "GET").toUpperCase();

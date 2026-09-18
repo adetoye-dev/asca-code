@@ -6,7 +6,7 @@
  * server was up — in a packaged build the whole panel returned nothing.
  */
 
-import { engineCall, hasIpc } from "./engineBridge";
+import { desktopRequired, engineCall, hasIpc } from "./engineBridge";
 
 export interface SearchMatch {
   lineNumber: number;
@@ -65,19 +65,11 @@ export interface ReplaceParams {
   lineNumbers?: number[];
 }
 
-async function call<T>(action: string, payload: unknown, fallbackStatus = 200): Promise<T> {
+async function call<T>(action: string, payload: unknown): Promise<T> {
   if (hasIpc()) {
     return engineCall<T>("fs", [action, JSON.stringify(payload)]);
   }
-  const res = await fetch(`/api/fs/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok && res.status !== fallbackStatus) {
-    throw new Error(`${action} failed (HTTP ${res.status})`);
-  }
-  return (await res.json()) as T;
+  throw desktopRequired(action === "search" ? "Workspace search" : "Workspace replace");
 }
 
 export async function searchWorkspace(params: SearchParams): Promise<SearchResponse> {

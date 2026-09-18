@@ -6,7 +6,7 @@
  * the local Deterministic AST engine.
  */
 
-import { hasIpc } from "./engineBridge";
+import { DESKTOP_REQUIRED_MESSAGE, hasIpc } from "./engineBridge";
 
 /**
  * Stream a reply through the app's own IPC channel.
@@ -142,79 +142,7 @@ export async function streamChatCompletion({
     return;
   }
 
-  try {
-    const res = await fetch("/api/ai/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider,
-        model,
-        messages,
-        images,
-        projectRoot,
-        baseUrl,
-        apiKey,
-      }),
-      signal,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      onError(`Server returned HTTP ${res.status}: ${errText || res.statusText}`);
-      return;
-    }
-
-    if (!res.body) {
-      onError("No response stream body received.");
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-
-      for (const part of parts) {
-        const line = part.replace(/^data: /, "").trim();
-        if (!line) continue;
-        try {
-          const payload = JSON.parse(line) as {
-            delta?: string;
-            done?: boolean;
-            error?: string;
-            [key: string]: any;
-          };
-
-          if (payload.error) {
-            onError(payload.error);
-            return;
-          }
-
-          if (payload.delta) {
-            onDelta(payload.delta);
-          }
-
-          if (payload.done) {
-            onDone(payload);
-            return;
-          }
-        } catch {}
-      }
-    }
-
-    onDone();
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      onDone({ aborted: true });
-      return;
-    }
-    onError(err.message || "Failed to communicate with AI chat service.");
-  }
+  // No desktop shell: `chat_stream` is how a reply arrives, and there is no
+  // fallback transport any more.
+  onError(DESKTOP_REQUIRED_MESSAGE);
 }

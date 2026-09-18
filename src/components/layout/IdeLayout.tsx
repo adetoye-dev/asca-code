@@ -50,6 +50,7 @@ import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
 import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
+import { DESKTOP_REQUIRED_MESSAGE } from "../../services/engineBridge";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
@@ -903,15 +904,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     projectRoot: activeProject.path,
                   });
                 } else {
-                  await fetch("/api/fs/write", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      filePath: path,
-                      content: modified,
-                      projectRoot: activeProject.path,
-                    }),
-                  });
+                  throw new Error(DESKTOP_REQUIRED_MESSAGE);
                 }
                 applyPatchToTab(path, modified);
               } catch (err) {

@@ -17,6 +17,8 @@ import { useState, useEffect } from "react";
 import { usePipeline } from "./hooks/usePipeline";
 import { IdeLayout } from "./components/layout/IdeLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { DesktopRequiredBanner } from "./components/DesktopRequiredBanner";
+import { hasIpc } from "./services/engineBridge";
 import {
   OllamaSetupWizard,
   OllamaNotRunningBanner,
@@ -91,7 +93,12 @@ export function App() {
 
   return (
     <ErrorBoundary fallbackTitle="ACSA Code Workbench Error">
-      <IdeLayout {...pipeline} />
+      <div className="flex flex-col h-screen w-screen overflow-hidden">
+        {!hasIpc() && <DesktopRequiredBanner />}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <IdeLayout {...pipeline} />
+        </div>
+      </div>
 
       {showWizard && (
         <OllamaSetupWizard

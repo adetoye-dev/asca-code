@@ -149,9 +149,8 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
       } catch { /* fall through */ }
 
       if (active) {
-        // Browser-only last resort: the dev bridge streams the bytes directly.
-        const q = new URLSearchParams({ path: filePath, ...(projectRoot ? { projectRoot } : {}) });
-        setSrc(`/api/fs/raw?${q}`);
+        setHasError(true);
+        setErrorMessage("Previews need the desktop app — the browser has no file access.");
         setIsLoading(false);
       }
     };

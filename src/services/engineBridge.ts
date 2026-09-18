@@ -40,12 +40,30 @@ export function isPackagedBuild(): boolean {
 }
 
 /**
- * True only when there is no IPC and a dev server is serving `/api/*` — i.e. the
- * UI is open in a plain browser. Kept so `npm run dev` keeps working while the
- * bridge is retired; nothing in the app depends on it any more.
+ * The app's backend is the engine, and in a browser there is no way to reach it.
+ *
+ * Every caller used to fall back to `fetch("/api/...")`, served by
+ * `vite-fs-bridge.ts` — a Vite dev-server middleware that reimplemented the
+ * whole backend in TypeScript. Two implementations meant two behaviours to keep
+ * in step, and the browser one was the only one that ever got exercised during
+ * UI work, so packaging consistently broke things the dev server hid. That
+ * bridge is gone; this is what a browser gets instead of a silent failure.
  */
-export const hasDevBridge =
-  !hasIpc() && typeof window !== "undefined" && window.location.protocol.startsWith("http");
+export const DESKTOP_REQUIRED_MESSAGE =
+  "This needs the ACSA Code desktop app. Run `npm run dev:app` (or launch the app) — " +
+  "the browser preview has no backend.";
+
+export function desktopRequired(feature: string): Error {
+  return new Error(`${feature} needs the ACSA Code desktop app. ${DESKTOP_REQUIRED_MESSAGE}`);
+}
+
+/** Same message, shaped as the JSON `Response` the client helpers return. */
+export function desktopRequiredResponse(feature: string): Response {
+  return new Response(
+    JSON.stringify({ ok: false, success: false, error: `${feature}: ${DESKTOP_REQUIRED_MESSAGE}` }),
+    { status: 501, headers: { "Content-Type": "application/json" } },
+  );
+}
 
 /**
  * Run an engine subcommand over IPC and unwrap its `{ok, data}` envelope.

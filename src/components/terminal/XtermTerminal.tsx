@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { hasIpc } from "../../services/engineBridge";
+import { DESKTOP_REQUIRED_MESSAGE, hasIpc } from "../../services/engineBridge";
 
 /** Call the terminal IPC channel when it exists, else the dev bridge endpoint. */
 async function invokeTerminal<T = void>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -39,7 +39,6 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const eventSourceRef = useRef<EventSource | null>(null);
     /** PID of the shell currently attached, so a replaced shell's exit is ignored. */
     const terminalPidRef = useRef<number | null>(null);
     const [isConnected, setIsConnected] = useState(false);
@@ -48,14 +47,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
 
     const sendResize = useCallback((cols: number, rows: number) => {
       if (cols > 0 && rows > 0) {
-        const send = hasIpc()
-          ? invokeTerminal("terminal_resize", { cols, rows })
-          : fetch("/api/terminal/resize", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ cols, rows }),
-            }).then(() => undefined);
-        send.catch(() => {});
+        if (!hasIpc()) return;
+        invokeTerminal("terminal_resize", { cols, rows }).catch(() => {});
       }
     }, []);
 
@@ -78,14 +71,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
       if (!inputBufferRef.current) return;
       const dataToSend = inputBufferRef.current;
       inputBufferRef.current = "";
-      const send = hasIpc()
-        ? invokeTerminal("terminal_input", { data: dataToSend })
-        : fetch("/api/terminal/input", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ data: dataToSend }),
-          }).then(() => undefined);
-      send.catch(() => {});
+      if (!hasIpc()) return;
+      invokeTerminal("terminal_input", { data: dataToSend }).catch(() => {});
     }, []);
 
     const sendInput = useCallback(
@@ -108,7 +95,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     );
 
     const initShell = useCallback(
-      async (force = false) => {
+      async () => {
         try {
           const cols = termRef.current?.cols || 80;
           const rows = termRef.current?.rows || 24;
@@ -117,15 +104,9 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
             setIsConnected(true);
             onConnectionChangeRef.current?.(true);
           } else {
-            const res = await fetch("/api/terminal/spawn", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ cwd, cols, rows, force }),
-            });
-            if (res.ok) {
-              setIsConnected(true);
-              onConnectionChangeRef.current?.(true);
-            }
+            termRef.current?.writeln(`\r\n\x1b[33m${DESKTOP_REQUIRED_MESSAGE}\x1b[0m\r\n`);
+            setIsConnected(false);
+            onConnectionChangeRef.current?.(false);
           }
         } catch {
           termRef.current?.writeln("\r\n\x1b[31mFailed to connect to local shell process.\x1b[0m\r\n");
@@ -154,7 +135,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const handleRestart = useCallback(() => {
       termRef.current?.clear();
       termRef.current?.writeln("\r\n\x1b[33mRestarting interactive shell session...\x1b[0m\r\n");
-      initShell(true);
+      initShell();
       termRef.current?.focus();
     }, [initShell]);
 
@@ -270,35 +251,15 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
           unlisteners.forEach((off) => off());
         };
       } else {
-        const es = new EventSource("/api/terminal/stream");
-        eventSourceRef.current = es;
-
-        es.onopen = () => {
-          setIsConnected(true);
-          onConnectionChangeRef.current?.(true);
-        };
-
-        es.onmessage = (event) => {
-          try {
-            const payload = JSON.parse(event.data);
-            if (payload.data) {
-              term.write(payload.data);
-            }
-          } catch {
-            term.write(event.data);
-          }
-        };
-
-        es.onerror = () => {
-          setIsConnected(false);
-          onConnectionChangeRef.current?.(false);
-        };
-
-        closeStream = () => es.close();
+        // No desktop shell: no PTY, and no channel to stream its output over.
+        // `initShell` writes the reason into the terminal itself.
+        setIsConnected(false);
+        onConnectionChangeRef.current?.(false);
+        closeStream = () => {};
       }
 
       // 6. Spawn backend shell process
-      initShellRef.current(false);
+      initShellRef.current();
 
       // Initial resize sync & focus
       const timer = setTimeout(() => {
@@ -356,7 +317,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     // Respawn shell if project directory changes
     useEffect(() => {
       if (termRef.current && cwd) {
-        initShell(false);
+        initShell();
       }
     }, [cwd, initShell]);
 
