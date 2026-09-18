@@ -57,7 +57,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
 | Flake budget | **[done]** | The default suite is deterministic and offline: 92 Python tests plus 12 Rust tests, none of which touch the network. The two real-runtime tests are opt-in and self-skipping, so they cannot flake the build. |
 | Frontend tests | **[partial]** | Vitest runs in `verify` (`npm run test:ui`), covering the services layer: the approval decision vocabulary, the ask-me/app-server rule, the local-provider notes, and the model-registry reconciliation — including the deleted-model bug, which a deliberately broken `syncOllamaModels` fails. Not covered: components. There is no jsdom and no React Testing Library, so nothing renders — the model picker, layout and z-index fixes are still only verified by hand. |
-| Generated-class check | **[open]** | Tailwind dropped 13 utility classes silently because an opacity modifier cannot be applied to a `var()` colour, and nothing said so. A build step that greps the source for `bg-*`/`text-*`/`border-*` and asserts each has a generated rule would catch the next one. |
+| Generated-class check | **[done]** | `scripts/check_generated_classes.mjs`, run by `npm run build`. It scans the app's own token utilities (`bg-workbench/60`, `bg-modal/95`, …) and fails if the built CSS has no rule for one — which is how thirteen of them shipped silently. Verified by re-introducing the bug: it names the two classes and exits non-zero. Scoped to the design tokens on purpose; checking every class would be all false positives. |
 
 ## UX & accessibility
 
@@ -98,7 +98,8 @@ Anything marked open is a real gap for shipping to someone else's machine.
    that collects the crash log beside the settings and versions into one file to attach.
 3. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
 4. **Component tests.** Vitest covers the services layer; nothing *renders*. The model
-   picker, the layout pass and the z-index scale are still verified by hand.
+   picker, the layout pass and the z-index scale are still verified by hand. This one
+   matters more than usual now: a UI revamp with no render tests is a rewrite on trust.
 5. **A Backup / Restore surface in Settings**, then **OS keychain** for credentials.
    The engine half exists and is verified; the user cannot reach it.
 6. **The manual half of the accessibility audit** — the automated half is in `verify`.

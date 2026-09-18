@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:app": "tauri dev",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/check_generated_classes.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:ui",
     "test": "python3 -W error::ResourceWarning -m unittest discover -s tests -t .",
