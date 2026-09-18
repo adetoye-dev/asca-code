@@ -150,8 +150,8 @@ jobs:
           # stapling. Zipping first was a real defect: the ticket is attached to
           # the app by `stapler`, so a zip made before that carries no ticket and
           # only validates with a network round-trip.
-          SUBMIT_ZIP="$RUNNER_TEMP/ACSA Code.app.zip"
-          SHIP_ZIP=".tauri/target/release/bundle/macos/ACSA Code.app.zip"
+          SUBMIT_ZIP="$RUNNER_TEMP/ACSA-Code.app.zip"
+          SHIP_ZIP=".tauri/target/release/bundle/macos/ACSA-Code.app.zip"
           rm -f "$SUBMIT_ZIP" "$SHIP_ZIP"
           ditto -c -k --keepParent "$APP" "$SUBMIT_ZIP"
           xcrun notarytool submit "$SUBMIT_ZIP" \
@@ -190,7 +190,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ACSA-Code-macos-notarised
-          path: .tauri/target/release/bundle/macos/ACSA Code.app.zip
+          path: .tauri/target/release/bundle/macos/ACSA-Code.app.zip
           if-no-files-found: warn
           retention-days: 14
 
@@ -207,10 +207,16 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE=".tauri/target/release/bundle/macos"
-          rm -f "$BUNDLE/ACSA Code.app.tar.gz" "$BUNDLE/ACSA Code.app.tar.gz.sig"
-          tar -czf "$BUNDLE/ACSA Code.app.tar.gz" -C "$BUNDLE" "ACSA Code.app"
-          npx tauri signer sign "$BUNDLE/ACSA Code.app.tar.gz"
-          test -f "$BUNDLE/ACSA Code.app.tar.gz.sig" \
+          # Hyphenated on purpose. The app bundle is `ACSA Code.app`, but an
+          # *asset* name with a space is rewritten by GitHub when it is uploaded
+          # — `ACSA Code.app.tar.gz` arrived as `ACSA.Code.app.tar.gz` — so the
+          # manifest URL resolved to nothing and every update 404'd. The tarball
+          # stores the bundle under its real name; only the file we upload is
+          # renamed, and nothing has to be escaped or guessed.
+          rm -f "$BUNDLE/ACSA-Code.app.tar.gz" "$BUNDLE/ACSA-Code.app.tar.gz.sig"
+          tar -czf "$BUNDLE/ACSA-Code.app.tar.gz" -C "$BUNDLE" "ACSA Code.app"
+          npx tauri signer sign "$BUNDLE/ACSA-Code.app.tar.gz"
+          test -f "$BUNDLE/ACSA-Code.app.tar.gz.sig" \
             || { echo "::error::no signature was produced — TAURI_SIGNING_PRIVATE_KEY is probably unset"; exit 1; }
 
       # What the app fetches on launch. Written only for a tag, because the URL
@@ -224,7 +230,7 @@ jobs:
           tag = os.environ["GITHUB_REF_NAME"]
           version = json.load(open(".tauri/tauri.conf.json"))["version"]
           bundle = pathlib.Path(".tauri/target/release/bundle/macos")
-          signature = (bundle / "ACSA Code.app.tar.gz.sig").read_text().strip()
+          signature = (bundle / "ACSA-Code.app.tar.gz.sig").read_text().strip()
           manifest = {
               "version": version,
               "notes": f"Built from {os.environ.get('GITHUB_SHA', '')[:8]}.",
@@ -234,7 +240,7 @@ jobs:
                   "darwin-aarch64": {
                       "signature": signature,
                       "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
-                             f"/releases/download/{tag}/ACSA%20Code.app.tar.gz",
+                             f"/releases/download/{tag}/ACSA-Code.app.tar.gz",
                   }
               },
           }
@@ -251,9 +257,9 @@ jobs:
           # not built here: it has to be made *from* the stapled app, and Tauri's
           # bundler cannot do that (see the Bundle step).
           files: |
-            .tauri/target/release/bundle/macos/ACSA Code.app.zip
-            .tauri/target/release/bundle/macos/ACSA Code.app.tar.gz
-            .tauri/target/release/bundle/macos/ACSA Code.app.tar.gz.sig
+            .tauri/target/release/bundle/macos/ACSA-Code.app.zip
+            .tauri/target/release/bundle/macos/ACSA-Code.app.tar.gz
+            .tauri/target/release/bundle/macos/ACSA-Code.app.tar.gz.sig
             .tauri/target/release/bundle/macos/latest.json
           body: |
             Built from ${{ github.sha }}.
