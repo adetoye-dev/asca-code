@@ -740,49 +740,78 @@ export function addCustomModelToProvider(
  * - Auto-selects the optimal local code worker based on capability ranking.
  * - Dispatches 'acsa:models-updated' event to notify UI components.
  */
+/** Whether a model name and an installed tag refer to the same model. */
+function modelMatches(installed: string, wanted: string): boolean {
+  if (!installed || !wanted) return false;
+  return (
+    installed === wanted ||
+    installed === `${wanted}:latest` ||
+    wanted === `${installed}:latest` ||
+    installed.startsWith(`${wanted}:`) ||
+    wanted.startsWith(`${installed}:`)
+  );
+}
+
+/** Forget the saved chat model. Used when the model it names no longer exists. */
+export function clearActiveSelectedModel(): void {
+  selectedModelCache = null;
+  void appStore.setSetting("selected_model", null).catch(() => {});
+  notifyModelsUpdated();
+}
+
+/**
+ * Reconcile the Ollama provider with what is actually installed.
+ *
+ * The list is the daemon's, not ours: models get deleted outside the app, and a
+ * registry that only ever grew showed them forever — which is exactly what was
+ * reported. Everything else here follows from the new list: `selectedModel`
+ * cannot name something that is gone, and a *saved* chat selection pointing at a
+ * deleted model is cleared, because the agent resolves its model from that and
+ * would otherwise hand a missing model to the runtime.
+ *
+ * Written through `saveProviderConfig`, which updates the in-memory registry and
+ * the provider row. The previous version mutated the clone `loadAllProviders`
+ * returns and wrote localStorage, so the next read put the deleted models back.
+ */
 export function syncOllamaModels(
   installedModels: string[],
   activeModel?: string
 ): Record<AIProviderId, AIProviderConfig> {
   const all = loadAllProviders();
-  if (all.ollama) {
-    const cleanInstalled = Array.from(new Set(installedModels.filter(Boolean)));
-    all.ollama.availableModels = cleanInstalled;
-    all.ollama.isConnected = cleanInstalled.length > 0;
+  if (!all.ollama) return all;
 
-    const bestWorker = autoSelectBestLocalWorker(cleanInstalled);
-    if (bestWorker) {
-      setAutoSelectedLocalWorker(bestWorker);
-    }
+  const cleanInstalled = Array.from(new Set(installedModels.filter(Boolean)));
+  const current = all.ollama.selectedModel || "";
+  const bestWorker = autoSelectBestLocalWorker(cleanInstalled);
 
-    if (activeModel && cleanInstalled.some((m) => m === activeModel || m.startsWith(`${activeModel}:`))) {
-      all.ollama.selectedModel = activeModel;
-    } else {
-      const current = all.ollama.selectedModel || "";
-      const currentExists = cleanInstalled.some(
-        (m) =>
-          m === current ||
-          m === `${current}:latest` ||
-          current === `${m}:latest` ||
-          m.startsWith(`${current}:`) ||
-          current.startsWith(`${m}:`)
-      );
-      if (currentExists) {
-        all.ollama.selectedModel = current;
-      } else if (bestWorker) {
-        all.ollama.selectedModel = bestWorker;
-      } else if (cleanInstalled.length > 0) {
-        all.ollama.selectedModel = cleanInstalled[0];
-      }
-    }
+  let selectedModel = current;
+  if (activeModel && cleanInstalled.some((m) => modelMatches(m, activeModel))) {
+    selectedModel = activeModel;
+  } else if (cleanInstalled.some((m) => modelMatches(m, current))) {
+    selectedModel = current;
+  } else if (bestWorker) {
+    selectedModel = bestWorker;
+  } else if (cleanInstalled.length > 0) {
+    selectedModel = cleanInstalled[0];
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
-    }
-  } catch {}
-  return all;
+
+  if (bestWorker) setAutoSelectedLocalWorker(bestWorker);
+
+  const saved = getActiveSelectedModel();
+  if (
+    saved &&
+    saved.providerId === "ollama" &&
+    !cleanInstalled.some((m) => modelMatches(m, saved.model))
+  ) {
+    clearActiveSelectedModel();
+  }
+
+  return saveProviderConfig({
+    ...all.ollama,
+    availableModels: cleanInstalled,
+    isConnected: cleanInstalled.length > 0,
+    selectedModel,
+  });
 }
 
 export interface ConfiguredModelItem {

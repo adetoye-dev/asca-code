@@ -8,7 +8,7 @@
  *    streamed into the transcript step by step.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Icon } from "../ui/Icon";
 import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users } from "lucide-react";
 import type { PipelineStatus, PipelineOutputLine } from "../../types/telemetry";
@@ -23,11 +23,16 @@ import {
   resolveInitialSelectedModel,
   saveActiveSelectedModel,
   getActiveSelectedModel,
+  syncOllamaModels,
 } from "../../services/aiModelManager";
 import {
   ProviderLogo,
 } from "../ui/BrandLogos";
-import { openAiManagementDashboard, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
+import {
+  openAiManagementDashboard,
+  checkOllamaStatus,
+  EVENT_START_CODING_WITH_OLLAMA,
+} from "../../services/ollamaSetup";
 import {
   streamChatCompletion,
   type ChatMessage,
@@ -221,6 +226,9 @@ export function AiAssistantChat({
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const heroMenuRef = useRef<HTMLDivElement>(null);
+  /** The row for the model in use, so the list can open on it. */
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const heroModeMenuRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -325,6 +333,44 @@ export function AiAssistantChat({
     prevStatusRef.current = status;
   }, [status, failureDetail, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
+  /**
+   * Ask Ollama what is actually installed, and believe it.
+   *
+   * Models are deleted outside the app, and the registry only ever grew, so a
+   * deleted model stayed in this picker forever. The daemon is the source of
+   * truth; refresh whenever the list is about to be looked at. `syncOllamaModels`
+   * also clears a saved selection that names a model that is gone, because the
+   * agent resolves its model from that.
+   */
+  const refreshLocalModels = useCallback(async () => {
+    try {
+      const status = await checkOllamaStatus();
+      if (!status.running) return;
+      syncOllamaModels(status.models);
+      setConfiguredModels(getConfiguredModelsList());
+    } catch {
+      /* Not installed, or not running: leave the registry as it is. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLocalModels();
+  }, [refreshLocalModels]);
+
+  useEffect(() => {
+    if (isModelMenuOpen) void refreshLocalModels();
+  }, [isModelMenuOpen, refreshLocalModels]);
+
+  // The list is taller than the panel when a window is short, so it used to open
+  // showing rows below the model actually in use. Start on the selected row.
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    const timer = window.setTimeout(() => {
+      selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isModelMenuOpen]);
+
   // Sync available models and listen for global updates
   useEffect(() => {
     const refresh = () => {
@@ -426,6 +472,7 @@ export function AiAssistantChat({
     const handleClickOutside = (e: MouseEvent) => {
       if (
         (!menuRef.current || !menuRef.current.contains(e.target as Node)) &&
+        (!modelMenuRef.current || !modelMenuRef.current.contains(e.target as Node)) &&
         (!heroMenuRef.current || !heroMenuRef.current.contains(e.target as Node))
       ) {
         setIsModelMenuOpen(false);
@@ -679,8 +726,9 @@ export function AiAssistantChat({
 
     return (
       <div
+        ref={modelMenuRef}
         className={`absolute ${
-          isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-1.5 left-0"
+          isCenterHero ? "top-full mt-2 left-0 max-w-[calc(100vw-2rem)]" : "bottom-full mb-1.5 right-0 max-w-[calc(100%-0.5rem)]"
         } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col text-left`}
       >
         <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-800/80 shrink-0">
@@ -739,16 +787,17 @@ export function AiAssistantChat({
               return (
                 <button
                   key={`${item.providerId}-${item.model}`}
+                  ref={isSelected ? selectedRowRef : undefined}
                   type="button"
                   onClick={() => {
                     handleSelectModel(item);
                     setIsModelMenuOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                  className={`w-full shrink-0 min-h-[1.75rem] flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                     isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
+                  <div className="flex items-center gap-2 min-w-0 truncate">
                     <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate font-mono text-[11px]">{item.model}</span>
                     {/* A local model runs on this machine, cannot be as capable as
@@ -1713,7 +1762,7 @@ Click to re-index project.`}
               />
 
               {/* Bottom control strip inside card */}
-              <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-zinc-800/70 mt-1">
+              <div className="relative flex items-center justify-between gap-1.5 pt-2 border-t border-zinc-800/70 mt-1">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   {/* Add Context (+) Dropdown */}
                   <div className="relative shrink-0" ref={contextMenuRef}>
@@ -1780,7 +1829,6 @@ Click to re-index project.`}
                       <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 shrink-0 ml-auto" />
                     </button>
 
-                    {isModelMenuOpen && renderModelMenu(false)}
                   </div>
 
                 </div>
@@ -1812,6 +1860,13 @@ Click to re-index project.`}
                     </button>
                   )}
                 </div>
+
+                {/* Anchored to the whole control strip rather than the pill. The
+                    pill wrapper is capped at 150px, so a 288px menu hung off the
+                    side of a narrow chat panel and was clipped — which is what
+                    "the picker UI is broken" was. Against the strip, `max-w` is a
+                    percentage of the composer and the menu always fits. */}
+                {isModelMenuOpen && renderModelMenu(false)}
               </div>
             </div>
           </div>
