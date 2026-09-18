@@ -14,7 +14,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Credentials never reach the page | **[done]** | Keys are write-only across the API (`hasApiKey`, no value). Resolved server-side by the engine, and put into the agent child's environment by the Rust layer. |
 | Database file permissions | **[done]** | Data dir `0700`, database and its WAL/SHM `0600`. |
 | Encryption at rest | **[open]** | The standard library has no authenticated cipher, so secrets sit in a `0600` file rather than a fake-encrypted one. Next step is OS keychain (macOS Keychain / Windows Credential Manager) via a Tauri plugin. |
-| Backup / restore | **[partial]** | `core-engine/backup.py` exports and imports the database, verified end to end through the frozen binary. Two decisions worth knowing: a default export **leaves credentials behind** and then *vacuums*, because deleting the rows is not enough — SQLite keeps the bytes in free pages, and `strings` finds them; `--with-secrets` is there for a real migration. An import keeps the database it replaced as `.before-import`, so it is not a one-way door. Missing: nothing in the UI calls it yet, so a packaged-app user has no way to reach it. |
+| Backup / restore | **[done]** | `core-engine/backup.py` exports and imports the database, and Settings → **Data & backups** drives it (`src/services/backupRestore.ts`, `DataPane.tsx`). Two decisions worth knowing: a default export **leaves credentials behind** and then *vacuums*, because deleting the rows is not enough — SQLite keeps the bytes in free pages, and `strings` finds them; `--with-secrets` is there for a real migration. An import keeps the database it replaced as `.before-import`, so it is not a one-way door, and the UI says to restart rather than pretending the running app picked the change up. |
 | Data retention | **[partial]** | Chat trimmed to the 100 most recent messages per project; the usage ledger grows without bound. |
 
 ## Configuration & secrets
@@ -73,8 +73,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Crash reporting | **[done]** | `ErrorBoundary` plus two global handlers (window `error`, `unhandledrejection`) write a record through `crash_log.py` to `crashes.log` in the data directory. Local-only, matching the no-telemetry stance: redacted on the way in by the same key/value rules the runtime redactor uses plus known key prefixes (`sk-`, `ghp_`, `AKIA`, …), `0600`, rotated to the last 200 so a crash loop cannot fill a disk. Verified in the frozen engine. Not done: nothing in the UI points at the file yet, and there is no support bundle that collects it with the logs. |
-| Structured logs | **[partial]** | The engine logs JSON lines to stdout; there is no rotation, retention, or support bundle. |
+| Crash reporting | **[done]** | `ErrorBoundary` plus two global handlers (window `error`, `unhandledrejection`) write a record through `crash_log.py` to `crashes.log` in the data directory. Local-only, matching the no-telemetry stance: redacted on the way in by the same key/value rules the runtime redactor uses plus known key prefixes (`sk-`, `ghp_`, `AKIA`, …), `0600`, rotated to the last 200 so a crash loop cannot fill a disk. Verified in the frozen engine, and the last 20 entries ship inside the support bundle. |
+| Support bundle | **[done]** | `core-engine/support.py`, reached from Settings → **Data & backups**. One JSON file: app + schema version, OS, paths, table row counts, redacted settings, recent crashes. Deliberately omits credential values (the `secrets` table is counted, never read), chat history, and any environment dump, and shortens the home directory to `~` in keys as well as values — the render test is `tests/test_support.py`, which asserts a real key does not reach the file. |
+| Structured logs | **[partial]** | The engine logs JSON lines to stdout and the crash log is collected by the support bundle; stdout itself still has no rotation or retention. |
 | Telemetry | **[partial]** | No usage data leaves the machine — metrics are local (`usage_events`). The one outbound call is the **update check**, which reveals a version and an IP, so it is a visible setting (Settings → About, default on) rather than something that happens quietly. |
 | Dependency updates | **[open]** | No Dependabot or scheduled audit. `npm audit` is not wired into CI. |
 | Licence and third-party notices | **[done]** | MIT `LICENSE`; `THIRD-PARTY-NOTICES.md` generated from the runtime tree (`npm run notices`), embed­ding the SIL OFL text the bundled fonts require. Both ship **inside** the app bundle, and CI fails if the notices go stale or if either file is missing from a build. |
@@ -91,15 +92,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 ## Suggested order
 
-1. **One end-to-end update.** The check is proven — the app found `0.2.0` and showed the
-   button, and `latest.json` is anonymously reachable. What has never run is
-   *download → install → restart*: nobody has clicked Update on a published release.
-2. **A support bundle.** Redaction and crash reporting are done; what is missing is the button
-   that collects the crash log beside the settings and versions into one file to attach.
-3. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-4. **Render tests for the surfaces the revamp will touch.** Two components are covered;
+1. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
+2. **OS keychain** for credentials, so "encryption at rest" stops being an open row.
+3. **Render tests for the surfaces the revamp will touch.** Several components are covered;
    the model picker, the layout and the z-index scale are not.
-5. **A Backup / Restore surface in Settings**, then **OS keychain** for credentials.
-   The engine half exists and is verified; the user cannot reach it.
-6. **The manual half of the accessibility audit** — the automated half is in `verify`.
-7. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in.
+4. **The manual half of the accessibility audit** — the automated half is in `verify`.
+5. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in.

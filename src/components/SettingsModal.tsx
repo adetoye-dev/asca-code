@@ -19,6 +19,7 @@ import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight,
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 import { AboutPane } from "./settings/AboutPane";
+import { DataPane } from "./settings/DataPane";
 import { aiFetch } from "../services/aiClient";
 import {
   AGENT_APPROVAL_MODES,
@@ -109,6 +110,7 @@ const SETTINGS_TREE: TreeNode[] = [
     ],
   },
   { id: "marketplace", label: "Marketplace" },
+  { id: "data", label: "Data & backups" },
   { id: "about", label: "About" },
 ];
 
@@ -1070,6 +1072,8 @@ export function SettingsModal({
               )}
 
               {selectedSection === "about" && <AboutPane />}
+
+              {selectedSection === "data" && <DataPane />}
 
               {selectedSection === "marketplace" && (
                 <div className="space-y-4 max-w-2xl">
