@@ -56,7 +56,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Typecheck | **[done]** | `strict: true`, including the Node-side dev-bridge config. |
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
 | Flake budget | **[done]** | The default suite is deterministic and offline: 92 Python tests plus 12 Rust tests, none of which touch the network. The two real-runtime tests are opt-in and self-skipping, so they cannot flake the build. |
-| Frontend tests | **[partial]** | Vitest runs in `verify` (`npm run test:ui`), covering the services layer: the approval decision vocabulary, the ask-me/app-server rule, the local-provider notes, and the model-registry reconciliation — including the deleted-model bug, which a deliberately broken `syncOllamaModels` fails. Not covered: components. There is no jsdom and no React Testing Library, so nothing renders — the model picker, layout and z-index fixes are still only verified by hand. |
+| Frontend tests | **[done]** | Vitest runs in `verify`: services (approval vocabulary, model-registry reconciliation, updater preference) and, via jsdom, components — the update button renders nothing when there is nothing to say, says `Update` rather than a version number, installs only on a click, and offers the restart separately; the About pane says "up to date" only when the check said so and prints the reason when it failed. Component tests opt into jsdom per file with a docblock, so the service tests stay on node. |
 | Generated-class check | **[done]** | `scripts/check_generated_classes.mjs`, run by `npm run build`. It scans the app's own token utilities (`bg-workbench/60`, `bg-modal/95`, …) and fails if the built CSS has no rule for one — which is how thirteen of them shipped silently. Verified by re-introducing the bug: it names the two classes and exits non-zero. Scoped to the design tokens on purpose; checking every class would be all false positives. |
 
 ## UX & accessibility
@@ -97,9 +97,8 @@ Anything marked open is a real gap for shipping to someone else's machine.
 2. **A support bundle.** Redaction and crash reporting are done; what is missing is the button
    that collects the crash log beside the settings and versions into one file to attach.
 3. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-4. **Component tests.** Vitest covers the services layer; nothing *renders*. The model
-   picker, the layout pass and the z-index scale are still verified by hand. This one
-   matters more than usual now: a UI revamp with no render tests is a rewrite on trust.
+4. **Render tests for the surfaces the revamp will touch.** Two components are covered;
+   the model picker, the layout and the z-index scale are not.
 5. **A Backup / Restore surface in Settings**, then **OS keychain** for credentials.
    The engine half exists and is verified; the user cannot reach it.
 6. **The manual half of the accessibility audit** — the automated half is in `verify`.
