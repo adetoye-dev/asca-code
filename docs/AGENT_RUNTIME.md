@@ -100,71 +100,58 @@ helper it ships separately. Matching on their prose marked correct runs as
 
 ## Interactive approvals: the app-server protocol
 
-Not implemented. This is what it would take, verified against the binary.
+Not implemented. `scripts/probe_app_server.py` drives a complete turn over it, so
+the migration is a known quantity rather than an experiment — run it to see the
+stream.
 
-`codex app-server --listen stdio://` speaks JSON-RPC over stdio, and the binary
-can emit its own protocol definition — use it rather than guessing:
+`codex app-server --listen stdio://` speaks newline-delimited JSON-RPC. A run is
+**three requests**:
+
+```
+initialize     {clientInfo:{name,version}}                  -> userAgent, codexHome, platform
+thread/start   {model, modelProvider, cwd, approvalPolicy,  -> {thread:{id,…}}
+                approvalsReviewer, sandbox}
+turn/start     {threadId, input:[{type:"text", text:…}]}     -> {turn}
+```
+
+then the turn streams as notifications. Responses are `{"id":N,"result":…}` —
+the `jsonrpc` field is not echoed — and notifications are
+`{"method":…,"params":…,"emittedAtMs":…}`.
+
+Observed notification vocabulary on a real turn:
+
+```
+thread/started  thread/status/changed
+turn/started    turn/completed
+item/started    item/completed      item/agentMessage/delta
+thread/tokenUsage/updated
+warning         account/rateLimits/updated   remoteControl/status/changed
+```
+
+Two of those are strictly better than what `exec` gives us: **`item/agentMessage/delta`**
+streams the answer as it is produced, where `exec` only delivers whole
+`agent_message` items, and **`thread/tokenUsage/updated`** reports usage directly
+instead of being reconstructed from `turn.completed`.
+
+Approvals arrive as **server-initiated requests** that must be answered, which is
+the whole point: `exec` is one-shot with no channel for them, so with
+`approvalsReviewer = "user"` a request is auto-denied rather than shown. The four
+the schema defines are `execCommandApproval`, `applyPatchApproval`,
+`attestation/generate` and `openai/form`.
+
+Generate the full definition from the binary rather than guessing — it ships the
+schema and TypeScript bindings:
 
 ```bash
 codex app-server generate-json-schema --out /tmp/cx-schema
-codex app-server generate-ts --out /tmp/cx-ts     # if the TS bindings are wanted
+codex app-server generate-ts --out /tmp/cx-ts
 ```
 
-The shape: `initialize` (client name/version/capabilities), then
-`thread/start` (`cwd`, `model`, `modelProvider`, `approvalPolicy`,
-`approvalsReviewer`, `sandbox`, …), then `turn/start` (`threadId`, `input`), with
-`turn/steer` and `turn/interrupt` for a run in progress. Server → client events
-are `turn/started`, `turn/completed`, `turn/diff`, `turn/plan`, `item/started`,
-`item/completed`.
-
-Approvals arrive as **server-initiated requests** that must be answered:
-`execCommandApproval`, `applyPatchApproval`, `attestation/generate`,
-`openai/form`. That is the piece `exec` cannot do — it is one-shot with no
-channel to answer them, so with `approvals_reviewer = "user"` a request would be
-auto-denied rather than shown.
-
-Cost: a long-lived child instead of a process per run, request/response
-correlation, lifecycle management (respawn, per-thread queueing), and re-testing
-everything `exec` already does. It should be done as an isolated change with the
-`exec` path intact behind a flag — a half-migrated agent is worse than either
-end. `--listen` also supports `unix://` and `ws://`, and there is a `daemon`
-subcommand for a shared instance.
-
-## Token usage
-
-`turn.completed` carries the counts, one per turn:
-
-```json
-{"type":"turn.completed","usage":{"input_tokens":2050,"cached_input_tokens":0,
- "cache_write_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}}
-```
-
-Rust sums them and emits `codex:usage` just before `codex:exit`; the hook records
-one row in the usage ledger against the provider and model. Emitting it *before*
-the exit event matters — the UI treats `codex:exit` as the end of the run.
-
-## Approval modes
-
-Chosen up front in Settings → AI Assistant → Agent, and mapped in
-`src/services/agentApproval.ts`:
-
-| Mode | `approval_policy` | `approvals_reviewer` | `sandbox_mode` |
-| --- | --- | --- | --- |
-| Read only | `on-request` | `auto_review` | `read-only` |
-| Approve for me (default) | `on-request` | `auto_review` | `workspace-write` |
-| Full access | `never` | `user` | `danger-full-access` |
-
-There is no interactive "ask me" mode yet. `codex exec` is one-shot and
-non-interactive: it has no channel to answer `ExecApprovalRequest`, so a prompt
-would be auto-denied rather than shown. That needs the app-server protocol, which
-is a different transport; until then the mode picker *is* the approval surface,
-and the chat has no approve/reject card to mislead anyone.
-
-## Credentials
-
-The API key never travels over IPC. The Rust side asks the engine
-(`db providers.resolveKey`) and sets it in the child's environment as
-`ACSA_CODEX_API_KEY`; the provider table refers to it by name via `env_key`.
-
-The runtime uses its own `CODEX_HOME` under the app's data directory — never the
-user's `~/.codex` — so their own Codex setup is untouched.
+What a real implementation still needs: a long-lived child instead of a process
+per run, request/response correlation by id, lifecycle management (respawn, one
+turn at a time per thread), the approval UI wired back to a response, and
+re-testing everything `exec` already does — model catalog, MCP servers,
+attachments, `--oss` local providers, thread continuity. Do it as an isolated
+change with the `exec` path intact behind a flag; a half-migrated agent is worse
+than either end. `--listen` also supports `unix://` and `ws://`, and there is a
+`daemon` subcommand for a shared instance.
