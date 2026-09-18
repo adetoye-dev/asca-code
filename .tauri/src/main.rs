@@ -265,6 +265,100 @@ fn read_file_base64(file_path: String, project_root: String) -> Result<String, S
     ))
 }
 
+/// Standard base64 decode, the counterpart to `base64_encode`.
+///
+/// Attachments arrive from the webview as `data:` URLs, and the agent runtime
+/// wants files, so this is the bridge. Hand-rolled for the same reason as the
+/// encoder: one crate for twenty lines is not worth it, and a wrong decoder
+/// would write corrupt images rather than fail loudly.
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    let mut output = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for ch in input.bytes() {
+        let value = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\n' | b'\r' | b' ' | b'\t' => continue,
+            _ => return Err(format!("invalid base64 character: {}", ch as char)),
+        };
+        buffer = (buffer << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+        }
+    }
+    Ok(output)
+}
+
+/// Write a `data:` URL into the runtime's own home and return the file.
+///
+/// Kept per app home rather than in the project, so an attachment never becomes
+/// an untracked file in the user's repository.
+fn write_attachment(codex_home: &Path, data_url: &str, index: usize) -> Option<PathBuf> {
+    let (header, payload) = data_url.split_once(',')?;
+    if !header.contains("base64") {
+        return None;
+    }
+    let mime = header
+        .trim_start_matches("data:")
+        .split(';')
+        .next()
+        .unwrap_or("image/png");
+    let extension = match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "application/pdf" => "pdf",
+        _ => "png",
+    };
+    let bytes = base64_decode(payload).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let dir = codex_home.join("attachments");
+    std::fs::create_dir_all(&dir).ok()?;
+
+    // A cheap content hash keeps repeat attachments from piling up, and gives the
+    // name some stability when the same screenshot is sent twice.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in &bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    let path = dir.join(format!("{:016x}-{}.{}", hash, index, extension));
+    if !path.exists() {
+        std::fs::write(&path, &bytes).ok()?;
+    }
+    Some(path)
+}
+
+/// Keep the attachments directory bounded: it is screenshots, and they are big.
+fn prune_attachments(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((modified, e.path()))
+        })
+        .collect();
+    if files.len() <= keep {
+        return;
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in files.into_iter().skip(keep) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Standard base64. Hand-rolled because the alternative is another crate for
 /// twenty lines, and this is only ever used to inline a preview asset.
 fn base64_encode(bytes: &[u8]) -> String {
@@ -1512,6 +1606,10 @@ async fn codex_exec(
     // from the previous run's `thread.started` event; an unknown or stale id
     // fails before any work happens, which is what makes the retry safe.
     resume_thread_id: Option<String>,
+    // Attachments as `data:` URLs, straight from the composer. They are written
+    // into the runtime's own home and handed over as files, which is what the
+    // runtime takes (`-i`).
+    images: Vec<String>,
     // Set for a local runtime (Ollama, LM Studio). Codex then talks to it over
     // its own adapter instead of a custom OpenAI-compatible provider — which
     // matters because Ollama does not implement the Responses API, so a
@@ -1602,6 +1700,18 @@ async fn codex_exec(
             .arg("-m")
             .arg(&model);
     }
+    // Attachments are files to this runtime, so they go in before the prompt.
+    //
+    // `--image=<path>`, not `-i <path>`: the flag is variadic, so a separate
+    // argument form swallows the positional prompt — verified, the run then
+    // reported "Reading prompt from stdin... No prompt provided via stdin".
+    let attachment_dir = codex_home.join("attachments");
+    for (index, image) in images.iter().enumerate() {
+        if let Some(path) = write_attachment(&codex_home, image, index) {
+            command.arg(format!("--image={}", path.to_string_lossy()));
+        }
+    }
+    prune_attachments(&attachment_dir, 20);
     // `resume [OPTIONS] [SESSION_ID] [PROMPT]`
     if !resuming.is_empty() {
         command.arg(resuming);
@@ -1754,6 +1864,43 @@ mod tests {
         assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64_encode(&[0xff, 0x00, 0xfe]), "/wD+");
+    }
+
+    #[test]
+    fn base64_round_trips_through_the_decoder() {
+        // Every length mod 3, so each padding case is exercised, including the
+        // awkward ones a hand-rolled decoder gets wrong.
+        for len in 0..40usize {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
+            let decoded = base64_decode(&base64_encode(&bytes)).expect("must decode");
+            assert_eq!(decoded, bytes, "round trip failed at length {}", len);
+        }
+        // Known vectors, including the ones with padding.
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("/wD+").unwrap(), &[0xff, 0x00, 0xfe]);
+    }
+
+    #[test]
+    fn base64_decoder_rejects_junk_and_ignores_whitespace() {
+        assert!(base64_decode("not*base64").is_err());
+        // A data URL payload wraps at 76 columns in some encoders.
+        assert_eq!(base64_decode("Zm9v\nYmFy").unwrap(), b"foobar");
+    }
+
+    #[test]
+    fn attachments_are_written_where_the_runtime_can_read_them() {
+        let home = std::env::temp_dir().join("acsa-attach-test");
+        let _ = std::fs::remove_dir_all(&home);
+        // One pixel PNG, enough to prove the pipeline decodes real image bytes.
+        let data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let path = write_attachment(&home, data_url, 0).expect("must write");
+        assert!(path.starts_with(home.join("attachments")));
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "not a PNG on disk");
+        // A non-image or a non-data URL is skipped rather than written blindly.
+        assert!(write_attachment(&home, "https://example.com/x.png", 1).is_none());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

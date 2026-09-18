@@ -17,7 +17,11 @@ import type { PipelineOutputLine, SystemMetrics, PipelineStatus } from "../types
 import { DESKTOP_REQUIRED_MESSAGE } from "../services/engineBridge";
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
-import { getActiveSelectedModel, loadAllProviders } from "../services/aiModelManager";
+import {
+  getActiveSelectedModel,
+  isModelVisionCapable,
+  loadAllProviders,
+} from "../services/aiModelManager";
 import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
@@ -52,6 +56,8 @@ async function runAgentOnCodex(params: {
   note?: (note: { name: string; detail: string; status: "done" | "failed" }) => void;
   /** Continue this thread instead of starting a new one. */
   resumeThreadId?: string;
+  /** `data:` URLs from the composer; written to files and passed with `-i`. */
+  images?: string[];
   /** Called with the thread that ran, so the caller can resume it next time. */
   onThread?: (threadId: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
@@ -286,6 +292,7 @@ async function runAgentOnCodex(params: {
         model,
         localProvider,
         resumeThreadId: params.resumeThreadId,
+        images: params.images ?? [],
       });
       params.log("[agent] codex: runtime started");
     } catch (error) {
@@ -1177,15 +1184,22 @@ export function usePipeline(): UsePipelineReturn {
           },
         ]);
       }
+      // The runtime will happily hand an image to a model that cannot read one,
+      // and the provider answers 400 "Multimodal data provided, but model does
+      // not support multimodal requests" — which the runtime retries five times
+      // and then reports as a failed turn. Verified. So the check happens here:
+      // an image the model cannot use is a warning, not a dead run.
+      const visionCapable = isModelVisionCapable(threadProvider, threadModel);
+      const usableImages = visionCapable ? images : undefined;
       if (images && images.length > 0) {
-        // The runtime accepts image files, not inline data URLs, and nothing here writes
-        // bytes to disk yet — so say so rather than let the attachment vanish.
         setActivityLog((prev) => [
           ...prev,
           {
             line_number: prev.length + 1,
-            content: `[agent] ${images.length} attached image(s) were not sent: image input is not wired yet.`,
-            stream: "stderr",
+            content: visionCapable
+              ? `[agent] attaching ${images.length} image(s)`
+              : `[agent] ${images.length} image(s) not attached: ${threadModel || "this model"} does not take image input. Pick a vision model, or say what is in the image.`,
+            stream: visionCapable ? "stdout" : "stderr",
             is_json: false,
           },
         ]);
@@ -1196,6 +1210,7 @@ export function usePipeline(): UsePipelineReturn {
           runAgentOnCodex({
             prompt: agentPrompt,
             resumeThreadId: resume,
+            images: usableImages,
             onThread: (id) => agentThreadsRef.current.set(threadKey, id),
             projectRoot: activeProject.path,
           selection: modelOverride
