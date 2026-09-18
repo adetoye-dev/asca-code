@@ -440,6 +440,116 @@ fn pick_folder() -> Result<Option<String>, String> {
     }
 }
 
+/// Escape a string for use inside an AppleScript double-quoted literal.
+#[cfg(target_os = "macos")]
+fn applescript_literal(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Ask the user where to write a file that does not exist yet.
+///
+/// Separate from `pick_folder` because `choose folder` can only ever return a
+/// directory, and a backup the user cannot name is a backup they cannot find
+/// again. `choose file name` returns the path *without* creating anything, so
+/// the write — and its owner-only mode — stays in our hands.
+#[tauri::command]
+fn pick_save_file(default_name: String, prompt: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "POSIX path of (choose file name with prompt \"{}\" default name \"{}\")",
+            applescript_literal(&prompt),
+            applescript_literal(&default_name)
+        );
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                Ok(if s.is_empty() { None } else { Some(s) })
+            }
+            // Cancelling is a choice, not a failure worth reporting.
+            _ => Ok(None),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (default_name, prompt);
+        Ok(None)
+    }
+}
+
+/// Ask the user for an existing file to read — the import half of a backup.
+#[tauri::command]
+fn pick_open_file(prompt: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "POSIX path of (choose file with prompt \"{}\")",
+            applescript_literal(&prompt)
+        );
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                Ok(if s.is_empty() { None } else { Some(s) })
+            }
+            _ => Ok(None),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = prompt;
+        Ok(None)
+    }
+}
+
+/// Show a file or folder in the OS file manager, so "where is my data?" has an
+/// answer that does not require the user to read a path out of a text box.
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Err(format!("no such path: {}", path));
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(&target);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", target.display()));
+        c
+    };
+    // Linux has no portable "reveal in file manager"; opening the containing
+    // directory is the closest honest equivalent.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let directory = if target.is_dir() {
+            target.clone()
+        } else {
+            target.parent().map(Path::to_path_buf).unwrap_or_else(|| target.clone())
+        };
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(directory);
+        c
+    };
+
+    command
+        .spawn()
+        .map_err(|e| format!("could not open the file manager: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn create_project_template(
     name: String,
@@ -1269,8 +1379,9 @@ async fn engine_call(
     subcommand: String,
     args: Vec<String>,
 ) -> Result<String, String> {
-    const ALLOWED: [&str; 10] = [
+    const ALLOWED: [&str; 12] = [
         "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs",
+        "backup", "support",
     ];
     if !ALLOWED.contains(&subcommand.as_str()) {
         return Err(format!("engine subcommand not allowed: {}", subcommand));
@@ -2499,6 +2610,11 @@ async fn codex_exec(
 
 // ── Application Entry Point ─────────────────────────────────────────────────
 
+/// This build's version, taken from `.tauri/Cargo.toml` — the same value the
+/// updater compares against, so a crash report and a release are talking about
+/// the same number.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
@@ -2531,6 +2647,9 @@ fn main() {
             delete_project_file,
             create_project_template,
             pick_folder,
+            pick_save_file,
+            pick_open_file,
+            reveal_path,
             engine_call,
             terminal_spawn,
             terminal_input,
@@ -2555,6 +2674,12 @@ fn main() {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
+            // The engine stamps this into every crash-log entry and support
+            // bundle, and nothing ever set it — so every report read
+            // `"version": ""`, which is the one field that says whether the bug
+            // was fixed three releases ago. Set once here and every child the
+            // app spawns inherits it.
+            std::env::set_var("ACSA_APP_VERSION", APP_VERSION);
             println!(
                 "[ACSA Code] started. Engine dir: {:?}",
                 resolve_engine_dir(app.path().resource_dir().ok().as_deref())

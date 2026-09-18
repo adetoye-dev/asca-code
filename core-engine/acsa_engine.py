@@ -67,6 +67,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "adapter": ("responses_adapter", "main"),
     "crash": ("crash_log", "main"),
     "backup": ("backup", "main"),
+    "support": ("support", "main"),
 }
 
 
