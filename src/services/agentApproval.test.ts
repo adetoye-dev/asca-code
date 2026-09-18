@@ -57,6 +57,25 @@ describe("approval modes", () => {
     }
   });
 
+  it("pins what each mode actually permits", () => {
+    // The UI copy is a claim about these three values, so they are asserted
+    // rather than merely present. The one that surprised us: "Ask me" still lets
+    // the agent edit and build *inside* the project without a prompt, because the
+    // sandbox is `workspace-write` — the mode decides who answers an escalation,
+    // not whether in-project work needs one.
+    expect(AGENT_APPROVAL_MODES["read-only"].sandboxMode).toBe("read-only");
+    expect(AGENT_APPROVAL_MODES["ask-me"].sandboxMode).toBe("workspace-write");
+    expect(AGENT_APPROVAL_MODES["full-access"].sandboxMode).toBe("danger-full-access");
+
+    expect(AGENT_APPROVAL_MODES["ask-me"].approvalsReviewer).toBe("user");
+    expect(AGENT_APPROVAL_MODES["approve-for-me"].approvalsReviewer).toBe("auto_review");
+
+    expect(AGENT_APPROVAL_MODES["full-access"].approvalPolicy).toBe("never");
+    for (const name of ["read-only", "approve-for-me", "ask-me"] as const) {
+      expect(AGENT_APPROVAL_MODES[name].approvalPolicy, name).toBe("on-request");
+    }
+  });
+
   it("only accepts the two transports the runtime is started with", () => {
     expect(isAgentTransport("exec")).toBe(true);
     expect(isAgentTransport("app-server")).toBe(true);
