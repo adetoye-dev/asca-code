@@ -14,7 +14,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Credentials never reach the page | **[done]** | Keys are write-only across the API (`hasApiKey`, no value). Resolved server-side by the engine, and put into the agent child's environment by the Rust layer. |
 | Database file permissions | **[done]** | Data dir `0700`, database and its WAL/SHM `0600`. |
 | Encryption at rest | **[open]** | The standard library has no authenticated cipher, so secrets sit in a `0600` file rather than a fake-encrypted one. Next step is OS keychain (macOS Keychain / Windows Credential Manager) via a Tauri plugin. |
-| Backup / restore | **[open]** | No export or import of the database. Users have no way to move their settings to a new machine. |
+| Backup / restore | **[partial]** | `core-engine/backup.py` exports and imports the database, verified end to end through the frozen binary. Two decisions worth knowing: a default export **leaves credentials behind** and then *vacuums*, because deleting the rows is not enough — SQLite keeps the bytes in free pages, and `strings` finds them; `--with-secrets` is there for a real migration. An import keeps the database it replaced as `.before-import`, so it is not a one-way door. Missing: nothing in the UI calls it yet, so a packaged-app user has no way to reach it. |
 | Data retention | **[partial]** | Chat trimmed to the 100 most recent messages per project; the usage ledger grows without bound. |
 
 ## Configuration & secrets
@@ -99,6 +99,8 @@ Anything marked open is a real gap for shipping to someone else's machine.
 5. **Component tests.** Vitest now covers the services layer; nothing *renders*.
    The model picker, the layout pass and the z-index scale are still verified by
    hand, and a render test is what would keep them honest.
-6. **Backup/restore** and **OS keychain** for credentials.
+6. **A Backup / Restore surface in Settings**, then **OS keychain** for
+   credentials. The engine side of backup exists and is verified; the user cannot
+   reach it.
 7. **The manual half of the accessibility audit** — the automated half is in `verify`.
 8. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in; drop the real logo over `.tauri/icon-source.svg` and `public/logos/acsa.svg`.
