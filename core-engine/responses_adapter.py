@@ -169,6 +169,78 @@ def clean_arguments(raw, schema=None) -> str:
     return json.dumps(cleaned)
 
 
+def _might_be_a_tool_call(text: str) -> bool:
+    """Hold this text back: it could still turn out to be a tool call.
+
+    Only the opening decides. A prose answer streams the moment it is recognisable
+    as prose, so holding costs nothing in the normal case.
+    """
+    stripped = text.lstrip()
+    if not stripped:
+        return True
+    if stripped[0] in "{[":
+        return True
+    if stripped.startswith("```"):
+        rest = stripped[3:].lstrip()
+        # ```json / ```{ / ```[ / a bare fence still being typed. "```python" is
+        # an answer, not a tool call, and streams straight away.
+        return rest[:1] in ("", "{", "[", "j", "J")
+    return False
+
+
+def tool_call_from_text(text: str, schemas: dict):
+    """Recover a tool call that a model wrote as text.
+
+    Not every local model can emit native tool calls. `qwen2.5-coder` and
+    `deepseek-coder` answer with the call as JSON in the message body, which the
+    runtime then shows as prose and never executes — measured, that is exactly
+    what they do. When the whole answer is one object naming a tool this request
+    actually offered, it is that call.
+
+    Deliberately strict, because the alternative is worse than not trying: the
+    entire trimmed text must be a single JSON object, the name must match an
+    offered tool, and the arguments must be an object. A chatty answer that merely
+    mentions a tool is never rewritten into one.
+    """
+    if not schemas:
+        return None
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped[3:]
+        if stripped[:4].lower() == "json":
+            stripped = stripped[4:]
+        stripped = stripped.strip()
+        if stripped.endswith("```"):
+            stripped = stripped[:-3].strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+
+    inner = parsed.get("function") if isinstance(parsed.get("function"), dict) else {}
+    name = parsed.get("name") or inner.get("name") or parsed.get("tool")
+    if not isinstance(name, str) or name not in schemas:
+        return None
+
+    arguments = parsed.get("arguments")
+    if arguments is None:
+        arguments = inner.get("arguments")
+    if arguments is None:
+        arguments = parsed.get("parameters")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(arguments, dict):
+        return None
+    return name, arguments
+
+
 def text_of(content) -> str:
     if isinstance(content, str):
         return content
@@ -393,6 +465,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         )
 
         text = ""
+        # Text not yet sent, while it could still be a tool call.
+        held = ""
+        streaming = False
         prompt_tokens = 0
         output_tokens = 0
         try:
@@ -405,10 +480,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 delta = message.get("content") or ""
                 if delta:
                     text += delta
-                    send(
-                        "response.output_text.delta",
-                        {"content_index": 0, "delta": delta, "item_id": item_id, "logprobs": [], "output_index": 0},
-                    )
+                    if streaming:
+                        send(
+                            "response.output_text.delta",
+                            {"content_index": 0, "delta": delta, "item_id": item_id, "logprobs": [], "output_index": 0},
+                        )
+                    else:
+                        held += delta
+                        if not _might_be_a_tool_call(held):
+                            streaming = True
+                            send(
+                                "response.output_text.delta",
+                                {"content_index": 0, "delta": held, "item_id": item_id, "logprobs": [], "output_index": 0},
+                            )
+                            held = ""
                 calls = message.get("tool_calls") or []
                 if calls:
                     self._emit_tool_calls(calls, output_index=1, send=send, resp_id=resp_id, schemas=schemas)
@@ -418,10 +503,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._chunk(b"")
             return
 
-        if text:
+        # Nothing streamed, so decide now what the held text was.
+        recovered = None
+        if held and not streaming:
+            recovered = tool_call_from_text(held, schemas)
+            if recovered:
+                log("recovered a tool call the model wrote as text:", recovered[0], json.dumps(recovered[1])[:200])
+                self._emit_tool_calls(
+                    [
+                        {
+                            "id": new_id("call"),
+                            "function": {"name": recovered[0], "arguments": json.dumps(recovered[1])},
+                        }
+                    ],
+                    output_index=1,
+                    send=send,
+                    resp_id=resp_id,
+                    schemas=schemas,
+                )
+            else:
+                streaming = True
+                send(
+                    "response.output_text.delta",
+                    {"content_index": 0, "delta": held, "item_id": item_id, "logprobs": [], "output_index": 0},
+                )
+            held = ""
+
+        # A recovered call is not also an answer: the message item stays empty, so
+        # the chat does not show `{"name": …}` as prose beside the tool it drove.
+        message_text = "" if recovered else text
+
+        if message_text:
             send(
                 "response.output_text.done",
-                {"content_index": 0, "item_id": item_id, "logprobs": [], "output_index": 0, "text": text},
+                {"content_index": 0, "item_id": item_id, "logprobs": [], "output_index": 0, "text": message_text},
             )
             send(
                 "response.content_part.done",
@@ -429,7 +544,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "content_index": 0,
                     "item_id": item_id,
                     "output_index": 0,
-                    "part": {"annotations": [], "logprobs": [], "text": text, "type": "output_text"},
+                    "part": {"annotations": [], "logprobs": [], "text": message_text, "type": "output_text"},
                 },
             )
             send(
@@ -437,7 +552,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {
                     "output_index": 0,
                     "item": {
-                        "content": [{"annotations": [], "logprobs": [], "text": text, "type": "output_text"}],
+                        "content": [{"annotations": [], "logprobs": [], "text": message_text, "type": "output_text"}],
                         "id": item_id,
                         "role": "assistant",
                         "status": "completed",
@@ -452,10 +567,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
 
         finished = []
-        if text:
+        if message_text:
             finished.append(
                 {
-                    "content": [{"annotations": [], "logprobs": [], "text": text, "type": "output_text"}],
+                    "content": [{"annotations": [], "logprobs": [], "text": message_text, "type": "output_text"}],
                     "id": item_id,
                     "role": "assistant",
                     "status": "completed",

@@ -106,6 +106,46 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(adapter.as_object("not json"), {})
 
 
+class RecoveredToolCallTests(unittest.TestCase):
+    """Models that cannot emit native tool calls write them as text instead."""
+
+    SCHEMAS = {"exec_command": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
+
+    def test_a_bare_json_call_is_recovered(self):
+        # Measured: `qwen2.5-coder:7b` answers with exactly this and the tool never
+        # runs, because the runtime sees prose.
+        recovered = adapter.tool_call_from_text(
+            '{"name": "exec_command", "arguments": {"cmd": "echo hi"}}', self.SCHEMAS
+        )
+        self.assertEqual(recovered, ("exec_command", {"cmd": "echo hi"}))
+
+    def test_a_fenced_json_call_is_recovered(self):
+        recovered = adapter.tool_call_from_text(
+            '```json\n{"name": "exec_command", "arguments": {"cmd": "ls"}}\n```', self.SCHEMAS
+        )
+        self.assertEqual(recovered, ("exec_command", {"cmd": "ls"}))
+
+    def test_chatty_prose_is_never_rewritten(self):
+        for text in (
+            "I ran exec_command for you.",
+            'Sure! {"name": "exec_command", "arguments": {"cmd": "ls"}} — that is the call.',
+            "",
+        ):
+            self.assertIsNone(adapter.tool_call_from_text(text, self.SCHEMAS))
+
+    def test_an_unknown_tool_name_is_not_invented(self):
+        self.assertIsNone(
+            adapter.tool_call_from_text('{"name": "rm_everything", "arguments": {}}', self.SCHEMAS)
+        )
+
+    def test_holding_happens_only_for_a_possible_call(self):
+        # Prose streams immediately; a JSON blob is held until the stream ends.
+        for prose in ("Hello", "```python\nprint(1)", "Sure, here is what I did"):
+            self.assertFalse(adapter._might_be_a_tool_call(prose))
+        for maybe in ("", "{", "[", '{"name"', "```json", "```{"):
+            self.assertTrue(adapter._might_be_a_tool_call(maybe))
+
+
 class MessageTranslationTests(unittest.TestCase):
     def test_instructions_and_roles_survive(self):
         messages = adapter.chat_messages(

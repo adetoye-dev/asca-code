@@ -153,6 +153,14 @@ export function AiAssistantChat({
     selectedModelItem?.providerId || activeAiSettings?.provider || "ollama";
   const effectiveModel =
     selectedModelItem?.model || activeAiSettings?.model || localWorker;
+  // What the model pill says on hover. The old text announced a "Cloud Brain" and
+  // a "Local Worker" regardless of what was selected; now that a local model can be
+  // the agent itself, say where the chosen one actually runs.
+  const modelTitle = selectedModelItem
+    ? selectedModelItem.category === "local"
+      ? `${selectedModelItem.model} — runs on this machine. Free, and nothing leaves it, but a local model is far less capable than a hosted one.`
+      : `${selectedModelItem.model} — hosted by ${selectedModelItem.providerName}`
+    : `Running on ${effectiveProvider}:${effectiveModel}`;
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
@@ -677,7 +685,7 @@ export function AiAssistantChat({
       >
         <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-800/80 shrink-0">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider font-mono">
-            Orchestrator Brain (Cloud)
+            Agent Model
           </span>
           <span className="text-[10px] text-zinc-500 font-mono">
             {configuredModels.length} models
@@ -700,13 +708,14 @@ export function AiAssistantChat({
         <div className="flex-1 overflow-y-auto space-y-0.5 min-h-0 pr-0.5">
           {configuredModels.length === 0 ? (
             <div className="px-2.5 py-3 text-center space-y-2">
-              <div className="text-xs text-zinc-400 font-sans">No Cloud Brain Configured</div>
+              <div className="text-xs text-zinc-400 font-sans">No model available</div>
               <p className="text-[10px] text-zinc-500 font-sans">
-                Running on the local worker instead:{" "}
-                <span className="text-emerald-400 font-mono">{localWorker}</span>
+                Add a cloud key, or install a model for{" "}
+                <span className="text-emerald-400 font-mono">Ollama</span> to run on this machine.
               </p>
               <p className="text-[10px] text-zinc-500 font-sans">
-                Add an API key to enable high-reasoning planning and task orchestration.
+                A local model is free and private, but needs to be one that supports tool
+                calling to edit files and run commands.
               </p>
               <button
                 type="button"
@@ -742,6 +751,13 @@ export function AiAssistantChat({
                   <div className="flex items-center gap-2 truncate">
                     <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate font-mono text-[11px]">{item.model}</span>
+                    {/* A local model runs on this machine, cannot be as capable as
+                        a hosted one, and costs nothing — worth saying in the row. */}
+                    {item.category === "local" && (
+                      <span className="shrink-0 px-1 py-px rounded text-[9px] font-mono uppercase tracking-wide bg-emerald-950/60 text-emerald-400 border border-emerald-900/60">
+                        local
+                      </span>
+                    )}
                   </div>
                   {isSelected && <Icon icon={Check} className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
                 </button>
@@ -1182,11 +1198,7 @@ Click to re-index project.`}
                               setIsModeMenuOpen(false);
                             }}
                             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 font-medium transition-all shadow-sm"
-                            title={
-                              selectedModelItem
-                                ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
-                                : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
-                            }
+                            title={modelTitle}
                           >
                             <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
                             <span className="font-mono text-[11px]">{effectiveModel}</span>
@@ -1759,11 +1771,7 @@ Click to re-index project.`}
                         setIsModeMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 transition-colors"
-                      title={
-                        selectedModelItem
-                          ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
-                          : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
-                      }
+                      title={modelTitle}
                     >
                       <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
                       <span className="font-mono text-[10px] truncate">
