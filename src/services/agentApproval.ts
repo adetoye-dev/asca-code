@@ -85,6 +85,23 @@ export function localProviderFor(providerId: string | undefined): string | null 
 }
 
 /**
+ * Why an agent run on a local model does nothing — for the OUTPUT panel.
+ *
+ * Measured, not guessed: the runtime sends its tools to `/v1/responses`
+ * (`exec_command`, `write_stdin`, … — captured on the wire), and Ollama 0.34.1
+ * answers with the tool call as *plain text* rather than a `function_call`, so
+ * no action is ever executed. Ollama's native `/api/chat` does support tools,
+ * and the runtime will not use it (`wire_api = "chat"` is rejected), so this is
+ * the Responses shim. Reported once at run start so a run that reads and replies
+ * but changes nothing explains itself instead of looking broken.
+ */
+export function localToolCallingNote(providerId: string | undefined): string | null {
+  const local = localProviderFor(providerId);
+  if (!local) return null;
+  return `[agent] ${local} is reachable but cannot run tools: its Responses API drops tool definitions, so this run can read and reply but will not edit files or run commands. Use a hosted provider for agent mode.`;
+}
+
+/**
  * How much of the agent can run unattended.
  *
  * `ask-me` is the one mode that needs the app-server transport: `codex exec` is

@@ -26,6 +26,7 @@ import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
   localProviderFor,
+  localToolCallingNote,
   resolveApprovalMode,
   type AgentApprovalMode,
   type AgentTransport,
@@ -110,6 +111,12 @@ async function runAgent(params: {
   // `wire_api = "responses"` cannot reach it at all. Those runs go through the
   // runtime's own local-provider switch instead, and get no provider table.
   const localProvider = localProviderFor(providerId);
+  // A local provider in agent mode does nothing observable — say why, up front,
+  // rather than let an empty run look like a broken agent.
+  {
+    const note = localToolCallingNote(providerId);
+    if (note) params.log(note);
+  }
   const configToml = [
     `model = "${model}"`,
     ...(localProvider ? [] : [`model_provider = "${providerId}"`]),
@@ -486,6 +493,12 @@ async function runAgentOnAppServer(params: {
     );
 
     let threadId: string;
+    // Same reason as the exec path: a local provider cannot run tools on this
+    // transport either, and a silent run is worse than a stated one.
+    {
+      const note = localToolCallingNote(params.providerId);
+      if (note) params.log(note);
+    }
     try {
       threadId = await invoke<string>("agent_start", {
         projectRoot: params.projectRoot,

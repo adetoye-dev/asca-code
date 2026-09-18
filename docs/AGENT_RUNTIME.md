@@ -205,13 +205,37 @@ Still open before this becomes the default:
   below the fold
 - **`--listen` also supports `unix://` and `ws://`**, and there is a `daemon`
   subcommand for a shared instance — neither is used
-- **local models do not emit tool calls.** Observed, not assumed: with
-  `modelProvider: "ollama"` and a direct "call the shell tool" instruction,
-  `qwen2.5-coder:1.5b`, `qwen2.5-coder:7b` and `qwen3.5:9b` each replied with a
-  tool call written as *text* and never invoked a tool, so the turn ended without
-  an approval. The runtime warns "Unknown model … using fallback metadata",
-  which is the likely cause: a model absent from the catalog gets metadata that
-  may not advertise tools. `tests::a_real_approval_is_answered_and_the_turn_continues`
-  is the reproducer — it skips (loudly) in this case. This matters more than the
-  approval path: delegating to local models is a stated goal, and an agent that
-  cannot call tools is not delegating to anything.
+- **local models cannot act.** See the section below — this is the biggest thing
+  standing between this app and cheap local delegation, and it is not our bug.
+
+## Local models cannot call tools, and why
+
+An agent run on a local model reads and replies but never edits a file or runs a
+command. It looks like a broken agent; it is an upstream shape mismatch. Measured,
+not guessed:
+
+1. **The runtime requires the Responses API.** `wire_api = "chat"` is a hard
+   config error on this binary ("no longer supported"), and `ollama` is a
+   reserved provider id that cannot be pointed elsewhere — a custom table has to
+   use a different name.
+2. **The runtime does send tools.** With a logging proxy in front of the
+   provider, the request to `/v1/responses` carried nine of them — `exec_command`,
+   `write_stdin`, `request_user_input`, `view_image`, the subagent tools, the goal
+   tools. The agent is trying to delegate them.
+3. **Ollama's Responses endpoint drops them.** A direct
+   `POST /v1/responses` with a `tools` array (Ollama 0.34.1) answers with the tool
+   call rendered as *plain text* and never emits a `function_call` item. So the
+   runtime receives prose where an action should be, and executes nothing.
+4. **Ollama's native API is fine.** `POST /api/chat` with the same tool returns a
+   real `tool_calls` for `llama3.2:3b` and `qwen3.5:9b`. (It does not for
+   `qwen2.5-coder:1.5b` or `:7b` — those models cannot tool-call at all, which is
+   a second, independent reason to try a tool-trained model.)
+
+So the break is the Responses shim, not the model and not us. The fix is a small
+local adapter: speak `/v1/responses` to the runtime, proxy to Ollama's
+`/api/chat`, and translate `tool_calls` back into Responses items. Everything
+needed to build it is in the four points above. Until then, agent mode belongs on
+a hosted provider and local models belong in chat.
+
+`tests::a_real_approval_is_answered_and_the_turn_continues` is the reproducer: it
+asks a local model to run a command and reports that no approval ever arrived.
