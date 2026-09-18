@@ -209,6 +209,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingAnswer,
     streamingThought,
     failureDetail,
+    pendingApproval,
+    respondToApproval,
     agentSteps,
   } = pipeline;
 
@@ -843,6 +845,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingThought,
     agentSteps,
     failureDetail,
+    pendingApproval,
+    respondToApproval,
     onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
       // Leave full canvas and dock the assistant back to the side tool window.
@@ -1563,6 +1567,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               streamingThought={streamingThought}
               agentSteps={agentSteps}
               failureDetail={failureDetail}
+              pendingApproval={pendingApproval}
+              respondToApproval={respondToApproval}
             />
           </aside>
         )}

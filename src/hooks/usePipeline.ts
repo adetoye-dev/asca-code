@@ -26,7 +26,9 @@ import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
   localProviderFor,
+  resolveApprovalMode,
   type AgentApprovalMode,
+  type AgentTransport,
 } from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
 
@@ -43,9 +45,13 @@ import { ensureProvidersHydrated } from "../services/aiModelManager";
  * does not then also run our pipeline and edit the project twice). False means the
  * runtime is absent and the caller should fall back.
  */
-async function runAgentOnCodex(params: {
+async function runAgent(params: {
   prompt: string;
   projectRoot: string;
+  /** Which runtime to use. `exec` is the long-standing path. */
+  transport?: AgentTransport;
+  /** The runtime wants an answer before it can continue (app-server only). */
+  onApproval?: (request: { id: unknown; method: string; params: any }) => void;
   /** Provider/model the user picked for this message; wins over the saved default. */
   selection?: { providerId: string; model: string };
   /** How much the agent may do unattended. Defaults to "approve for me". */
@@ -197,6 +203,25 @@ async function runAgentOnCodex(params: {
     if (mcpToml) params.log(`[agent] codex: passing ${Object.keys(servers).length} MCP server(s) to the agent`);
   } catch {
     /* MCP is optional; a registry that cannot be read must not block the run */
+  }
+
+  if (params.transport === "app-server") {
+    return runAgentOnAppServer({
+      prompt: params.prompt,
+      projectRoot: params.projectRoot,
+      configToml: configToml + mcpToml,
+      providerId,
+      catalogJson,
+      model,
+      approvalMode: params.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
+      resumeThreadId: params.resumeThreadId,
+      onEvent: params.onEvent,
+      log: params.log,
+      note: params.note,
+      onThread: params.onThread,
+      onFailure: params.onFailure,
+      onApproval: params.onApproval,
+    });
   }
 
   let finished = false;
@@ -356,6 +381,226 @@ async function runAgentOnCodex(params: {
     return sawEvent ? (failed ? "failed" : "success") : "unavailable";
   } finally {
     unlisten.forEach((off) => off());
+  }
+}
+
+/**
+ * Run an agent task over the app-server protocol.
+ *
+ * The difference from `exec` is not the transport so much as what the runtime
+ * can do once it is a live session: it streams the answer as it is written,
+ * it can be interrupted mid-turn, and — the reason for the whole exercise — it
+ * can *ask* before running something, which `exec` has no channel for.
+ *
+ * Requests and replies are matched by id on the Rust side; this only maps
+ * notifications onto the progress surfaces the chat already renders.
+ */
+async function runAgentOnAppServer(params: {
+  prompt: string;
+  projectRoot: string;
+  configToml: string;
+  providerId: string;
+  catalogJson: string;
+  model: string;
+  approvalMode: AgentApprovalMode;
+  resumeThreadId?: string;
+  onEvent: (event: any) => void;
+  log: (line: string) => void;
+  note?: (note: { name: string; detail: string; status: "done" | "failed" }) => void;
+  onThread?: (threadId: string) => void;
+  onFailure?: (detail: string) => void;
+  /** A request the runtime needs an answer to before it can continue. */
+  onApproval?: (request: { id: unknown; method: string; params: any }) => void;
+}): Promise<"unavailable" | "success" | "failed"> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+
+  const approval =
+    AGENT_APPROVAL_MODES[params.approvalMode] ?? AGENT_APPROVAL_MODES[DEFAULT_AGENT_APPROVAL_MODE];
+
+  let finished = false;
+  let failed = false;
+  // Set by turn/completed or turn/failed — the only signals that end a turn.
+  const turnFinished = { value: false };
+  const failureBox: { value: string } = { value: "" };
+  const unlisten: Array<() => void> = [];
+  const startedAt = Date.now();
+
+  try {
+    unlisten.push(
+      await listen<{ line?: string } | string>("agent:event", (event) => {
+        const payload = event.payload;
+        const line = typeof payload === "string" ? payload : String(payload?.line ?? "");
+        let parsed: any;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          return;
+        }
+        const method = String(parsed?.method ?? "");
+
+        // A message with an id *and* a method is a request from the runtime —
+        // an approval. It blocks the turn until answered, so it goes straight to
+        // the UI rather than into the transcript.
+        if (method && parsed?.id !== undefined) {
+          params.log(`[agent] the runtime is asking: ${method}`);
+          params.onApproval?.({ id: parsed.id, method, params: parsed.params });
+          return;
+        }
+
+        if (method === "turn/completed" || method === "turn/failed") {
+          turnFinished.value = true;
+        }
+        if (method === "turn/failed") {
+          failed = true;
+          const detail = String(
+            parsed?.params?.error?.message ??
+              parsed?.params?.error ??
+              "the agent turn failed",
+          );
+          failureBox.value = detail.length > 300 ? `${detail.slice(0, 300)}…` : detail;
+        }
+        params.onEvent(parsed);
+      }),
+    );
+    unlisten.push(
+      // The runtime's own warnings and errors. Worth surfacing: a missing model
+      // entry or an unsupported feature shows up here and nowhere else.
+      await listen<{ line?: string } | string>("agent:stderr", (event) => {
+        const payload = event.payload;
+        const line = (typeof payload === "string" ? payload : String(payload?.line ?? "")).trim();
+        if (line) params.log(`[agent] runtime: ${line.slice(0, 200)}`);
+      }),
+    );
+    unlisten.push(
+      await listen<string>("agent:exit", (event) => {
+        // Emitted when the runtime's stdout reaches EOF — the real exit. It no
+        // longer fires when stderr closes, which the runtime does early while
+        // staying alive.
+        finished = true;
+        turnFinished.value = true;
+        const note = String(event.payload ?? "").trim();
+        params.log(`[agent] app-server exited${note ? ` — ${note.slice(0, 180)}` : ""}`);
+      }),
+    );
+
+    let threadId: string;
+    try {
+      threadId = await invoke<string>("agent_start", {
+        projectRoot: params.projectRoot,
+        configToml: params.configToml,
+        providerId: params.providerId,
+        catalogJson: params.catalogJson,
+        model: params.model,
+        resumeThreadId: params.resumeThreadId ?? null,
+        // The mode decides this, not the transport: `ask-me` is the whole point
+        // of being on app-server.
+        approvalPolicy: approval.approvalPolicy,
+        approvalsReviewer: approval.approvalsReviewer,
+        sandboxMode: approval.sandboxMode,
+      });
+    } catch (error) {
+      params.log(`[agent] app-server: not started — ${String(error)}`);
+      return "unavailable";
+    }
+    if (threadId) params.onThread?.(threadId);
+    params.log(`[agent] app-server: thread ${threadId.slice(0, 8)}`);
+
+    try {
+      await invoke("agent_turn", { text: params.prompt });
+    } catch (error) {
+      params.log(`[agent] app-server: turn rejected — ${String(error)}`);
+      return "unavailable";
+    }
+
+    // Wait for the turn to end. The ceiling matches the run budget; a live
+    // session means "still running" is visible, so this is only a backstop.
+    const deadline = Date.now() + 3600_000;
+    while (!finished && !failed && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (turnFinished.value) break;
+    }
+
+    if (failed && failureBox.value) params.onFailure?.(failureBox.value);
+    params.log(`[agent] app-server: turn finished in ${Math.round((Date.now() - startedAt) / 1000)}s`);
+    return failed ? "failed" : "success";
+  } catch (error) {
+    params.log(`[agent] app-server: ${String(error)}`);
+    return "unavailable";
+  } finally {
+    unlisten.forEach((off) => off());
+  }
+}
+
+/**
+ * Map one app-server notification onto the chat's progress surfaces.
+ *
+ * The vocabulary differs from `exec`'s: camelCase item types, a dedicated delta
+ * channel for the answer, and usage as its own notification rather than a field
+ * on the turn event.
+ */
+function applyAppServerEvent(
+  event: any,
+  update: {
+    setSteps: (fn: (prev: any[]) => any[]) => void;
+    appendAnswer: (text: string) => void;
+    setAnswer: (text: string) => void;
+    logOutput: (line: any) => void;
+    markTouched: (paths: string[]) => void;
+  },
+): void {
+  const method = String(event?.method ?? "");
+  const p = event?.params ?? {};
+
+  if (method === "item/agentMessage/delta" && typeof p.delta === "string") {
+    update.appendAnswer(p.delta);
+    return;
+  }
+
+  if (method !== "item/completed" || !p.item) return;
+  const item = p.item;
+
+  if (item.type === "agentMessage" && typeof item.text === "string") {
+    // Authoritative: the streamed deltas are a preview of exactly this.
+    update.setAnswer(item.text);
+    return;
+  }
+  if (item.type === "commandExecution") {
+    update.setSteps((prev) => {
+      const step = {
+        id: item.id || `as-${Date.now()}-${prev.length}`,
+        name: "Run Command",
+        detail: String(item.command || "").slice(0, 120),
+        status: item.exitCode === 0 || item.exitCode === undefined ? "done" : "failed",
+      };
+      const idx = prev.findIndex((s: any) => s.id === step.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...step };
+        return next;
+      }
+      return [...prev, step];
+    });
+    return;
+  }
+  if (item.type === "fileChange") {
+    const changed: string[] = Array.isArray(item.changes)
+      ? item.changes
+          .map((c: any) => String(c?.path ?? ""))
+          .filter((path: string) => path.length > 0)
+      : [];
+    if (changed.length > 0) {
+      update.markTouched(changed);
+      update.setSteps((prev) => [
+        ...prev,
+        {
+          id: `as-edit-${changed.join("|").slice(0, 60)}`,
+          name: "Edit Files",
+          detail: changed.map((path) => path.split(/[\\/]/).pop()).join(", ").slice(0, 120),
+          status: "done",
+        },
+      ]);
+    }
   }
 }
 
@@ -550,6 +795,9 @@ export interface UsePipelineReturn {
   agentSteps: AgentStep[];
   /** Why the last agent run failed, for the chat to show in place of a generic line. */
   failureDetail: string;
+  /** A request the agent is blocked on, if it is waiting for one. */
+  pendingApproval: { id: unknown; method: string; command: string; reason: string } | null;
+  respondToApproval: (decision: "approved" | "rejected") => Promise<void>;
 
   runPipeline: (
     customPrompt?: string,
@@ -611,30 +859,36 @@ export function usePipeline(): UsePipelineReturn {
     hydrateAiSettings(DEFAULT_AI_SETTINGS)
   );
 
+  /**
+   * Merge settings in, rather than rebuilding the record from the fields this
+   * function happens to know about.
+   *
+   * The old version enumerated every field, which meant any caller passing a
+   * partial object silently reset the ones it did not mention. Two separate
+   * bugs came from that: the approval mode and the agent engine were dropped
+   * from the persisted record on the next save, so both pickers reverted to
+   * their defaults and looked like they did nothing.
+   *
+   * Fields the caller leaves `undefined` are simply not part of the merge, so a
+   * partial update is a partial update.
+   */
   const setAiSettings = (newSettings: AISettings) => {
-    const safeSettings: AISettings = {
-      provider: newSettings?.provider || DEFAULT_AI_SETTINGS.provider,
-      model: newSettings?.model || "",
-      apiKey: newSettings?.apiKey || "",
-      baseUrl: newSettings?.baseUrl || "",
-      // Editor and terminal preferences live alongside the model selection; the
-      // settings dialog writes them through onSave and they are persisted below.
-      fontSize: newSettings?.fontSize,
-      lineHeight: newSettings?.lineHeight,
-      enableLigatures: newSettings?.enableLigatures,
-      tabSize: newSettings?.tabSize,
-      insertSpaces: newSettings?.insertSpaces,
-      wordWrap: newSettings?.wordWrap,
-      terminalFontSize: newSettings?.terminalFontSize,
-      // Without this the field is dropped on save, and the picker in Settings
-      // silently reverts to the default on the next launch.
-      approvalMode: newSettings?.approvalMode,
-    };
-    setAiSettingsState(hydrateAiSettings(safeSettings));
-    // Only the non-secret parts are persisted; credentials live in the app
-    // database and are resolved server-side.
-    const { apiKey: _apiKey, ...persistable } = safeSettings;
-    void appStore.setSetting("ai_settings", persistable).catch(() => {});
+    setAiSettingsState((prev) => {
+      const incoming = Object.fromEntries(
+        Object.entries(newSettings ?? {}).filter(([, value]) => value !== undefined),
+      ) as AISettings;
+      const merged = hydrateAiSettings({
+        ...prev,
+        ...incoming,
+        // Secrets never live in this record; the provider registry owns them.
+        apiKey: incoming.apiKey ?? prev.apiKey ?? "",
+      });
+      // Only the non-secret parts are persisted; credentials live in the app
+      // database and are resolved server-side.
+      const { apiKey: _apiKey, ...persistable } = merged;
+      void appStore.setSetting("ai_settings", persistable).catch(() => {});
+      return merged;
+    });
   };
 
   /**
@@ -690,20 +944,16 @@ export function usePipeline(): UsePipelineReturn {
           }
         }
         if (savedAi?.provider) {
+          // Every saved field is restored, by spreading them in rather than
+          // listing them. The list is what broke this: it silently dropped each
+          // field added after it was written, so the approval mode and the agent
+          // engine — both saved correctly — reverted to their defaults on every
+          // launch, and the pickers looked like they did nothing.
           setAiSettingsState((prev) =>
             hydrateAiSettings({
               ...prev,
-              provider: savedAi.provider,
-              model: savedAi.model || prev.model,
+              ...savedAi,
               apiKey: "",
-              baseUrl: savedAi.baseUrl || "",
-              fontSize: savedAi.fontSize ?? prev.fontSize,
-              lineHeight: savedAi.lineHeight ?? prev.lineHeight,
-              enableLigatures: savedAi.enableLigatures ?? prev.enableLigatures,
-              tabSize: savedAi.tabSize ?? prev.tabSize,
-              insertSpaces: savedAi.insertSpaces ?? prev.insertSpaces,
-              wordWrap: savedAi.wordWrap ?? prev.wordWrap,
-              terminalFontSize: savedAi.terminalFontSize ?? prev.terminalFontSize,
             })
           );
         }
@@ -1134,6 +1384,50 @@ export function usePipeline(): UsePipelineReturn {
   const agentThreadsRef = useRef<Map<string, string>>(new Map());
 
   /**
+   * A request the runtime is blocked on.
+   *
+   * Only the `ask-me` mode produces one, and only on the app-server transport —
+   * `exec` is one-shot with no channel to answer on, so a request there is
+   * auto-denied rather than shown. That is the whole reason the transport exists.
+   */
+  const [pendingApproval, setPendingApproval] = useState<{
+    id: unknown;
+    method: string;
+    command: string;
+    reason: string;
+  } | null>(null);
+  const pendingApprovalRef = useRef(pendingApproval);
+  pendingApprovalRef.current = pendingApproval;
+
+  const respondToApproval = useCallback(async (decision: "approved" | "rejected") => {
+    const request = pendingApprovalRef.current;
+    if (!request) return;
+    setPendingApproval(null);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      // The runtime's own vocabulary: `approved`, or a denial carrying a reason
+      // — that field is required, which its schema states and this respects.
+      await invoke("agent_respond", {
+        requestId: request.id,
+        decision:
+          decision === "approved"
+            ? { decision: "approved" }
+            : { decision: { denied: { rejection: "declined in ACSA Code" } } },
+      });
+    } catch (error) {
+      setActivityLog((prev) => [
+        ...prev,
+        {
+          line_number: prev.length + 1,
+          content: `[agent] could not answer the approval: ${String(error)}`,
+          stream: "stderr",
+          is_json: false,
+        },
+      ]);
+    }
+  }, []);
+
+  /**
    * Write the thread map back to the database.
    *
    * Small and infrequent — one entry per project + model + approval mode — so it
@@ -1176,6 +1470,7 @@ export function usePipeline(): UsePipelineReturn {
       }
 
       setStatus("running");
+      setPendingApproval(null);
       setFailureDetail("");
       setActivityLog([]);
       setCurrentDiff("");
@@ -1240,9 +1535,56 @@ export function usePipeline(): UsePipelineReturn {
       }
 
       if (isTauriAvailable) {
+        const transport: AgentTransport =
+          aiSettings.agentTransport === "app-server" ? "app-server" : "exec";
+        const approvalMode = resolveApprovalMode(
+          aiSettings.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
+          transport,
+        );
+        if (transport === "app-server" && approvalMode === "ask-me") {
+          setActivityLog((prev) => [
+            ...prev,
+            {
+              line_number: prev.length + 1,
+              content: "[agent] the runtime will ask before running anything risky",
+              stream: "stdout",
+              is_json: false,
+            },
+          ]);
+        }
+
+        // The two transports speak different event vocabularies, so the mapping
+        // lives here and the runner stays transport-agnostic.
+        const agentUpdate = {
+          setSteps: setAgentSteps,
+          appendAnswer: (text: string) => setStreamingAnswer((prev) => prev + text),
+          logOutput: (line: any) => setActivityLog((prev) => [...prev, line]),
+          markTouched: (paths: string[]) =>
+            setTouchedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]),
+        };
+        const onAgentEvent = (event: any) =>
+          transport === "app-server"
+            ? applyAppServerEvent(event, {
+                ...agentUpdate,
+                setAnswer: (text: string) => setStreamingAnswer(text),
+              })
+            : applyCodexEvent(event, agentUpdate);
+
         const runOnce = (resume?: string) =>
-          runAgentOnCodex({
+          runAgent({
             prompt: agentPrompt,
+            transport,
+            approvalMode,
+            onApproval: (request) => {
+              const p = request.params ?? {};
+              setPendingApproval({
+                id: request.id,
+                method: request.method,
+                command: String(p.command ?? p.path ?? request.method),
+                reason: String(p.reason ?? ""),
+              });
+            },
+            onEvent: onAgentEvent,
             resumeThreadId: resume,
             images: usableImages,
             onThread: (id) => {
@@ -1254,15 +1596,6 @@ export function usePipeline(): UsePipelineReturn {
           selection: modelOverride
             ? { providerId: modelOverride.provider, model: modelOverride.model }
             : undefined,
-          approvalMode: aiSettings.approvalMode,
-          onEvent: (event) =>
-            applyCodexEvent(event, {
-              setSteps: setAgentSteps,
-              appendAnswer: (text) => setStreamingAnswer((prev) => prev + text),
-              logOutput: (line) => setActivityLog((prev) => [...prev, line]),
-              markTouched: (paths) =>
-                setTouchedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]),
-            }),
           // Diagnostics go to the OUTPUT panel: this is read by a human when the chat
           // shows nothing, so it says which branch ran and what actually arrived.
           log: (line) =>
@@ -1420,6 +1753,8 @@ export function usePipeline(): UsePipelineReturn {
     streamingThought,
     agentSteps,
     failureDetail,
+    pendingApproval,
+    respondToApproval,
   };
 }
 

@@ -64,6 +64,9 @@ interface AiAssistantChatProps {
   isWide?: boolean;
   selectedContext?: { path: string; code: string } | null;
   failureDetail?: string;
+  /** A request the agent is blocked on, waiting for the user's answer. */
+  pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
+  respondToApproval?: (decision: "approved" | "rejected") => Promise<void>;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -104,6 +107,8 @@ export function AiAssistantChat({
   isWide = false,
   selectedContext = null,
   failureDetail = "",
+  pendingApproval = null,
+  respondToApproval,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
@@ -1581,6 +1586,43 @@ Click to re-index project.`}
       {(!isWide || chatMessages.length > 0 || status === "running") && (
         <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
+            {/* The agent is blocked until this is answered. */}
+            {pendingApproval && (
+              <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-amber-400 font-semibold text-[11px] tracking-wider uppercase mb-1.5">
+                  <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Approval needed</span>
+                </div>
+                <p className="text-xs text-zinc-300 mb-2 leading-relaxed">
+                  {pendingApproval.reason ||
+                    "The agent wants to run the following before it continues:"}
+                </p>
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-black/80 border border-zinc-800 font-mono text-[11px] text-emerald-400 overflow-x-auto select-all mb-2.5">
+                  <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span className="text-zinc-500 select-none">$</span>
+                  <span>{pendingApproval.command}</span>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void respondToApproval?.("rejected")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer"
+                  >
+                    <Icon icon={X} className="w-3.5 h-3.5 text-red-400" />
+                    <span>Decline</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void respondToApproval?.("approved")}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg transition-all cursor-pointer"
+                  >
+                    <Icon icon={Check} className="w-3.5 h-3.5" />
+                    <span>Approve &amp; run</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Unified Omnibar Input Card */}
             <div className="relative rounded-2xl bg-zinc-900/90 border border-zinc-800/90 focus-within:border-purple-500/50 focus-within:ring-1 focus-within:ring-purple-500/20 p-2.5 transition-all shadow-lg">
               {/* Attached Image Previews */}

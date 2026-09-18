@@ -31,6 +31,14 @@ export const AGENT_APPROVAL_MODES = {
     approvalsReviewer: "auto_review",
     sandboxMode: "workspace-write",
   },
+  "ask-me": {
+    label: "Ask me",
+    description:
+      "Nothing risky runs until you approve it in the chat. Needs the app-server engine below.",
+    approvalPolicy: "on-request",
+    approvalsReviewer: "user",
+    sandboxMode: "workspace-write",
+  },
   "full-access": {
     label: "Full access",
     description: "No review at all. The agent can run anything, anywhere.",
@@ -64,4 +72,41 @@ export function localProviderFor(providerId: string | undefined): string | null 
   if (id === "ollama") return "ollama";
   if (id === "lmstudio") return "lmstudio";
   return null;
+}
+
+/**
+ * How much of the agent can run unattended.
+ *
+ * `ask-me` is the one mode that needs the app-server transport: `codex exec` is
+ * one-shot with no channel to answer an approval request on, so a request under
+ * `approvalsReviewer = "user"` would be auto-denied rather than shown.
+ */
+export type AgentTransport = "exec" | "app-server";
+
+export const AGENT_TRANSPORTS = {
+  exec: {
+    label: "Codex exec",
+    description:
+      "One process per turn. Proven, but cannot ask for approval, cannot be steered mid-run, and reports the answer only once it is whole.",
+  },
+  "app-server": {
+    label: "App-server",
+    description:
+      "A live session: streams the answer as it is written, can be interrupted, and can ask you before running something risky.",
+  },
+} as const;
+
+export const DEFAULT_AGENT_TRANSPORT: AgentTransport = "exec";
+
+export function isAgentTransport(value: unknown): value is AgentTransport {
+  return value === "exec" || value === "app-server";
+}
+
+/** Whether a mode can be honoured on a transport, and what to use if not. */
+export function resolveApprovalMode(
+  mode: AgentApprovalMode,
+  transport: AgentTransport,
+): AgentApprovalMode {
+  if (mode === "ask-me" && transport !== "app-server") return DEFAULT_AGENT_APPROVAL_MODE;
+  return mode;
 }

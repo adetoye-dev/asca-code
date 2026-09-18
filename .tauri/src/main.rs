@@ -1587,6 +1587,389 @@ fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<S
 /// calls — verified by driving it headlessly against the user's provider, where it
 /// edited a file correctly in ~14s and streamed `thread`/`turn`/`item` events.
 ///
+/// The runtime binary and its private home, with our config and model catalog in place.
+///
+/// Shared by both transports: `exec` and `app-server` read the same home, so the
+/// provider, the model catalog, the approval policy and the MCP servers are
+/// configured once and behave identically either way.
+fn prepare_agent_home(
+    app_handle: &tauri::AppHandle,
+    config_toml: &str,
+    provider_id: &str,
+    catalog_json: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
+        "The agent runtime is not installed. Run scripts/fetch_codex_sidecar.sh.".to_string()
+    })?;
+
+    // Its own home, beside our data: config and auth stay ours, not the user's CLI setup.
+    let codex_home = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data dir: {}", e))?
+        .join("codex");
+    std::fs::create_dir_all(&codex_home)
+        .map_err(|e| format!("could not create {}: {}", codex_home.display(), e))?;
+
+    if !config_toml.trim().is_empty() {
+        // `model_catalog_json` is a *path* to a catalog file, not inline JSON — verified
+        // against a working Codex install, after an inline attempt parsed without error and
+        // silently did nothing. Without the catalog Codex warns that it is "defaulting to
+        // fallback metadata" for our provider's models, which is the error the UI showed.
+        let config = if catalog_json.trim().is_empty() {
+            config_toml.to_string()
+        } else {
+            let dir = codex_home.join("model-catalogs");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
+            let path = dir.join(format!("{}.json", provider_id));
+            std::fs::write(&path, catalog_json)
+                .map_err(|e| format!("could not write the model catalog: {}", e))?;
+            // Prepended, because TOML tables come last — a top-level key written after the
+            // provider table would land inside it and be rejected.
+            format!("model_catalog_json = \"{}\"\n{}", path.to_string_lossy(), config_toml)
+        };
+        std::fs::write(codex_home.join("config.toml"), config)
+            .map_err(|e| format!("could not write Codex config: {}", e))?;
+    }
+
+    Ok((program, codex_home))
+}
+
+/// A live `codex app-server` process.
+///
+/// The alternative is one `exec` process per turn, which cannot do the things
+/// this can: answer an approval request (there is no channel to answer on), steer
+/// a turn that is already running, or stream the answer token by token. The cost
+/// is that the process outlives a turn, so its lifecycle is ours to manage.
+pub struct AgentSession {
+    child: std::process::Child,
+    stdin: std::sync::Mutex<std::process::ChildStdin>,
+    next_id: std::sync::atomic::AtomicU64,
+    /// Replies waiting to arrive, keyed by the request id we sent. Shared with
+    /// the reader thread, which is the only thing that can complete them.
+    pending: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<serde_json::Value>>>,
+    >,
+    thread_id: std::sync::Mutex<Option<String>>,
+}
+
+impl AgentSession {
+    /// Send one JSON-RPC request and wait for its reply.
+    fn request(
+        &self,
+        app: &tauri::AppHandle,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, String> {
+        use std::io::Write;
+
+        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(id, tx);
+
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        {
+            let mut stdin = self.stdin.lock().map_err(|e| e.to_string())?;
+            writeln!(stdin, "{}", message).map_err(|e| format!("could not write to the agent: {}", e))?;
+            stdin.flush().map_err(|e| e.to_string())?;
+        }
+        let _ = app.emit("agent:request", AiFrame { line: message.to_string() });
+
+        match rx.recv_timeout(timeout) {
+            Ok(reply) => {
+                if let Some(error) = reply.get("error") {
+                    return Err(format!("{}: {}", method, error));
+                }
+                Ok(reply)
+            }
+            Err(_) => {
+                let _ = self
+                    .pending
+                    .lock()
+                    .map(|mut p| p.remove(&id));
+                Err(format!("{} did not answer in time", method))
+            }
+        }
+    }
+}
+
+/// Managed state: the live app-server session, if one is running.
+#[derive(Default)]
+pub struct AgentState {
+    session: std::sync::Mutex<Option<AgentSession>>,
+}
+
+/// Which session is current.
+///
+/// Events are emitted on one channel with no identity, so a replaced session's
+/// stdout EOF announced itself into the *next* run's listener and ended it the
+/// moment it started — a run that reported success and did nothing. The counter
+/// lets a dying session stay quiet once it has been superseded.
+static SESSION_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Start (or restart) the app-server session and open a thread.
+///
+/// Returns the thread id. `resume_thread_id` continues an existing one.
+#[tauri::command]
+async fn agent_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AgentState>,
+    project_root: String,
+    config_toml: String,
+    provider_id: String,
+    catalog_json: String,
+    model: String,
+    resume_thread_id: Option<String>,
+    approval_policy: String,
+    approvals_reviewer: String,
+    sandbox_mode: String,
+) -> Result<String, String> {
+    let (program, codex_home) = prepare_agent_home(&app_handle, &config_toml, &provider_id, &catalog_json)?;
+
+    // One session at a time; a second run replaces the first the way the exec
+    // path always has. Bumping the sequence first marks the outgoing session as
+    // superseded, so its shutdown cannot be mistaken for this run's.
+    let session_id = SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    {
+        let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+        if let Some(mut previous) = guard.take() {
+            let _ = previous.child.kill();
+        }
+    }
+
+    let working_dir = if Path::new(&project_root).is_dir() {
+        project_root.clone()
+    } else {
+        ".".to_string()
+    };
+
+    let mut child = Command::new(&program)
+        .arg("app-server")
+        .arg("--listen")
+        .arg("stdio://")
+        .current_dir(&working_dir)
+        .env("CODEX_HOME", &codex_home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the agent runtime ({}): {}", program.display(), e))?;
+
+    let stdin = child.stdin.take().ok_or("could not open the agent's input")?;
+    let stdout = child.stdout.take().ok_or("could not capture agent output")?;
+    let stderr = child.stderr.take().ok_or("could not capture agent errors")?;
+
+    // One reply map, shared by the session that fills it and the reader thread
+    // that drains it — two maps would mean every request timed out.
+    let pending: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<serde_json::Value>>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let session = AgentSession {
+        child,
+        stdin: std::sync::Mutex::new(stdin),
+        next_id: std::sync::atomic::AtomicU64::new(1),
+        pending: pending.clone(),
+        thread_id: std::sync::Mutex::new(None),
+    };
+
+    // The reader owns its own handle: it outlives the command that started it.
+    let reader_app = app_handle.clone();
+    let reader_pending = pending.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        // Warnings go to the log as they arrive; closing stderr is *not* the
+        // process exiting, which is what this used to assume. app-server closes
+        // it early and keeps running, so every run looked finished the moment it
+        // started — the bug that made this whole feature appear to work while
+        // doing nothing.
+        let stderr_thread = {
+            let app = reader_app.clone();
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let _ = app.emit("agent:stderr", AiFrame { line });
+                }
+            })
+        };
+
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            // A reply to something we asked: hand it to the waiting caller.
+            if let Some(id) = value.get("id").and_then(|v| v.as_u64()) {
+                if let Some(tx) = reader_pending.lock().ok().and_then(|mut p| p.remove(&id)) {
+                    let _ = tx.send(value);
+                    continue;
+                }
+            }
+            // Everything else is for the UI: notifications, and the requests the
+            // runtime sends *us* (approvals) which the UI answers.
+            let _ = reader_app.emit("agent:event", AiFrame { line });
+        }
+        // stdout reached EOF: the process is gone. This is the real exit signal —
+        // but only while this session is still the current one.
+        if SESSION_SEQ.load(std::sync::atomic::Ordering::SeqCst) == session_id {
+            let _ = reader_app.emit("agent:exit", String::new());
+        }
+        let _ = stderr_thread.join();
+    });
+
+    {
+        let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+        *guard = Some(session);
+    }
+
+    // Hold the reader's pending map for the lifetime of the session.
+    let session_guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = session_guard.as_ref().ok_or("session vanished")?;
+
+    session.request(
+        &app_handle,
+        "initialize",
+        serde_json::json!({
+            "clientInfo": { "name": "acsa-code", "version": env!("CARGO_PKG_VERSION") }
+        }),
+        std::time::Duration::from_secs(20),
+    )?;
+
+    let resuming = resume_thread_id.as_deref().map(str::trim).unwrap_or("").to_string();
+    let mut thread_params = serde_json::json!({
+        "model": model,
+        "modelProvider": provider_id,
+        "cwd": working_dir,
+        "approvalPolicy": approval_policy,
+        "approvalsReviewer": approvals_reviewer,
+        "sandbox": sandbox_mode,
+    });
+    let method = if resuming.is_empty() {
+        "thread/start"
+    } else {
+        // `thread/resume` takes the id; the rest of the context carries over.
+        thread_params["threadId"] = serde_json::Value::String(resuming.clone());
+        "thread/resume"
+    };
+    let reply = session.request(
+        &app_handle,
+        method,
+        thread_params,
+        std::time::Duration::from_secs(60),
+    )?;
+
+    let thread_id = reply
+        .get("result")
+        .and_then(|r| r.get("thread"))
+        .and_then(|t| t.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("thread/start answered without a thread id: {}", reply))?
+        .to_string();
+    if let Ok(mut slot) = session.thread_id.lock() {
+        *slot = Some(thread_id.clone());
+    }
+    Ok(thread_id)
+}
+
+/// Send one turn to the open thread. Events stream as `agent:event`.
+#[tauri::command]
+async fn agent_turn(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AgentState>,
+    text: String,
+) -> Result<(), String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no agent session is running")?;
+    let thread_id = session
+        .thread_id
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or("no thread is open")?;
+
+    session.request(
+        &app_handle,
+        "turn/start",
+        serde_json::json!({
+            "threadId": thread_id,
+            "input": [{ "type": "text", "text": text }],
+        }),
+        std::time::Duration::from_secs(30),
+    )?;
+    Ok(())
+}
+
+/// Answer a request the runtime sent us — an approval, in practice.
+#[tauri::command]
+async fn agent_respond(
+    app_handle: tauri::AppHandle,
+    request_id: serde_json::Value,
+    decision: serde_json::Value,
+) -> Result<(), String> {
+    use std::io::Write;
+    let state = app_handle.state::<AgentState>();
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no agent session is running")?;
+    let message = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": decision,
+    });
+    let mut stdin = session.stdin.lock().map_err(|e| e.to_string())?;
+    writeln!(stdin, "{}", message).map_err(|e| e.to_string())?;
+    stdin.flush().map_err(|e| e.to_string())
+}
+
+/// Stop the running turn, keeping the session and its thread.
+#[tauri::command]
+async fn agent_interrupt(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AgentState>,
+) -> Result<(), String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no agent session is running")?;
+    let thread_id = session
+        .thread_id
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .unwrap_or_default();
+    session.request(
+        &app_handle,
+        "turn/interrupt",
+        serde_json::json!({ "threadId": thread_id }),
+        std::time::Duration::from_secs(10),
+    )?;
+    Ok(())
+}
+
+/// End the session entirely.
+#[tauri::command]
+fn agent_stop(state: State<'_, AgentState>) -> Result<(), String> {
+    let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+    if let Some(mut session) = guard.take() {
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+    }
+    Ok(())
+}
+
 /// `config_toml` is written to this app's own `CODEX_HOME` before launch, so the
 /// provider the user configured in our settings is the one Codex uses, and we never
 /// touch their personal Codex configuration.
@@ -1616,43 +1999,12 @@ async fn codex_exec(
     // `wire_api = "responses"` provider entry simply cannot reach it.
     local_provider: Option<String>,
 ) -> Result<(), String> {
-    let resource_dir = app_handle.path().resource_dir().ok();
-    let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
-        "The agent runtime is not installed. Run scripts/fetch_codex_sidecar.sh.".to_string()
-    })?;
-
-    // Its own home, beside our data: config and auth stay ours, not the user's CLI setup.
-    let codex_home = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("no app data dir: {}", e))?
-        .join("codex");
-    std::fs::create_dir_all(&codex_home).map_err(|e| format!("could not create {}: {}", codex_home.display(), e))?;
-    if !config_toml.trim().is_empty() {
-        // `model_catalog_json` is a *path* to a catalog file, not inline JSON — verified
-        // against a working Codex install, after an inline attempt parsed without error and
-        // silently did nothing. Without the catalog Codex warns that it is "defaulting to
-        // fallback metadata" for our provider's models, which is the error the UI showed.
-        let config = if catalog_json.trim().is_empty() {
-            config_toml.clone()
-        } else {
-            let dir = codex_home.join("model-catalogs");
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
-            let path = dir.join(format!("{}.json", provider_id));
-            std::fs::write(&path, &catalog_json)
-                .map_err(|e| format!("could not write the model catalog: {}", e))?;
-            // Prepended, because TOML tables come last — a top-level key written after the
-            // provider table would land inside it and be rejected.
-            format!(
-                "model_catalog_json = \"{}\"\n{}",
-                path.to_string_lossy(),
-                config_toml
-            )
-        };
-        std::fs::write(codex_home.join("config.toml"), config)
-            .map_err(|e| format!("could not write Codex config: {}", e))?;
-    }
+    let (program, codex_home) = prepare_agent_home(
+        &app_handle,
+        &config_toml,
+        &provider_id,
+        &catalog_json,
+    )?;
 
     if let Some(mut previous) = state.child.lock().map_err(|e| e.to_string())?.take() {
         let _ = previous.kill();
@@ -1806,6 +2158,7 @@ fn main() {
         .manage(TerminalState::new())
         .manage(ChatState::new())
         .manage(OllamaState::new())
+        .manage(AgentState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -1831,6 +2184,11 @@ fn main() {
             ollama_pull,
             ollama_cancel,
             codex_exec,
+            agent_start,
+            agent_turn,
+            agent_respond,
+            agent_interrupt,
+            agent_stop,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

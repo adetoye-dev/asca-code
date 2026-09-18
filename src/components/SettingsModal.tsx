@@ -21,9 +21,13 @@ import { ProviderLogo } from "./ui/BrandLogos";
 import { aiFetch } from "../services/aiClient";
 import {
   AGENT_APPROVAL_MODES,
+  AGENT_TRANSPORTS,
   DEFAULT_AGENT_APPROVAL_MODE,
+  DEFAULT_AGENT_TRANSPORT,
   isAgentApprovalMode,
+  isAgentTransport,
   type AgentApprovalMode,
+  type AgentTransport,
 } from "../services/agentApproval";
 
 export interface AISettings {
@@ -45,6 +49,8 @@ export interface AISettings {
   terminalFontSize?: number;
   /** How much the agent may do unattended. See AGENT_APPROVAL_MODES. */
   approvalMode?: AgentApprovalMode;
+  /** Which agent runtime to drive. See AGENT_TRANSPORTS. */
+  agentTransport?: AgentTransport;
 }
 
 export interface SettingsModalProps {
@@ -183,8 +189,9 @@ export function SettingsModal({
   // Terminal state
   const [terminalFontSize, setTerminalFontSize] = useState(13);
 
-  // Agent state: how much the agent may do without asking.
+  // Agent state: which runtime, and how much it may do without asking.
   const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>(DEFAULT_AGENT_APPROVAL_MODE);
+  const [agentTransport, setAgentTransport] = useState<AgentTransport>(DEFAULT_AGENT_TRANSPORT);
 
   // Tree filter logic (unconditional hook)
   const filteredTree = useMemo(() => {
@@ -237,6 +244,11 @@ export function SettingsModal({
       isAgentApprovalMode(safeSettings.approvalMode)
         ? safeSettings.approvalMode
         : DEFAULT_AGENT_APPROVAL_MODE,
+    );
+    setAgentTransport(
+      isAgentTransport(safeSettings.agentTransport)
+        ? safeSettings.agentTransport
+        : DEFAULT_AGENT_TRANSPORT,
     );
     setTestStatus("idle");
     setTestMessage("");
@@ -346,6 +358,7 @@ export function SettingsModal({
         wordWrap,
         terminalFontSize,
         approvalMode,
+        agentTransport,
       });
     }
   };
@@ -365,6 +378,7 @@ export function SettingsModal({
         wordWrap,
         terminalFontSize,
         approvalMode,
+        agentTransport,
       });
     }
     if (onClose) {
@@ -933,6 +947,43 @@ export function SettingsModal({
                   </div>
 
                   <div className="space-y-2">
+                    <p className="text-xs font-semibold text-zinc-200">Engine</p>
+                    {(Object.keys(AGENT_TRANSPORTS) as AgentTransport[]).map((id) => {
+                      const option = AGENT_TRANSPORTS[id];
+                      const selected = agentTransport === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setAgentTransport(id)}
+                          className={`w-full text-left rounded-panel border p-3 transition-colors cursor-pointer ${
+                            selected
+                              ? "border-purple-500/60 bg-purple-950/30"
+                              : "border-hairline bg-surface hover:bg-workbench"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-3 h-3 rounded-full border ${
+                                selected ? "border-purple-400 bg-purple-500" : "border-zinc-600"
+                              }`}
+                            />
+                            <span className="text-xs font-medium text-zinc-100">{option.label}</span>
+                            {id === DEFAULT_AGENT_TRANSPORT && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                                Stable
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                            {option.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+
+                    <p className="text-xs font-semibold text-zinc-200 pt-2">Approvals</p>
                     {(Object.keys(AGENT_APPROVAL_MODES) as AgentApprovalMode[]).map((mode) => {
                       const option = AGENT_APPROVAL_MODES[mode];
                       const selected = approvalMode === mode;
@@ -961,6 +1012,11 @@ export function SettingsModal({
                             {mode === DEFAULT_AGENT_APPROVAL_MODE && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
                                 Recommended
+                              </span>
+                            )}
+                            {mode === "ask-me" && agentTransport !== "app-server" && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                                Needs app-server · falls back
                               </span>
                             )}
                           </div>
