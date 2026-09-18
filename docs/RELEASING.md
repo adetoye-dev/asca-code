@@ -63,7 +63,63 @@ otherwise only fail when that subcommand is used.
 
 Rebuild it whenever the engine changes — the bundled copy is what users run.
 
-## 3. Sign and notarise — **[configured; needs an Apple Developer account]**
+## 3. Sign and notarise — **[works; needs the notary credentials to finish]**
+
+### Signed build without waiting for CI
+
+The certificate is already in this machine's keychain, and `bundle.macOS.signingIdentity`
+is `null`, so a plain `tauri build` produces an **ad-hoc** signature — which is
+invalid (it does not seal resources) and is what Gatekeeper complains about.
+Name the identity explicitly:
+
+```bash
+# 1. what is actually available
+security find-identity -v -p codesigning
+
+# 2. build with it
+cd .tauri && APPLE_SIGNING_IDENTITY="Developer ID Application: NAME (TEAMID)" \
+  npx tauri build --bundles app
+
+# 3. sign what Tauri left behind, and re-seal — see scripts/sign_bundle.sh
+cd .. && ACSA_NO_TIMESTAMP=1 \
+  APPLE_SIGNING_IDENTITY="Developer ID Application: NAME (TEAMID)" scripts/sign_bundle.sh
+```
+
+Step 3 is the one that is easy to miss. Tauri signs the app and the `externalBin`
+sidecars, but a resource **directory** is copied verbatim, so the frozen engine
+and its embedded libpython stay ad-hoc signed while everything around them gets a
+Developer ID. Locally that still runs — an ad-hoc binary carries no
+hardened-runtime flag, so nothing enforces library validation on it — but Apple
+will not notarise a bundle containing code that is not signed with the same
+Developer ID.
+
+Verify with:
+
+```bash
+APP=".tauri/target/release/bundle/macos/ACSA Code.app"
+codesign -dv "$APP" | grep TeamIdentifier          # TFNTZSW82U
+codesign -dv "$APP/Contents/Resources/engine/acsa-engine/acsa-engine" | grep TeamIdentifier
+codesign --verify --deep --strict --verbose=2 "$APP"
+spctl -a -vv "$APP"                                 # "Unnotarized Developer ID" until step 4
+"$APP/Contents/Resources/engine/acsa-engine/acsa-engine" selftest
+```
+
+`ACSA_NO_TIMESTAMP=1` uses `--timestamp=none`, which is valid but not notarisable;
+CI uses a real secure timestamp.
+
+### Why there is no disk image
+
+`tauri build --bundles app,dmg` looks tidier and is wrong: the DMG bundler
+rebuilds the app and then **consumes** it (verified — after a `--bundles dmg` run
+the loose `.app` is gone), so the nested signing is thrown away and the image
+ships an app Apple rejects. The release ships a zip of the signed, notarised,
+stapled `.app` instead. A disk image can be added later by building it from the
+*stapled* app with `hdiutil`, after notarisation.
+
+### In CI
+
+`release.yml` builds the app, runs `scripts/sign_bundle.sh`, then notarises the
+zip and staples the app.
 
 Unsigned builds are quarantined by Gatekeeper on other people's Macs, so this is
 the step between "it builds" and "someone else can install it".

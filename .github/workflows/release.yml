@@ -117,10 +117,20 @@ jobs:
       # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are present.
       - name: Bundle
         working-directory: .tauri
-        # Build + sign + DMG only; notarisation happens in the next step. Still
-        # capped, so a hung build fails in 20 minutes instead of the 6h job limit.
+        # The app alone. `--bundles app,dmg` looks tidier and is wrong: the DMG
+        # bundler rebuilds the app and then consumes it, so the nested signing
+        # below is thrown away and the disk image ships an app Apple will reject.
+        # Verified locally — after a `--bundles dmg` run the loose `.app` is gone.
         timeout-minutes: 20
-        run: ../node_modules/.bin/tauri build --bundles app,dmg
+        run: ../node_modules/.bin/tauri build --bundles app
+
+      # Tauri signs the app and the `externalBin` sidecars, but a resource
+      # *directory* is copied verbatim — so the frozen engine and its libpython
+      # stay ad-hoc signed while everything around them gets a Developer ID.
+      # Notarisation rejects that. Nested code first, then the bundle is re-sealed.
+      - name: Sign the bundled resources
+        if: env.APPLE_CERTIFICATE != ''
+        run: scripts/sign_bundle.sh
 
       # Tauri runs `notarytool submit --wait` internally and discards its output,
       # so a submission that never finishes looks like a silent hang. Drive the
@@ -136,27 +146,29 @@ jobs:
         run: |
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
-          DMG=".tauri/target/release/bundle/dmg/ACSA Code.dmg"
-          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/app.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/app.zip" \
+          # Submitted from a temp copy; the artefact that ships is zipped *after*
+          # stapling. Zipping first was a real defect: the ticket is attached to
+          # the app by `stapler`, so a zip made before that carries no ticket and
+          # only validates with a network round-trip.
+          SUBMIT_ZIP="$RUNNER_TEMP/ACSA Code.app.zip"
+          SHIP_ZIP=".tauri/target/release/bundle/macos/ACSA Code.app.zip"
+          rm -f "$SUBMIT_ZIP" "$SHIP_ZIP"
+          ditto -c -k --keepParent "$APP" "$SUBMIT_ZIP"
+          xcrun notarytool submit "$SUBMIT_ZIP" \
             --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$APP"
           xcrun stapler validate "$APP"
-          if [ -f "$DMG" ]; then
-            xcrun notarytool submit "$DMG" \
-              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" --wait
-            xcrun stapler staple "$DMG"
-            xcrun stapler validate "$DMG"
-          fi
+          ditto -c -k --keepParent "$APP" "$SHIP_ZIP"
 
       - name: Confirm the bundle resolves its engine
         run: |
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
-          test -f "$APP/Contents/Resources/core-engine/manager.py"
+          # `acsa_engine.py` is the entry point; `manager.py` was deleted with
+          # the deterministic harness and this checked for it anyway.
+          test -f "$APP/Contents/Resources/core-engine/acsa_engine.py"
           "$APP/Contents/MacOS/acsa-code" > /tmp/launch.log 2>&1 &
           PID=$!
           sleep 12
@@ -176,11 +188,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
-          # Tauri writes the disk image to bundle/dmg/, not bundle/macos/, and
-          # produces no *.app.tar.gz while createUpdaterArtifacts is false — so
-          # both of the previous globs matched nothing.
+          # The signed, notarised, stapled app. The disk image is deliberately
+          # not built here: it has to be made *from* the stapled app, and Tauri's
+          # bundler cannot do that (see the Bundle step).
           files: |
-            .tauri/target/release/bundle/dmg/*.dmg
+            .tauri/target/release/bundle/macos/ACSA Code.app.zip
           body: |
             Built from ${{ github.sha }}.
 
