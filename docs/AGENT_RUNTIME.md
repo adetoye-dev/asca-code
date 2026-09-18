@@ -62,6 +62,74 @@ the Output panel, instead of being presented as a finished task. The check is
 mechanical: `runAgentOnCodex` counts `command_execution`, `file_change`,
 `mcp_tool_call` and `web_search` items.
 
+## Continuing a conversation
+
+A follow-up turn runs `codex exec resume <thread-id>` instead of a fresh `exec`,
+so the agent still has everything it read and did. The id comes from the first
+event of the previous run (`{"type":"thread.started","thread_id":"…"}`); the hook
+keeps one live thread per project + provider + model + approval mode, and starts
+a new one when any of those changes, because that is no longer the same
+conversation. Threads are held in memory: a relaunch starts clean, like the CLI.
+
+Two things about `resume` that are easy to get wrong:
+
+* It **rejects `--oss` / `--local-provider`** ("unexpected argument") — a resumed
+  thread keeps the model it was created with.
+* It still needs the provider named, or it falls back to OpenAI. Verified: a
+  resumed Ollama thread went to `api.openai.com` and 401'd. A config override is
+  accepted where the flag is not, so resume passes
+  `-c model_provider="<id>"` — the same name as our `[model_providers.*]` table
+  for cloud providers, and the built-in `ollama` for local ones.
+
+An unknown thread id fails **before the model sees anything** ("no rollout found
+for thread id …"), which is what makes the retry safe: the hook drops the id and
+re-runs once from scratch. That is not the two-edits risk a mid-run retry would
+carry.
+
+Verified end to end against the local model: after a resume, the thread's rollout
+contains both the first turn's message and the second's, so the context travelled.
+(The 1.5B model then failed to recall the number it was given — a capability
+limit, not a plumbing one.)
+
+## Failure detection
+
+`turn.failed` decides whether a run failed. Error *items* do **not**: Codex emits
+them for warnings too — a missing model-metadata entry, and a `code-mode-host`
+helper it ships separately. Matching on their prose marked correct runs as
+"needs attention" once already, and would again for the next warning it adds.
+
+## Interactive approvals: the app-server protocol
+
+Not implemented. This is what it would take, verified against the binary.
+
+`codex app-server --listen stdio://` speaks JSON-RPC over stdio, and the binary
+can emit its own protocol definition — use it rather than guessing:
+
+```bash
+codex app-server generate-json-schema --out /tmp/cx-schema
+codex app-server generate-ts --out /tmp/cx-ts     # if the TS bindings are wanted
+```
+
+The shape: `initialize` (client name/version/capabilities), then
+`thread/start` (`cwd`, `model`, `modelProvider`, `approvalPolicy`,
+`approvalsReviewer`, `sandbox`, …), then `turn/start` (`threadId`, `input`), with
+`turn/steer` and `turn/interrupt` for a run in progress. Server → client events
+are `turn/started`, `turn/completed`, `turn/diff`, `turn/plan`, `item/started`,
+`item/completed`.
+
+Approvals arrive as **server-initiated requests** that must be answered:
+`execCommandApproval`, `applyPatchApproval`, `attestation/generate`,
+`openai/form`. That is the piece `exec` cannot do — it is one-shot with no
+channel to answer them, so with `approvals_reviewer = "user"` a request would be
+auto-denied rather than shown.
+
+Cost: a long-lived child instead of a process per run, request/response
+correlation, lifecycle management (respawn, per-thread queueing), and re-testing
+everything `exec` already does. It should be done as an isolated change with the
+`exec` path intact behind a flag — a half-migrated agent is worse than either
+end. `--listen` also supports `unix://` and `ws://`, and there is a `daemon`
+subcommand for a shared instance.
+
 ## Token usage
 
 `turn.completed` carries the counts, one per turn:

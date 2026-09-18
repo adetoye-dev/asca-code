@@ -1508,6 +1508,10 @@ async fn codex_exec(
     // The model the run should use. Needed as a CLI argument for local runs,
     // where `--oss` would otherwise choose (and download) its own default.
     model: String,
+    // Continue an existing thread instead of starting a new one. The id comes
+    // from the previous run's `thread.started` event; an unknown or stale id
+    // fails before any work happens, which is what makes the retry safe.
+    resume_thread_id: Option<String>,
     // Set for a local runtime (Ollama, LM Studio). Codex then talks to it over
     // its own adapter instead of a custom OpenAI-compatible provider — which
     // matters because Ollama does not implement the Responses API, so a
@@ -1563,12 +1567,29 @@ async fn codex_exec(
     };
 
     let mut command = Command::new(&program);
+    command.arg("exec");
+    // A follow-up continues the same thread, so the agent still has everything it
+    // read and did. Without this each turn is a fresh process that only knows
+    // what we paste back into the prompt.
+    let resuming = resume_thread_id.as_deref().map(str::trim).unwrap_or("");
+    if !resuming.is_empty() {
+        command.arg("resume");
+    }
     command
-        .arg("exec")
         .arg("--json")
         // The project may not be a git repo; Codex refuses to start otherwise.
         .arg("--skip-git-repo-check");
-    if let Some(local) = local_provider.as_deref().filter(|p| !p.trim().is_empty()) {
+    if !resuming.is_empty() {
+        // `resume` rejects `--oss` / `--local-provider` ("unexpected argument"),
+        // because a resumed thread keeps the model it was created with. The
+        // provider still has to be named or it falls back to OpenAI — verified:
+        // without this the resumed thread went to api.openai.com and 401'd. A
+        // config override is accepted here, and for the cloud providers the same
+        // name is already the `[model_providers.*]` table we write.
+        command
+            .arg("-c")
+            .arg(format!("model_provider=\"{}\"", provider_id.trim()));
+    } else if let Some(local) = local_provider.as_deref().filter(|p| !p.trim().is_empty()) {
         // `-m` is not optional here. `--oss` has its own default model and will go
         // and download it — verified the hard way: without this, a run against the
         // installed 1.5b model started fetching a 12.85 GB one instead of using
@@ -1580,6 +1601,10 @@ async fn codex_exec(
             .arg(local)
             .arg("-m")
             .arg(&model);
+    }
+    // `resume [OPTIONS] [SESSION_ID] [PROMPT]`
+    if !resuming.is_empty() {
+        command.arg(resuming);
     }
     // The prompt is positional, so it goes last.
     command

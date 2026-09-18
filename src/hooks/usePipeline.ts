@@ -17,7 +17,7 @@ import type { PipelineOutputLine, SystemMetrics, PipelineStatus } from "../types
 import { DESKTOP_REQUIRED_MESSAGE } from "../services/engineBridge";
 import type { AgentStep } from "../services/aiChatService";
 import { systemMetricsService } from "../services/systemMetricsService";
-import { loadAllProviders } from "../services/aiModelManager";
+import { getActiveSelectedModel, loadAllProviders } from "../services/aiModelManager";
 import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
@@ -50,6 +50,10 @@ async function runAgentOnCodex(params: {
   log: (line: string) => void;
   /** Something the run itself should say, beyond the model's own messages. */
   note?: (note: { name: string; detail: string; status: "done" | "failed" }) => void;
+  /** Continue this thread instead of starting a new one. */
+  resumeThreadId?: string;
+  /** Called with the thread that ran, so the caller can resume it next time. */
+  onThread?: (threadId: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -197,6 +201,8 @@ async function runAgentOnCodex(params: {
   // diagnosable one.
   // Boxed for the same reason as `usageBox` below.
   const toolCallCount = { value: 0 };
+  // The id of the thread this run is using, so the caller can resume it.
+  const threadIdBox: { value: string } = { value: params.resumeThreadId || "" };
   // Token counts arrive on their own event just before `codex:exit`; the ledger
   // is the only place a run's real cost shows up, so they are worth carrying.
   // Boxed because it is written from a listener closure: a bare `let` would be
@@ -219,13 +225,20 @@ async function runAgentOnCodex(params: {
         try {
           const parsed = JSON.parse(line);
           const itemType = parsed?.item?.type;
-          // Codex reports a missing *model metadata* entry as an `error` item, and that is
-          // a warning about capability hints, not a failed task. Counting it as failure
-          // marked a run that edited the file correctly as "needs attention".
-          const fatal =
-            parsed?.item?.type === "error" &&
-            !/metadata/i.test(String(parsed?.item?.message ?? ""));
-          if (fatal) failed = true;
+          // The stream says plainly whether the turn failed. Error *items* are not
+          // failures: Codex emits them for warnings too — a missing model metadata
+          // entry, and a `code-mode-host` helper it ships separately. Matching on
+          // their prose marked a run that edited the file correctly as "needs
+          // attention", and would have done it again for the next warning it adds.
+          if (parsed?.type === "turn.failed") failed = true;
+          if (itemType === "error") {
+            params.log(`[agent] codex warning — ${String(parsed?.item?.message ?? "")}`);
+          }
+          // Remembered for the next turn: `resume` continues this thread rather
+          // than starting from nothing.
+          if (parsed?.type === "thread.started" && parsed?.thread_id) {
+            threadIdBox.value = String(parsed.thread_id);
+          }
           if (
             itemType === "command_execution" ||
             itemType === "file_change" ||
@@ -272,6 +285,7 @@ async function runAgentOnCodex(params: {
         catalogJson,
         model,
         localProvider,
+        resumeThreadId: params.resumeThreadId,
       });
       params.log("[agent] codex: runtime started");
     } catch (error) {
@@ -285,6 +299,7 @@ async function runAgentOnCodex(params: {
     for (let i = 0; i < 7200 && !finished; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    if (threadIdBox.value) params.onThread?.(threadIdBox.value);
     const usage = usageBox.value;
     if (usage) {
       // Fire and forget: a spent ledger row must not delay the chat's own update,
@@ -1083,6 +1098,17 @@ export function usePipeline(): UsePipelineReturn {
   // ── Run Pipeline (100% Real Subprocess Execution) ─────────────────────────
   const pipelineAbortRef = useRef<AbortController | null>(null);
 
+  /**
+   * Live agent threads, keyed by everything that would invalidate one.
+   *
+   * A follow-up turn resumes the thread the previous turn ran in, so the agent
+   * still has what it read and did — instead of being handed a fresh process and
+   * a pasted-in transcript. Changing the model, provider or approval mode starts
+   * a new thread, because resuming across those is not the same conversation.
+   * Held in memory on purpose: a relaunch starts clean, like the CLI does.
+   */
+  const agentThreadsRef = useRef<Map<string, string>>(new Map());
+
   const runPipeline = useCallback(
     async (
       customPrompt?: string,
@@ -1117,12 +1143,40 @@ export function usePipeline(): UsePipelineReturn {
       setAgentSteps([]);
       setTouchedPaths([]);
 
+      // The thread key must reflect what the run will actually use, so resolve
+      // the model the same way `runAgentOnCodex` does before asking for a thread.
+      const activeSelection = getActiveSelectedModel() as
+        | { providerId?: string; model?: string }
+        | null;
+      const threadProvider = modelOverride?.provider || activeSelection?.providerId || "";
+      const threadModel = modelOverride?.model || activeSelection?.model || "";
+      const threadKey = [
+        activeProject.path,
+        threadProvider,
+        threadModel,
+        aiSettings.approvalMode ?? "approve-for-me",
+      ].join("\u0000");
+      const resumeThreadId = agentThreadsRef.current.get(threadKey);
+
       const agentPrompt = buildAgentPrompt(
         activePrompt,
         activeFilePath,
         selectedCode,
-        conversationHistory,
+        // A resumed thread already holds the earlier turns; re-sending them would
+        // duplicate the conversation inside its own context.
+        resumeThreadId ? undefined : conversationHistory,
       );
+      if (resumeThreadId) {
+        setActivityLog((prev) => [
+          ...prev,
+          {
+            line_number: prev.length + 1,
+            content: `[agent] continuing thread ${resumeThreadId.slice(0, 8)}`,
+            stream: "stdout",
+            is_json: false,
+          },
+        ]);
+      }
       if (images && images.length > 0) {
         // The runtime accepts image files, not inline data URLs, and nothing here writes
         // bytes to disk yet — so say so rather than let the attachment vanish.
@@ -1138,9 +1192,12 @@ export function usePipeline(): UsePipelineReturn {
       }
 
       if (isTauriAvailable) {
-        const codexStatus = await runAgentOnCodex({
-          prompt: agentPrompt,
-          projectRoot: activeProject.path,
+        const runOnce = (resume?: string) =>
+          runAgentOnCodex({
+            prompt: agentPrompt,
+            resumeThreadId: resume,
+            onThread: (id) => agentThreadsRef.current.set(threadKey, id),
+            projectRoot: activeProject.path,
           selection: modelOverride
             ? { providerId: modelOverride.provider, model: modelOverride.model }
             : undefined,
@@ -1169,7 +1226,26 @@ export function usePipeline(): UsePipelineReturn {
               next[idx] = { ...next[idx], ...step };
               return next;
             }),
-        });
+          });
+
+        let codexStatus = await runOnce(resumeThreadId);
+
+        // A resumed thread can be gone — a cleared session directory, a stale id.
+        // That fails before the model sees anything, so starting over is safe and
+        // is not the "two edits" risk a mid-run retry would be.
+        if (codexStatus === "unavailable" && resumeThreadId) {
+          agentThreadsRef.current.delete(threadKey);
+          setActivityLog((prev) => [
+            ...prev,
+            {
+              line_number: prev.length + 1,
+              content: "[agent] that thread could not be resumed; starting a fresh one.",
+              stream: "stdout",
+              is_json: false,
+            },
+          ]);
+          codexStatus = await runOnce(undefined);
+        }
 
         // No fallback to our own loop. It narrated tool calls in prose and answered
         // refusals with a guard message, editing nothing — degrading to it silently is
