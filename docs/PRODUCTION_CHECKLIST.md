@@ -45,7 +45,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Python runtime | **[done]** | The engine is frozen into a single `acsa-engine` tree (`scripts/build_engine_sidecar.sh`) and resolved by the Rust spawn path, falling back to `python3` for a source checkout. No interpreter needed on the user's machine. |
 | Code signing / notarisation | **[partial]** | Hardened runtime and entitlements are configured and `release.yml` imports the certificate, notarises, and verifies the ticket — but it needs an Apple Developer certificate, so no signed build has been produced yet. |
 | Auto-update | **[open]** | Documented end to end in `RELEASING.md`; needs a signing key and a release host. |
-| CI | **[done]** | `ci.yml` runs typecheck + tests + build, builds the sidecar, and bundles, launches and engine-checks the `.app`. `release.yml` signs on tag. |
+| CI | **[done]** | `ci.yml` runs lint + typecheck + the Python suite, checks the notices, runs the **Rust tests**, builds the sidecar, and bundles, launches and engine-checks the `.app`. `release.yml` signs on tag. Two things were fixed here: `cargo test` was in no job at all, and the bundle assertion named `manager.py` — a file the harness removal deleted — so the job failed on a file that was supposed to be gone. |
 
 ## Quality gates
 

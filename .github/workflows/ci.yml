@@ -108,6 +108,14 @@ jobs:
 
       - run: npm ci
 
+      # The Rust tests had no runner: nothing in CI executed them, so the
+      # transport, session lifecycle and credential redactor were only checked
+      # when someone remembered. They are offline and deterministic — the two
+      # that need a live model provider are `#[ignore]`d and skip loudly — so
+      # they run here, before the slow bundling steps.
+      - name: Rust tests
+        run: cargo test --manifest-path .tauri/Cargo.toml
+
       - name: Build the engine sidecar
         run: scripts/build_engine_sidecar.sh
 
@@ -125,7 +133,11 @@ jobs:
         run: |
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
-          test -f "$APP/Contents/Resources/core-engine/manager.py"
+          # `acsa_engine.py` is the entry point the Rust side falls back to when
+          # there is no frozen binary. This used to name `manager.py`, which the
+          # harness removal deleted — so the job failed on a file that was
+          # supposed to be gone.
+          test -f "$APP/Contents/Resources/core-engine/acsa_engine.py"
           test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
           # MIT needs the notice to accompany the binary, and OFL needs the font
           # licence to travel with the font. Both live inside the bundle.
