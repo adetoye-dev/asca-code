@@ -69,6 +69,7 @@ mkdir -p .tauri/binaries
   --hidden-import skill_loader \
   --add-data "${REPO_ROOT}/core-engine/skills:skills" \
   --hidden-import mcp_client \
+  --hidden-import responses_adapter \
   core-engine/acsa_engine.py
 
 ENGINE_BIN=".tauri/engine/acsa-engine/acsa-engine"
