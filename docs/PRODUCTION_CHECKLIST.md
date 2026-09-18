@@ -44,7 +44,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Icons | **[done]** | `.tauri/icon-source.svg` generates the platform set; the titlebar/watermark logo is `public/logos/acsa.svg`. Hand-authored stand-in — swap in final art when ready. |
 | Python runtime | **[done]** | The engine is frozen into a single `acsa-engine` tree (`scripts/build_engine_sidecar.sh`) and resolved by the Rust spawn path, falling back to `python3` for a source checkout. No interpreter needed on the user's machine. |
 | Code signing / notarisation | **[done]** | Verified in CI, not just locally: `release.yml` run 35356869102 produced a signed, notarised, stapled app and `spctl --assess` reports `accepted, source=Notarized Developer ID` (it was `rejected, source=Unnotarized Developer ID` before). Three things were actually wrong, none of them the certificate: `signingIdentity` was `null` so Tauri never auto-detected and every build was **ad-hoc** (and invalid — it sealed no resources, which was the Gatekeeper complaint); the frozen engine is a resource *directory*, which Tauri copies unsigned, so notarisation would have rejected the bundle; and `--bundles app,dmg` rebuilds then consumes the app, so Tauri's DMG step could never carry a nested signature. `scripts/sign_bundle.sh` handles the middle one; the release builds the app only and ships the stapled zip. |
-| Auto-update | **[partial]** | Wired: `tauri-plugin-updater`, a check on launch (default on, switchable in **Settings → About**), a titlebar button that appears only when a release exists, and a prompt that installs on a click and restarts on a second one. The minisign keypair exists (`~/.tauri/acsa-updater.key`, no password) and the release builds the updater tarball **from the stapled app**, signs it, and writes `latest.json`. Not yet exercised: no release has been published with a manifest, so the app has never actually updated itself. Two things it needs: `TAURI_SIGNING_PRIVATE_KEY` as a repo secret, and one tag. |
+| Auto-update | **[partial]** | The **check** is verified end to end: the signed 0.2.0 app found `0.2.0`, showed the titlebar button, and `latest.json` resolves anonymously (302 → the asset). The **install** is not: nobody has clicked Update on a published release, so download → verify → replace → restart is untested. Publishing is per-tag, and `createUpdaterArtifacts` stays `false` in the committed config on purpose (turning it on would break `tauri build` for anyone without the signing key). |
 | CI | **[done]** | `ci.yml` runs lint + typecheck + the Python suite, checks the notices, runs the **Rust tests**, builds the sidecar, and bundles, launches and engine-checks the `.app`. `release.yml` signs on tag. Two things were fixed here: `cargo test` was in no job at all, and the bundle assertion named `manager.py` — a file the harness removal deleted — so the job failed on a file that was supposed to be gone. |
 
 ## Quality gates
@@ -91,18 +91,15 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 ## Suggested order
 
-1. **One verified `release.yml` run**, with the notary credentials set. The certificate
-   and the signing path are done and verified locally; what is untested is the workflow —
-   and GitHub Actions minutes are currently exhausted, so it cannot be tested yet.
+1. **One end-to-end update.** The check is proven — the app found `0.2.0` and showed the
+   button, and `latest.json` is anonymously reachable. What has never run is
+   *download → install → restart*: nobody has clicked Update on a published release.
 2. **A support bundle.** Redaction and crash reporting are done; what is missing is the button
    that collects the crash log beside the settings and versions into one file to attach.
-3. **Auto-update**, once builds are signed and there is a release host.
-4. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-5. **Component tests.** Vitest now covers the services layer; nothing *renders*.
-   The model picker, the layout pass and the z-index scale are still verified by
-   hand, and a render test is what would keep them honest.
-6. **A Backup / Restore surface in Settings**, then **OS keychain** for
-   credentials. The engine side of backup exists and is verified; the user cannot
-   reach it.
-7. **The manual half of the accessibility audit** — the automated half is in `verify`.
-8. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in; drop the real logo over `.tauri/icon-source.svg` and `public/logos/acsa.svg`.
+3. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
+4. **Component tests.** Vitest covers the services layer; nothing *renders*. The model
+   picker, the layout pass and the z-index scale are still verified by hand.
+5. **A Backup / Restore surface in Settings**, then **OS keychain** for credentials.
+   The engine half exists and is verified; the user cannot reach it.
+6. **The manual half of the accessibility audit** — the automated half is in `verify`.
+7. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in.
