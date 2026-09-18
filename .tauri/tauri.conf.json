@@ -95,6 +95,12 @@
   "plugins": {
     "shell": {
       "open": false
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYyQjQxNTcwRkJBQkNCMkIKUldRcnk2djdjQlcwOHNhNkdaRUhtWU12VFYzTW5UNk0zMzRadjdmZmpSSjVsUWJMWDZEZ3BnOFEK",
+      "endpoints": [
+        "https://github.com/adetoye-dev/asca-code/releases/latest/download/latest.json"
+      ]
     }
   }
 }

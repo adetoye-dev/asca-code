@@ -194,6 +194,54 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The updater artifact has to be built from the *stapled* app, not from the
+      # build output: a tarball made earlier carries no notarisation ticket, so
+      # every update would re-introduce the Gatekeeper prompt we just removed.
+      # It is signed with the minisign key, which is separate from the Apple
+      # certificate — the app verifies it against `plugins.updater.pubkey`.
+      - name: Build and sign the updater artifact
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BUNDLE=".tauri/target/release/bundle/macos"
+          rm -f "$BUNDLE/ACSA Code.app.tar.gz" "$BUNDLE/ACSA Code.app.tar.gz.sig"
+          tar -czf "$BUNDLE/ACSA Code.app.tar.gz" -C "$BUNDLE" "ACSA Code.app"
+          npx tauri signer sign "$BUNDLE/ACSA Code.app.tar.gz"
+          test -f "$BUNDLE/ACSA Code.app.tar.gz.sig" \
+            || { echo "::error::no signature was produced — TAURI_SIGNING_PRIVATE_KEY is probably unset"; exit 1; }
+
+      # What the app fetches on launch. Written only for a tag, because the URL
+      # has to point at a release that exists.
+      - name: Write the update manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = json.load(open(".tauri/tauri.conf.json"))["version"]
+          bundle = pathlib.Path(".tauri/target/release/bundle/macos")
+          signature = (bundle / "ACSA Code.app.tar.gz.sig").read_text().strip()
+          manifest = {
+              "version": version,
+              "notes": f"Built from {os.environ.get('GITHUB_SHA', '')[:8]}.",
+              "pub_date": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": signature,
+                      "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
+                             f"/releases/download/{tag}/ACSA%20Code.app.tar.gz",
+                  }
+              },
+          }
+          (bundle / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
@@ -204,6 +252,9 @@ jobs:
           # bundler cannot do that (see the Bundle step).
           files: |
             .tauri/target/release/bundle/macos/ACSA Code.app.zip
+            .tauri/target/release/bundle/macos/ACSA Code.app.tar.gz
+            .tauri/target/release/bundle/macos/ACSA Code.app.tar.gz.sig
+            .tauri/target/release/bundle/macos/latest.json
           body: |
             Built from ${{ github.sha }}.
 

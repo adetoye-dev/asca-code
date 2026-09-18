@@ -2292,6 +2292,15 @@ fn local_adapter_stop(state: State<'_, LocalAdapterState>) -> Result<(), String>
     Ok(())
 }
 
+/// Relaunch the app, so an installed update takes effect.
+///
+/// `@tauri-apps/plugin-process` exists for this, and pulling in a whole plugin —
+/// plus a capability entry — for one call is not worth it, so it is a command.
+#[tauri::command]
+fn app_restart(app_handle: tauri::AppHandle) {
+    app_handle.restart();
+}
+
 /// End the session entirely.
 #[tauri::command]
 fn agent_stop(state: State<'_, AgentState>) -> Result<(), String> {
@@ -2500,6 +2509,12 @@ fn main() {
         .manage(OllamaState::new())
         .manage(AgentState::default())
         .manage(LocalAdapterState::default())
+        // Updates: the app checks a manifest, verifies the artifact against the
+        // public key in tauri.conf.json, and installs it on restart. Nothing here
+        // talks to a server the user did not ask for — the check is on by default
+        // because a security fix nobody receives is worse than a version ping, but
+        // it is a visible setting, and the install always waits for a click.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -2532,6 +2547,7 @@ fn main() {
             agent_stop,
             local_adapter_start,
             local_adapter_stop,
+            app_restart,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

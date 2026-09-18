@@ -39,6 +39,7 @@ import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
 import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
 import { MarketplaceSidebar } from "../sidebar/MarketplaceSidebar";
+import { UpdateButton } from "./UpdateButton";
 import { VersionControlDropdown } from "./VersionControlDropdown";
 import { CloneModal } from "../modals/CloneModal";
 import { ProjectModal } from "../ProjectModal";
@@ -1199,6 +1200,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
             <span>Chat</span>
           </button>
+
+          {/* Appears only when there is a newer release, and installs only on a
+              click. See services/appUpdater.ts for the policy. */}
+          <UpdateButton />
         </div>
       </header>
 

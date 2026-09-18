@@ -108,16 +108,16 @@ jobs:
 
       - run: npm ci
 
-      # The Rust tests had no runner: nothing in CI executed them, so the
-      # transport, session lifecycle and credential redactor were only checked
-      # when someone remembered. They are offline and deterministic — the two
-      # that need a live model provider are `#[ignore]`d and skip loudly — so
-      # they run here, before the slow bundling steps.
-      - name: Rust tests
-        run: cargo test --manifest-path .tauri/Cargo.toml
-
       - name: Build the engine sidecar
         run: scripts/build_engine_sidecar.sh
+
+      # After the sidecar, not before: `cargo test` runs Tauri's build script,
+      # which validates that every `bundle.resources` path exists — and
+      # `.tauri/engine/` is gitignored, so before this step the build dies with
+      # "resource path `engine` doesn't exist" and the job fails in 90 seconds.
+      # That is exactly what it did on every push until this moved.
+      - name: Rust tests
+        run: cargo test --manifest-path .tauri/Cargo.toml
 
       - name: Fetch the Codex agent runtime
         run: scripts/fetch_codex_sidecar.sh

@@ -18,6 +18,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
+import { AboutPane } from "./settings/AboutPane";
 import { aiFetch } from "../services/aiClient";
 import {
   AGENT_APPROVAL_MODES,
@@ -108,6 +109,7 @@ const SETTINGS_TREE: TreeNode[] = [
     ],
   },
   { id: "marketplace", label: "Marketplace" },
+  { id: "about", label: "About" },
 ];
 
 /** Every id the tree actually offers, so a caller cannot land on an empty pane. */
@@ -1066,6 +1068,8 @@ export function SettingsModal({
                   </div>
                 </div>
               )}
+
+              {selectedSection === "about" && <AboutPane />}
 
               {selectedSection === "marketplace" && (
                 <div className="space-y-4 max-w-2xl">

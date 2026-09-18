@@ -1,6 +1,12 @@
 {
   "identifier": "default",
-  "description": "Baseline permissions for the workbench window. `core:default` covers the core APIs the app uses; `core:event:default` is what makes streaming work at all — the terminal and the assistant both deliver output as Tauri events, and without it `listen()` fails with 'Command plugin:event|listen not allowed by ACL'.",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:event:default"]
+  "description": "Baseline permissions for the workbench window. `core:default` covers the core APIs the app uses; `core:event:default` is what makes streaming work at all \u2014 the terminal and the assistant both deliver output as Tauri events, and without it `listen()` fails with 'Command plugin:event|listen not allowed by ACL'. `updater:default` is the minimum the update check needs: the check and the download are both behind it, and it grants nothing the app does not call.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "updater:default"
+  ]
 }

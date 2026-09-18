@@ -288,12 +288,14 @@ Read the result against <https://developer.apple.com/system-status/>:
 Windows build. The shape is the same: an Authenticode certificate, then
 `signtool` over the `nsis` installer.
 
-## 4. Auto-updates — **[blocked: needs a signing key and a release host]**
+## 4. Auto-updates — **[wired; needs one published release to prove]**
 
-Nothing is wired up: `bundle.createUpdaterArtifacts` is `false` and
-`tauri-plugin-updater` is not a dependency. Do not flip the flag alone — Tauri
-refuses to build updater artifacts without a signing key, so enabling it without
-step 4a breaks `tauri build` for everyone.
+Implemented, and not yet exercised. `tauri-plugin-updater` is a dependency, the
+app checks on launch (default on, switchable in **Settings → About**), and the
+titlebar shows a button when a release exists. What has never happened is an
+actual update, because no release has been published carrying a manifest.
+
+Still to do: put the private key in a repo secret, then push a tag.
 
 ### 4a. Generate the update signing key
 
