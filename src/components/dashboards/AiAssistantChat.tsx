@@ -1023,7 +1023,7 @@ export function AiAssistantChat({
           {indexStatus && (
             <div className="flex items-center gap-1.5 ml-1">
               {isIndexing ? (
-                <span className="flex items-center gap-1 text-[10px] text-accent bg-accent/10 px-2 py-0.5 rounded-full border border-accent/20 animate-pulse font-mono">
+                <span className="flex items-center gap-1 text-[10px] text-accent bg-primary-action/10 px-2 py-0.5 rounded-full border border-accent/20 animate-pulse font-mono">
                   <Icon icon={RefreshCw} className="w-2.5 h-2.5 animate-spin" />
                   Indexing AST...
                 </span>

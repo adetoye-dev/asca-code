@@ -103,6 +103,49 @@
     font-family: var(--ide-ui-font);
   }
 
+  /*
+   * Tell the platform this is a dark UI.
+   *
+   * Without it the browser draws every *native* control in light mode: white
+   * checkboxes, a white select popup, light scrollbars, and an autofill fill
+   * that no stylesheet can reach. It is one line and it fixes a whole class of
+   * the contrast complaints.
+   */
+  :root {
+    color-scheme: dark;
+    accent-color: var(--action-primary);
+  }
+
+  /*
+   * A text field always has a surface of its own.
+   *
+   * The base layer set a font and a focus ring but never a background or a text
+   * colour, so any field that did not carry working dark utilities fell back to
+   * the browser default and rendered as a white box — with a muted placeholder
+   * on top of it, which is the white-on-white the settings page showed. This is
+   * the floor, not the design: utility classes still win.
+   */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+  select,
+  textarea {
+    background-color: var(--surface-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-hairline);
+  }
+
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  /* Firefox dims placeholders on top of the colour, which made them vanish. */
+  ::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
   input:focus, textarea:focus, select:focus {
     outline: none;
   }

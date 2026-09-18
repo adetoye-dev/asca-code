@@ -1,4 +1,18 @@
 /** @type {import('tailwindcss').Config} */
+/**
+ * A design token as a Tailwind colour that honours the `/opacity` modifier.
+ *
+ * The tokens are hex — `var(--surface-workbench)` is `#0f0f12` — and Tailwind
+ * cannot apply an alpha modifier to a `var()`. It does not emit a wrong rule, it
+ * emits *no* rule: `bg-workbench/60` was silently dropped, so the element fell
+ * back to the browser's white and a text field rendered white-on-white. This
+ * keeps each token single-sourced and computes the alpha at use instead.
+ */
+const token = (variable) => ({ opacityValue }) =>
+  opacityValue === undefined || opacityValue === null
+    ? `var(${variable})`
+    : `color-mix(in srgb, var(${variable}) calc(${opacityValue} * 100%), transparent)`;
+
 export default {
   content: [
     "./index.html",
@@ -11,26 +25,32 @@ export default {
         background: "#09090b",
         surface: "#18181b",
         border: "#27272a",
-        canvas: "var(--surface-canvas)",
-        workbench: "var(--surface-workbench)",
-        panel: "var(--surface-panel)",
-        overlay: "var(--surface-overlay)",
-        modal: "var(--surface-modal)",
-        elevated: "var(--surface-elevated)",
-        "surface-subtle": "var(--surface-subtle)",
-        "surface-hover": "var(--surface-hover)",
-        "surface-active": "var(--surface-active)",
-        "surface-selected": "var(--surface-selected)",
-        "border-hairline": "var(--border-hairline)",
-        "border-accent": "var(--border-accent)",
-        "border-focus": "var(--border-focus)",
+        canvas: token("--surface-canvas"),
+        workbench: token("--surface-workbench"),
+        panel: token("--surface-panel"),
+        overlay: token("--surface-overlay"),
+        modal: token("--surface-modal"),
+        elevated: token("--surface-elevated"),
+        "surface-subtle": token("--surface-subtle"),
+        "surface-hover": token("--surface-hover"),
+        "surface-active": token("--surface-active"),
+        "surface-selected": token("--surface-selected"),
+        "border-hairline": token("--border-hairline"),
+        "border-accent": token("--border-accent"),
+        "border-focus": token("--border-focus"),
+        // `bg-hairline/80` (a 1px divider) and `bg-primary-action/90` (a pressed
+        // button) were both dead: `hairline` existed only as a borderColor and
+        // `primary-action` only as a backgroundColor, where the `/alpha` form is
+        // not resolved.
+        hairline: token("--border-hairline"),
+        "primary-action": token("--action-primary"),
       },
       borderColor: {
-        hairline: "var(--border-hairline)",
-        subtle: "var(--border-subtle)",
-        strong: "var(--border-strong)",
-        accent: "var(--border-accent)",
-        focus: "var(--border-focus)",
+        hairline: token("--border-hairline"),
+        subtle: token("--border-subtle"),
+        strong: token("--border-strong"),
+        accent: token("--border-accent"),
+        focus: token("--border-focus"),
       },
       textColor: {
         primary: "var(--text-primary)",
@@ -38,9 +58,6 @@ export default {
         muted: "var(--text-muted)",
         accent: "var(--text-accent)",
         "primary-icon": "var(--text-primary-icon)",
-      },
-      backgroundColor: {
-        "primary-action": "var(--action-primary)",
       },
       borderRadius: {
         pill: "var(--radius-xl)",

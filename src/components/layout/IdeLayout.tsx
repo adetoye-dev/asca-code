@@ -55,7 +55,7 @@ import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WIT
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
 
-type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
+type SidebarTab = "explorer" | "search" | "sourceControl";
 
 const SPECIAL_PANELS = ["dock_diff", "diff_"];
 
@@ -90,18 +90,20 @@ const SurfaceFallback = ({ label }: { label: string }) => (
 );
 
 /** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
-type FullPageId = "monitor" | "aiManager" | "codeMap";
+type FullPageId = "monitor" | "aiManager" | "codeMap" | "marketplace";
 
 const FULL_PAGE_TITLES: Record<FullPageId, string> = {
   monitor: "Host Health & Performance",
   aiManager: "AI Models & Providers",
   codeMap: "Code Map",
+  marketplace: "Marketplace",
 };
 
 const FULL_PAGE_ICONS: Record<FullPageId, typeof Cpu> = {
   monitor: Activity,
   aiManager: Cpu,
   codeMap: Network,
+  marketplace: Package,
 };
 
 /**
@@ -405,6 +407,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const openMonitorTab = () => openFullPage("monitor");
   const openAiManagerTab = () => openFullPage("aiManager");
   const openCodeMapTab = () => openFullPage("codeMap");
+  const openMarketplaceTab = () => openFullPage("marketplace");
 
   const openAiChatTab = () => {
     // Mutual exclusivity: close right panel when opening center stage tab
@@ -791,10 +794,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       title: "Show Marketplace: Skills, Tools & MCP Servers",
       category: "View",
       icon: Package,
-      action: () => {
-        setActiveSidebarTab("extensions");
-        setIsSidebarOpen(true);
-      },
+      action: openMarketplaceTab,
     },
   ];
 
@@ -1314,16 +1314,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <button
             type="button"
             title="Marketplace: Skills, Tools & MCP Servers (Cmd+Shift+X)"
-            onClick={() => {
-              if (activeSidebarTab === "extensions" && isSidebarOpen) {
-                setIsSidebarOpen(false);
-              } else {
-                setActiveSidebarTab("extensions");
-                setIsSidebarOpen(true);
-              }
-            }}
+            onClick={openMarketplaceTab}
             className={`p-2 rounded-lg transition-all ${
-              activeSidebarTab === "extensions" && isSidebarOpen
+              fullPage === "marketplace"
                 ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
@@ -1386,10 +1379,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                 refreshBranch();
               }}
             />
-          )}
-
-          {activeSidebarTab === "extensions" && (
-            <MarketplaceSidebar projectRoot={activeProject.path} />
           )}
 
           {/* Draggable Resize Handle */}
@@ -1500,6 +1489,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                         });
                       }}
                     />
+                  )}
+                  {fullPage === "marketplace" && (
+                    // A centred column rather than the full width: this was a
+                    // sidebar, and stretched across a wide monitor its rows read
+                    // as a spreadsheet.
+                    <div className="h-full w-full max-w-4xl mx-auto">
+                      <MarketplaceSidebar projectRoot={activeProject.path} />
+                    </div>
                   )}
                   {fullPage === "codeMap" && (
                     <CodeMapDashboard
@@ -1616,10 +1613,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onApplyTheme={setThemeId}
             initialTab={settingsModalTab}
             projectName={activeProject?.name || "Practice"}
-            onOpenMarketplace={() => {
-              setActiveSidebarTab("extensions");
-              setIsSidebarOpen(true);
-            }}
+            onOpenMarketplace={openMarketplaceTab}
           />
         )}
       </ErrorBoundary>
