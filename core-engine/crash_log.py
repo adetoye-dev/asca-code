@@ -215,7 +215,8 @@ def record(payload: dict) -> dict:
     except OSError:
         pass
     try:
-        record_count = sum(1 for _ in path.open())
+        with path.open() as handle:
+            record_count = sum(1 for _ in handle)
     except OSError:
         record_count = 0
     rotate(record_count)

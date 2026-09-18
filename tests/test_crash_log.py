@@ -6,6 +6,7 @@ reaches it, and a crash loop cannot fill a disk with it.
 """
 
 import importlib
+import gc
 import json
 import os
 import shutil
@@ -100,6 +101,30 @@ class RecordTests(CrashLogTestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"kind":"real"}\nnot json\n\n')
         self.assertEqual([e["kind"] for e in crash_log.read()], ["real"])
+
+    def test_recording_closes_every_handle_it_opens(self):
+        # `-W error::ResourceWarning` cannot police this one on its own: the
+        # warning fires while the *leaked* file is being finalised, which is not
+        # something the test runner turns into a failure. So watch the handles
+        # directly: every file record() opens must be closed by the time it
+        # returns.
+        opened = []
+        real_open = Path.open
+
+        def tracking(self, *args, **kwargs):
+            handle = real_open(self, *args, **kwargs)
+            opened.append(handle)
+            return handle
+
+        Path.open = tracking
+        try:
+            crash_log.record({"kind": "one"})
+            gc.collect()
+        finally:
+            Path.open = real_open
+
+        self.assertTrue(opened, "record() opened nothing — the test is not watching it")
+        self.assertEqual([handle.closed for handle in opened], [True] * len(opened))
 
 
 class CliTests(CrashLogTestCase):
