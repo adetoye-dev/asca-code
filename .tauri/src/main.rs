@@ -1643,8 +1643,17 @@ fn prepare_agent_home(
 /// this can: answer an approval request (there is no channel to answer on), steer
 /// a turn that is already running, or stream the answer token by token. The cost
 /// is that the process outlives a turn, so its lifecycle is ours to manage.
+///
+/// Where a session's events go. Production emits Tauri events for the UI; a test
+/// collects them. Being able to drive the session without an `AppHandle` is the
+/// point: this layer was only reachable through the GUI, which is why its bugs
+/// took a rebuild-and-click cycle to find and I could not reproduce the failure
+/// that mattered.
+pub type AgentEmitter = std::sync::Arc<dyn Fn(&str, String) + Send + Sync + 'static>;
+
 pub struct AgentSession {
     child: std::process::Child,
+    emitter: AgentEmitter,
     stdin: std::sync::Mutex<std::process::ChildStdin>,
     next_id: std::sync::atomic::AtomicU64,
     /// Replies waiting to arrive, keyed by the request id we sent. Shared with
@@ -1653,13 +1662,126 @@ pub struct AgentSession {
         std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<serde_json::Value>>>,
     >,
     thread_id: std::sync::Mutex<Option<String>>,
+    /// The turn currently running.
+    ///
+    /// `turn/interrupt` requires `threadId` *and* `turnId` (the schema marks both
+    /// as required), so an interrupt that names only the thread is rejected. The
+    /// id arrives in the `turn/start` reply and again in the `turn/started`
+    /// notification; the reply is stored synchronously, the notification by the
+    /// reader thread, so a turn that is running is always nameable.
+    turn_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl AgentSession {
+    /// Spawn a runtime and start reading it.
+    ///
+    /// Everything after this is transport: `request` writes a line and waits for
+    /// the reply with the same id, and anything that is not a reply is forwarded
+    /// to the emitter for the UI (or a test) to interpret.
+    ///
+    /// `env` carries the provider credential. It has to: `exec` resolves the key
+    /// and puts it in the child's environment, and the first version of this did
+    /// not, so every turn died on "Missing environment variable:
+    /// `ACSA_CODEX_API_KEY`" — a run that reported success having done nothing.
+    pub fn spawn(
+        program: &Path,
+        codex_home: &Path,
+        working_dir: &str,
+        env: &[(String, String)],
+        emitter: AgentEmitter,
+    ) -> Result<AgentSession, String> {
+        let mut child = Command::new(program)
+            .arg("app-server")
+            .arg("--listen")
+            .arg("stdio://")
+            .current_dir(working_dir)
+            .env("CODEX_HOME", codex_home)
+            .envs(env.iter().map(|(k, v)| (k.clone(), v.clone())))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("could not start the agent runtime ({}): {}", program.display(), e))?;
+
+        let stdin = child.stdin.take().ok_or("could not open the agent's input")?;
+        let stdout = child.stdout.take().ok_or("could not capture agent output")?;
+        let stderr = child.stderr.take().ok_or("could not capture agent errors")?;
+
+        let pending: std::sync::Arc<
+            std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<serde_json::Value>>>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let turn_id: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+
+        // The session id marks this session as current; a superseded one stays
+        // quiet rather than announcing its shutdown into the next run.
+        let session_id = SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
+        let reader_pending = pending.clone();
+        let reader_emitter = emitter.clone();
+        let reader_turn = turn_id.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+
+            let stderr_emitter = reader_emitter.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if !line.trim().is_empty() {
+                        stderr_emitter("agent:stderr", line);
+                    }
+                }
+            });
+
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                // A reply to something we asked: hand it to the waiting caller.
+                if let Some(id) = value.get("id").and_then(|v| v.as_u64()) {
+                    if let Some(tx) = reader_pending.lock().ok().and_then(|mut p| p.remove(&id)) {
+                        let _ = tx.send(value);
+                        continue;
+                    }
+                }
+                // Remember the live turn, so an interrupt can name it. The
+                // `turn/start` reply sets this synchronously too; this covers a
+                // turn that was started by someone else (a steered or resumed
+                // one) and keeps the two paths from disagreeing.
+                if value.get("method").and_then(|m| m.as_str()) == Some("turn/started") {
+                    if let Some(id) = value.pointer("/params/turn/id").and_then(|v| v.as_str()) {
+                        if let Ok(mut slot) = reader_turn.lock() {
+                            *slot = Some(id.to_string());
+                        }
+                    }
+                }
+                // Everything else is for the UI: notifications, and the requests
+                // the runtime sends *us* (approvals), which the UI answers.
+                reader_emitter("agent:event", line);
+            }
+            // stdout reached EOF: the process is gone. The real exit signal —
+            // but only while this session is still the current one.
+            if SESSION_SEQ.load(std::sync::atomic::Ordering::SeqCst) == session_id {
+                reader_emitter("agent:exit", String::new());
+            }
+        });
+
+        Ok(AgentSession {
+            child,
+            emitter,
+            stdin: std::sync::Mutex::new(stdin),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            pending,
+            thread_id: std::sync::Mutex::new(None),
+            turn_id,
+        })
+    }
+
     /// Send one JSON-RPC request and wait for its reply.
     fn request(
         &self,
-        app: &tauri::AppHandle,
         method: &str,
         params: serde_json::Value,
         timeout: std::time::Duration,
@@ -1684,7 +1806,7 @@ impl AgentSession {
             writeln!(stdin, "{}", message).map_err(|e| format!("could not write to the agent: {}", e))?;
             stdin.flush().map_err(|e| e.to_string())?;
         }
-        let _ = app.emit("agent:request", AiFrame { line: message.to_string() });
+        (self.emitter)("agent:request", message.to_string());
 
         match rx.recv_timeout(timeout) {
             Ok(reply) => {
@@ -1701,6 +1823,28 @@ impl AgentSession {
                 Err(format!("{} did not answer in time", method))
             }
         }
+    }
+
+    /// Answer a request the runtime sent *us* — an approval, in practice.
+    ///
+    /// The decision is the runtime's own vocabulary and is written through as-is;
+    /// see `ApprovalDecision` on the TypeScript side for the values the schema
+    /// accepts. Kept here rather than only in the Tauri command so the same path
+    /// the UI uses is the one a test drives.
+    fn respond(
+        &self,
+        request_id: serde_json::Value,
+        decision: serde_json::Value,
+    ) -> Result<(), String> {
+        use std::io::Write;
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": decision,
+        });
+        let mut stdin = self.stdin.lock().map_err(|e| e.to_string())?;
+        writeln!(stdin, "{}", message).map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())
     }
 }
 
@@ -1737,10 +1881,15 @@ async fn agent_start(
 ) -> Result<String, String> {
     let (program, codex_home) = prepare_agent_home(&app_handle, &config_toml, &provider_id, &catalog_json)?;
 
+    let working_dir = if Path::new(&project_root).is_dir() {
+        project_root.clone()
+    } else {
+        ".".to_string()
+    };
+
     // One session at a time; a second run replaces the first the way the exec
-    // path always has. Bumping the sequence first marks the outgoing session as
-    // superseded, so its shutdown cannot be mistaken for this run's.
-    let session_id = SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    // path always has. `spawn` marks the outgoing session as superseded, so its
+    // shutdown cannot be mistaken for this run's.
     {
         let mut guard = state.session.lock().map_err(|e| e.to_string())?;
         if let Some(mut previous) = guard.take() {
@@ -1748,90 +1897,20 @@ async fn agent_start(
         }
     }
 
-    let working_dir = if Path::new(&project_root).is_dir() {
-        project_root.clone()
-    } else {
-        ".".to_string()
-    };
-
-    let mut child = Command::new(&program)
-        .arg("app-server")
-        .arg("--listen")
-        .arg("stdio://")
-        .current_dir(&working_dir)
-        .env("CODEX_HOME", &codex_home)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start the agent runtime ({}): {}", program.display(), e))?;
-
-    let stdin = child.stdin.take().ok_or("could not open the agent's input")?;
-    let stdout = child.stdout.take().ok_or("could not capture agent output")?;
-    let stderr = child.stderr.take().ok_or("could not capture agent errors")?;
-
-    // One reply map, shared by the session that fills it and the reader thread
-    // that drains it — two maps would mean every request timed out.
-    let pending: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<serde_json::Value>>>,
-    > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-
-    let session = AgentSession {
-        child,
-        stdin: std::sync::Mutex::new(stdin),
-        next_id: std::sync::atomic::AtomicU64::new(1),
-        pending: pending.clone(),
-        thread_id: std::sync::Mutex::new(None),
-    };
-
-    // The reader owns its own handle: it outlives the command that started it.
-    let reader_app = app_handle.clone();
-    let reader_pending = pending.clone();
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        // Warnings go to the log as they arrive; closing stderr is *not* the
-        // process exiting, which is what this used to assume. app-server closes
-        // it early and keeps running, so every run looked finished the moment it
-        // started — the bug that made this whole feature appear to work while
-        // doing nothing.
-        let stderr_thread = {
-            let app = reader_app.clone();
-            std::thread::spawn(move || {
-                use std::io::BufRead;
-                for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let _ = app.emit("agent:stderr", AiFrame { line });
-                }
-            })
-        };
-
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-                continue;
-            };
-            // A reply to something we asked: hand it to the waiting caller.
-            if let Some(id) = value.get("id").and_then(|v| v.as_u64()) {
-                if let Some(tx) = reader_pending.lock().ok().and_then(|mut p| p.remove(&id)) {
-                    let _ = tx.send(value);
-                    continue;
-                }
-            }
-            // Everything else is for the UI: notifications, and the requests the
-            // runtime sends *us* (approvals) which the UI answers.
-            let _ = reader_app.emit("agent:event", AiFrame { line });
-        }
-        // stdout reached EOF: the process is gone. This is the real exit signal —
-        // but only while this session is still the current one.
-        if SESSION_SEQ.load(std::sync::atomic::Ordering::SeqCst) == session_id {
-            let _ = reader_app.emit("agent:exit", String::new());
-        }
-        let _ = stderr_thread.join();
+    let app_for_events = app_handle.clone();
+    let emitter: AgentEmitter = std::sync::Arc::new(move |event: &str, line: String| {
+        let _ = app_for_events.emit(event, AiFrame { line });
     });
+
+    // Same server-side resolution the exec path uses, so the credential never
+    // travels over IPC and the runtime gets it the way its config expects.
+    let mut env: Vec<(String, String)> = Vec::new();
+    if !provider_id.trim().is_empty() {
+        if let Some(key) = engine_resolve_key(&app_handle, provider_id.trim()) {
+            env.push(("ACSA_CODEX_API_KEY".to_string(), key));
+        }
+    }
+    let session = AgentSession::spawn(&program, &codex_home, &working_dir, &env, emitter)?;
 
     {
         let mut guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -1843,7 +1922,6 @@ async fn agent_start(
     let session = session_guard.as_ref().ok_or("session vanished")?;
 
     session.request(
-        &app_handle,
         "initialize",
         serde_json::json!({
             "clientInfo": { "name": "acsa-code", "version": env!("CARGO_PKG_VERSION") }
@@ -1868,7 +1946,6 @@ async fn agent_start(
         "thread/resume"
     };
     let reply = session.request(
-        &app_handle,
         method,
         thread_params,
         std::time::Duration::from_secs(60),
@@ -1890,7 +1967,6 @@ async fn agent_start(
 /// Send one turn to the open thread. Events stream as `agent:event`.
 #[tauri::command]
 async fn agent_turn(
-    app_handle: tauri::AppHandle,
     state: State<'_, AgentState>,
     text: String,
 ) -> Result<(), String> {
@@ -1903,8 +1979,7 @@ async fn agent_turn(
         .clone()
         .ok_or("no thread is open")?;
 
-    session.request(
-        &app_handle,
+    let reply = session.request(
         "turn/start",
         serde_json::json!({
             "threadId": thread_id,
@@ -1912,6 +1987,14 @@ async fn agent_turn(
         }),
         std::time::Duration::from_secs(30),
     )?;
+    // The reply names the turn it just started. Storing it here is synchronous,
+    // so an interrupt issued the instant the turn begins still has an id to name
+    // — waiting for the `turn/started` notification would race that.
+    if let Some(id) = reply.pointer("/result/turn/id").and_then(|v| v.as_str()) {
+        if let Ok(mut slot) = session.turn_id.lock() {
+            *slot = Some(id.to_string());
+        }
+    }
     Ok(())
 }
 
@@ -1922,24 +2005,15 @@ async fn agent_respond(
     request_id: serde_json::Value,
     decision: serde_json::Value,
 ) -> Result<(), String> {
-    use std::io::Write;
     let state = app_handle.state::<AgentState>();
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or("no agent session is running")?;
-    let message = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "result": decision,
-    });
-    let mut stdin = session.stdin.lock().map_err(|e| e.to_string())?;
-    writeln!(stdin, "{}", message).map_err(|e| e.to_string())?;
-    stdin.flush().map_err(|e| e.to_string())
+    session.respond(request_id, decision)
 }
 
 /// Stop the running turn, keeping the session and its thread.
 #[tauri::command]
 async fn agent_interrupt(
-    app_handle: tauri::AppHandle,
     state: State<'_, AgentState>,
 ) -> Result<(), String> {
     let guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -1950,10 +2024,18 @@ async fn agent_interrupt(
         .map_err(|e| e.to_string())?
         .clone()
         .unwrap_or_default();
+    let turn_id = session
+        .turn_id
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .filter(|id| !id.is_empty())
+        // The schema requires a turn id, so sending only the thread id would be
+        // rejected. Saying so beats sending a request the runtime discards.
+        .ok_or("no turn is running to interrupt")?;
     session.request(
-        &app_handle,
         "turn/interrupt",
-        serde_json::json!({ "threadId": thread_id }),
+        serde_json::json!({ "threadId": thread_id, "turnId": turn_id }),
         std::time::Duration::from_secs(10),
     )?;
     Ok(())
@@ -2259,6 +2341,412 @@ mod tests {
         // A non-image or a non-data URL is skipped rather than written blindly.
         assert!(write_attachment(&home, "https://example.com/x.png", 1).is_none());
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A stand-in for `codex app-server`: JSON-RPC on stdin/stdout, the same
+    /// framing the real one uses. Tests the session layer's own behaviour —
+    /// id correlation, notification forwarding, approval requests, and the
+    /// superseded-session guard — without a network or a model.
+    ///
+    /// It is executable and shebang-led on purpose: `spawn` takes a program, not
+    /// a command line, so the only way to drive it through the real code path is
+    /// to run it as a program. A script that is simply written (not chmod'd) made
+    /// an earlier version of this test pass while exercising nothing.
+    fn fake_app_server() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("acsa-fake-appserver-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("fake_app_server.py");
+        // A permissions probe and a denial are both legal: this is a fake, not a
+        // model, so it answers deterministically.
+        std::fs::write(
+            &path,
+            r#"#!/usr/bin/env python3
+import json, sys
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+def note(method, params):
+    send({"method": method, "params": params})
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    rid = msg.get("id")
+    # A reply (no method) is the client answering us. Report the approval answer
+    # so a test can prove the decision made it across the pipe intact.
+    if method is None:
+        if rid == 900:
+            note("acsa/test/approvalAnswer", {"result": msg.get("result")})
+        continue
+    if method == "initialize":
+        send({"id": rid, "result": {"userAgent": "fake", "codexHome": "/tmp"}})
+    elif method == "thread/start":
+        thread = {"id": "fake-thread-1"}
+        send({"id": rid, "result": {"thread": thread}})
+        note("thread/started", {"thread": thread})
+    elif method == "turn/start":
+        turn = {"id": "fake-turn-1"}
+        send({"id": rid, "result": {"turn": turn}})
+        note("turn/started", {"threadId": "fake-thread-1", "turn": turn})
+        # A request the client must answer before the turn can continue.
+        # The method name is the one the real runtime uses (the schema lists
+        # `execCommandApproval` only as a legacy spelling).
+        send({"id": 900, "method": "item/commandExecution/requestApproval",
+              "params": {"itemId": "c1", "command": "echo hi", "cwd": "/tmp",
+                         "threadId": "fake-thread-1", "turnId": "fake-turn-1",
+                         "startedAtMs": 0}})
+        note("item/completed", {"item": {"type": "agentMessage", "text": "done", "id": "m1"}})
+        note("turn/completed", {"threadId": "fake-thread-1", "turn": turn})
+    elif method == "turn/interrupt":
+        send({"id": rid, "result": {}})
+"#,
+        )
+        .expect("write fake server");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path)
+                .expect("stat the fake server")
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("make the fake server runnable");
+        }
+        path
+    }
+
+    #[test]
+    fn agent_session_correlates_replies_and_forwards_the_rest() {
+        let script = fake_app_server();
+        let events: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let emitter: AgentEmitter = std::sync::Arc::new(move |name: &str, line: String| {
+            sink.lock().unwrap().push((name.to_string(), line));
+        });
+
+        let mut session = AgentSession::spawn(&script, &std::env::temp_dir(), ".", &[], emitter)
+            .expect("spawn the fake runtime");
+
+        // A request gets *its own* reply, matched by id. Two in a row proves the
+        // ids advance and that a reply is not handed to the wrong caller — the
+        // failure mode that made every request look like a timeout.
+        let hello = session
+            .request("initialize", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("initialize answers");
+        assert_eq!(hello["result"]["userAgent"], "fake");
+        let thread = session
+            .request("thread/start", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("thread/start answers");
+        assert_eq!(thread["result"]["thread"]["id"], "fake-thread-1");
+
+        // `turn/start` makes the server emit a *request* (the approval) and two
+        // notifications. The request must reach the UI rather than be mistaken
+        // for a reply; the notifications must be forwarded; and the turn id must
+        // be remembered so an interrupt can name it.
+        session
+            .request("turn/start", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("turn/start answers");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let saw = |needle: &str| {
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(name, line)| name == "agent:event" && line.contains(needle))
+        };
+        while !saw("turn/completed") && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            saw("item/commandExecution/requestApproval"),
+            "the approval request must reach the UI, not be swallowed as a reply"
+        );
+        assert!(saw("turn/started"), "the turn-start notification is forwarded");
+        assert!(saw("turn/completed"), "the turn-complete notification is forwarded");
+        assert_eq!(
+            session.turn_id.lock().unwrap().clone().as_deref(),
+            Some("fake-turn-1"),
+            "the live turn id is remembered, so turn/interrupt can name it"
+        );
+
+        // The answer travels back over the same pipe. This is the direction that
+        // was wrong once — the runtime expects a decision *string*, and an
+        // unrecognised value fails its deserialization, hanging the turn.
+        session
+            .respond(serde_json::json!(900), serde_json::json!({"decision": "accept"}))
+            .expect("the answer is written");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !saw("acsa/test/approvalAnswer") && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let answered = events
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, line)| line.contains("acsa/test/approvalAnswer"))
+            .map(|(_, line)| line.clone())
+            .expect("the fake runtime reports the answer it received");
+        assert!(
+            answered.contains("accept"),
+            "the decision reaches the runtime intact: {answered}"
+        );
+
+        let _ = session.child.kill();
+        let _ = std::fs::remove_file(&script);
+    }
+
+    /// The integration test that needs real infrastructure.
+    ///
+    /// Ignored by default because it needs two things the suite cannot assume: a
+    /// reachable model provider (a local Ollama serving `qwen2.5-coder:1.5b`),
+    /// and a sandbox that permits localhost. Run it deliberately:
+    ///
+    /// ```text
+    /// cargo test --manifest-path .tauri/Cargo.toml \
+    ///   a_turn_completes_over_the_real_runtime -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a reachable model provider and localhost access"]
+    fn a_turn_completes_over_the_real_runtime() {
+        // Opt-in by construction: without the fetched runtime there is nothing to
+        // test, and the suite should say so rather than fail.
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let program = repo.join(".tauri").join("engine-codex").join("codex");
+        if !program.exists() {
+            eprintln!("skipping: {} not fetched", program.display());
+            return;
+        }
+        let home = std::env::temp_dir().join("acsa-agent-session-home");
+        let _ = std::fs::create_dir_all(&home);
+        std::fs::write(
+            home.join("config.toml"),
+            "approval_policy = \"on-request\"\napprovals_reviewer = \"auto_review\"\nsandbox_mode = \"workspace-write\"\n",
+        )
+        .unwrap();
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let emitter: AgentEmitter = std::sync::Arc::new(move |name: &str, line: String| {
+            sink.lock().unwrap().push(format!("{} {}", name, line));
+        });
+
+        let env: Vec<(String, String)> = match std::env::var("ACSA_CODEX_API_KEY") {
+            Ok(key) => vec![("ACSA_CODEX_API_KEY".to_string(), key)],
+            Err(_) => Vec::new(),
+        };
+        let mut session =
+            AgentSession::spawn(&program, &home, ".", &env, emitter).expect("spawn runtime");
+        session
+            .request(
+                "initialize",
+                serde_json::json!({"clientInfo": {"name": "acsa-test", "version": "0"}}),
+                std::time::Duration::from_secs(30),
+            )
+            .expect("initialize");
+
+        let started = session.request(
+            "thread/start",
+            serde_json::json!({
+                "model": "qwen2.5-coder:1.5b",
+                "modelProvider": "ollama",
+                "cwd": ".",
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "auto_review",
+                "sandbox": "workspace-write",
+            }),
+            std::time::Duration::from_secs(60),
+        );
+        let started = match started {
+            Ok(reply) => reply,
+            Err(error) => {
+                // No local model running is not a defect in this layer.
+                eprintln!("skipping: no local provider ({})", error);
+                return;
+            }
+        };
+        let thread_id = started["result"]["thread"]["id"].as_str().unwrap().to_string();
+
+        session
+            .request(
+                "turn/start",
+                serde_json::json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": "Reply with just: ready"}],
+                }),
+                std::time::Duration::from_secs(30),
+            )
+            .expect("turn/start");
+
+        // The whole point: a turn must finish. This is the failure that took a
+        // rebuild-and-click cycle to see, and it is invisible to the compiler.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        loop {
+            {
+                let log = seen.lock().unwrap();
+                if log.iter().any(|entry| entry.contains("turn/completed")) {
+                    break;
+                }
+                if log.iter().any(|entry| entry.contains("turn/failed")) {
+                    panic!("the runtime reported the turn failed: {:?}", *log);
+                }
+                // Transport trouble the runtime is retrying — an unreachable
+                // provider, or a sandbox that forbids localhost. Neither is a
+                // defect in this layer, and paying three minutes to discover it
+                // is not useful. Say so and stop.
+                if log.iter().any(|entry| entry.contains("\"willRetry\":true")) {
+                    eprintln!(
+                        "skipping: the model provider is unreachable (is Ollama running, and does this sandbox allow localhost?)"
+                    );
+                    let _ = session.child.kill();
+                    return;
+                }
+            }
+            if std::time::Instant::now() > deadline {
+                let log = seen.lock().unwrap().clone();
+                panic!("no turn/completed within 180s; events seen: {:#?}", log);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        let _ = session.child.kill();
+    }
+
+    /// The approval round-trip against the real runtime.
+    ///
+    /// This is the one thing the scripted test cannot prove: that the runtime
+    /// *accepts* the decision we send and carries on. `approvals_reviewer =
+    /// "user"` makes it ask before it runs anything, so a prompt that asks for a
+    /// command produces a real `item/commandExecution/requestApproval`. Ignored
+    /// for the same reason as the test above; run it with `--ignored`.
+    #[test]
+    #[ignore = "needs a reachable model provider and localhost access"]
+    fn a_real_approval_is_answered_and_the_turn_continues() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let program = repo.join(".tauri").join("engine-codex").join("codex");
+        if !program.exists() {
+            eprintln!("skipping: {} not fetched", program.display());
+            return;
+        }
+        let home = std::env::temp_dir().join("acsa-agent-approval-home");
+        let _ = std::fs::create_dir_all(&home);
+        std::fs::write(
+            home.join("config.toml"),
+            "approval_policy = \"on-request\"\napprovals_reviewer = \"user\"\nsandbox_mode = \"workspace-write\"\n",
+        )
+        .unwrap();
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let emitter: AgentEmitter = std::sync::Arc::new(move |name: &str, line: String| {
+            sink.lock().unwrap().push(format!("{} {}", name, line));
+        });
+        let env: Vec<(String, String)> = match std::env::var("ACSA_CODEX_API_KEY") {
+            Ok(key) => vec![("ACSA_CODEX_API_KEY".to_string(), key)],
+            Err(_) => Vec::new(),
+        };
+        let mut session =
+            AgentSession::spawn(&program, &home, ".", &env, emitter).expect("spawn runtime");
+        session
+            .request(
+                "initialize",
+                serde_json::json!({"clientInfo": {"name": "acsa-test", "version": "0"}}),
+                std::time::Duration::from_secs(30),
+            )
+            .expect("initialize");
+
+        let started = session.request(
+            "thread/start",
+            serde_json::json!({
+                "model": "qwen2.5-coder:1.5b",
+                "modelProvider": "ollama",
+                "cwd": ".",
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "user",
+                "sandbox": "workspace-write",
+            }),
+            std::time::Duration::from_secs(60),
+        );
+        let started = match started {
+            Ok(reply) => reply,
+            Err(error) => {
+                eprintln!("skipping: no local provider ({})", error);
+                return;
+            }
+        };
+        let thread_id = started["result"]["thread"]["id"].as_str().unwrap().to_string();
+        session
+            .request(
+                "turn/start",
+                serde_json::json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text":
+                        "Use the terminal to run exactly this command: echo acsa-approved"}],
+                }),
+                std::time::Duration::from_secs(30),
+            )
+            .expect("turn/start");
+
+        // Walk the stream: answer the first approval with `accept`, then require
+        // the turn to reach `turn/completed` — i.e. the runtime accepted the
+        // answer and continued rather than stalling on a malformed decision.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
+        let mut answered = false;
+        while std::time::Instant::now() < deadline {
+            // Once answered, stop scanning: the request stays in the log, and
+            // answering it twice would be a bug the test caused itself.
+            let pending: Option<(serde_json::Value, String)> = if answered {
+                None
+            } else {
+                let log = seen.lock().unwrap();
+                if log.iter().any(|e| e.contains("\"willRetry\":true")) {
+                    eprintln!("skipping: the model provider is unreachable");
+                    let _ = session.child.kill();
+                    return;
+                }
+                if log.iter().any(|e| e.contains("turn/completed")) {
+                    // The model chose not to call a tool, so there was nothing to
+                    // approve. That is the model, not the transport — say so and
+                    // stop rather than pass, which would prove nothing.
+                    if !answered {
+                        eprintln!(
+                            "skipping: the model answered without asking for approval, so the round-trip was not exercised"
+                        );
+                    }
+                    let _ = session.child.kill();
+                    return;
+                }
+                log.iter()
+                    .filter(|e| e.contains("requestApproval"))
+                    .find_map(|e| {
+                        let json = e.split_once('{').map(|(_, rest)| format!("{{{rest}"))?;
+                        let value: serde_json::Value = serde_json::from_str(&json).ok()?;
+                        Some((value.get("id")?.clone(), e.clone()))
+                    })
+            };
+            if let Some((id, raw)) = pending {
+                eprintln!("answering approval: {}", &raw[..raw.len().min(200)]);
+                session
+                    .respond(id, serde_json::json!({"decision": "accept"}))
+                    .expect("the approval answer is written");
+                answered = true;
+                // Let the runtime act on it and finish.
+                std::thread::sleep(std::time::Duration::from_secs(20));
+                continue;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        let log = seen.lock().unwrap().clone();
+        panic!(
+            "no turn/completed within 150s (answered={}); events: {:#?}",
+            answered, log
+        );
     }
 
     #[test]

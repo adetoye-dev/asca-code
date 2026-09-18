@@ -41,6 +41,7 @@ import {
 } from "../../services/aiChatPersistence";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { ProjectIndexState } from "../../hooks/usePipeline";
+import type { ApprovalDecision } from "../../services/agentApproval";
 
 interface AiAssistantChatProps {
   prompt: string;
@@ -66,7 +67,7 @@ interface AiAssistantChatProps {
   failureDetail?: string;
   /** A request the agent is blocked on, waiting for the user's answer. */
   pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
-  respondToApproval?: (decision: "approved" | "rejected") => Promise<void>;
+  respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -1605,7 +1606,7 @@ Click to re-index project.`}
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => void respondToApproval?.("rejected")}
+                    onClick={() => void respondToApproval?.("decline")}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer"
                   >
                     <Icon icon={X} className="w-3.5 h-3.5 text-red-400" />
@@ -1613,7 +1614,15 @@ Click to re-index project.`}
                   </button>
                   <button
                     type="button"
-                    onClick={() => void respondToApproval?.("approved")}
+                    onClick={() => void respondToApproval?.("acceptForSession")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer"
+                  >
+                    <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Allow for session</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void respondToApproval?.("accept")}
                     className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg transition-all cursor-pointer"
                   >
                     <Icon icon={Check} className="w-3.5 h-3.5" />

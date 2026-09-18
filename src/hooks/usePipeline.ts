@@ -29,6 +29,7 @@ import {
   resolveApprovalMode,
   type AgentApprovalMode,
   type AgentTransport,
+  type ApprovalDecision,
 } from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
 
@@ -547,10 +548,32 @@ function applyAppServerEvent(
     setAnswer: (text: string) => void;
     logOutput: (line: any) => void;
     markTouched: (paths: string[]) => void;
+    fail: (detail: string) => void;
   },
 ): void {
   const method = String(event?.method ?? "");
   const p = event?.params ?? {};
+
+  // The runtime reports transport trouble as its own notification — "Reconnecting…
+  // waiting for network", with a retry delay. Without this it retried silently
+  // for minutes and the run looked like it had simply stopped.
+  if (method === "error") {
+    const message = String(p.error?.message ?? p.message ?? "the runtime reported an error");
+    const retrying = p.willRetry ? " (retrying)" : "";
+    update.logOutput({
+      line_number: 0,
+      content: `${message}${retrying}`,
+      stream: p.willRetry ? "stdout" : "stderr",
+      is_json: false,
+    });
+    // An error the runtime will not retry is the end of the turn. Without this
+    // the run finished instantly and reported success — which is how a missing
+    // API key looked like "Task completed."
+    if (!p.willRetry) {
+      update.fail?.(message);
+    }
+    return;
+  }
 
   if (method === "item/agentMessage/delta" && typeof p.delta === "string") {
     update.appendAnswer(p.delta);
@@ -797,7 +820,7 @@ export interface UsePipelineReturn {
   failureDetail: string;
   /** A request the agent is blocked on, if it is waiting for one. */
   pendingApproval: { id: unknown; method: string; command: string; reason: string } | null;
-  respondToApproval: (decision: "approved" | "rejected") => Promise<void>;
+  respondToApproval: (decision: ApprovalDecision) => Promise<void>;
 
   runPipeline: (
     customPrompt?: string,
@@ -1399,20 +1422,19 @@ export function usePipeline(): UsePipelineReturn {
   const pendingApprovalRef = useRef(pendingApproval);
   pendingApprovalRef.current = pendingApproval;
 
-  const respondToApproval = useCallback(async (decision: "approved" | "rejected") => {
+  const respondToApproval = useCallback(async (decision: ApprovalDecision) => {
     const request = pendingApprovalRef.current;
     if (!request) return;
     setPendingApproval(null);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      // The runtime's own vocabulary: `approved`, or a denial carrying a reason
-      // — that field is required, which its schema states and this respects.
+      // The runtime's own vocabulary, sent as-is. Its schema wants a decision
+      // *string* — `accept` / `acceptForSession` / `decline` / `cancel` — and
+      // rejects anything else, which is how an earlier `{decision: "approved"}`
+      // left the turn waiting for an answer it never got.
       await invoke("agent_respond", {
         requestId: request.id,
-        decision:
-          decision === "approved"
-            ? { decision: "approved" }
-            : { decision: { denied: { rejection: "declined in ACSA Code" } } },
+        decision: { decision },
       });
     } catch (error) {
       setActivityLog((prev) => [
@@ -1567,6 +1589,10 @@ export function usePipeline(): UsePipelineReturn {
             ? applyAppServerEvent(event, {
                 ...agentUpdate,
                 setAnswer: (text: string) => setStreamingAnswer(text),
+                fail: (detail) => {
+                  setFailureDetail(detail);
+                  setStatus("failed");
+                },
               })
             : applyCodexEvent(event, agentUpdate);
 

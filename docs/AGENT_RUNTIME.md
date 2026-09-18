@@ -100,9 +100,13 @@ helper it ships separately. Matching on their prose marked correct runs as
 
 ## Interactive approvals: the app-server protocol
 
-Not implemented. `scripts/probe_app_server.py` drives a complete turn over it, so
-the migration is a known quantity rather than an experiment — run it to see the
-stream.
+**Implemented — opt-in.** The transport is `agentTransport = "app-server"` in
+settings, or `transport: "app-server"` on a run. It exists for one reason: `exec`
+is one-shot with no channel to answer an approval on, so a mode that asks the
+user (`approvalMode = "ask-me"`) cannot work there. The default is still `exec`
+until the remaining gaps below are closed. `scripts/probe_app_server.py` drives a
+complete turn over the protocol directly, which is how the vocabulary was pinned
+down.
 
 `codex app-server --listen stdio://` speaks newline-delimited JSON-RPC. A run is
 **three requests**:
@@ -135,9 +139,39 @@ instead of being reconstructed from `turn.completed`.
 
 Approvals arrive as **server-initiated requests** that must be answered, which is
 the whole point: `exec` is one-shot with no channel for them, so with
-`approvalsReviewer = "user"` a request is auto-denied rather than shown. The four
-the schema defines are `execCommandApproval`, `applyPatchApproval`,
-`attestation/generate` and `openai/form`.
+`approvalsReviewer = "user"` a request is auto-denied rather than shown.
+
+The method name is **`item/commandExecution/requestApproval`** — *not*
+`execCommandApproval`. The schema still defines the latter, but only as a legacy
+spelling; matching the wrong one means the request is never recognised and the
+turn waits forever. The full server-request set is
+`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval`, `item/tool/requestUserInput`,
+`mcpServer/elicitation/request`, `account/chatgptAuthTokens/refresh`,
+`attestation/generate` and `currentTime/read`.
+
+The **response** is a bare decision string, which is easy to get subtly wrong:
+
+```
+{"decision":"accept"}            run it
+{"decision":"acceptForSession"}  run it, and stop asking for this kind
+{"decision":"decline"}           skip it; the turn continues
+{"decision":"cancel"}            skip it, and interrupt the turn
+```
+
+It is not a boolean, and not `{denied:{rejection:…}}`. An unrecognised value
+fails the runtime's deserialization, so the request is never really answered and
+the turn hangs — this cost a debugging cycle, so the schema is quoted here rather
+than paraphrased.
+
+Two more things the schema settles:
+
+- **`turn/interrupt` requires `threadId` *and* `turnId`.** Both are `required`.
+  The turn id comes back in the `turn/start` reply and again in the
+  `turn/started` notification; the session stores both paths.
+- **`error` notifications carry `willRetry`.** A retrying error is transport
+  trouble (`"Reconnecting... waiting for network"`), not the end of the turn; a
+  non-retrying one is. Treating a retrying error as terminal ends correct runs.
 
 Generate the full definition from the binary rather than guessing — it ships the
 schema and TypeScript bindings:
@@ -147,11 +181,37 @@ codex app-server generate-json-schema --out /tmp/cx-schema
 codex app-server generate-ts --out /tmp/cx-ts
 ```
 
-What a real implementation still needs: a long-lived child instead of a process
-per run, request/response correlation by id, lifecycle management (respawn, one
-turn at a time per thread), the approval UI wired back to a response, and
-re-testing everything `exec` already does — model catalog, MCP servers,
-attachments, `--oss` local providers, thread continuity. Do it as an isolated
-change with the `exec` path intact behind a flag; a half-migrated agent is worse
-than either end. `--listen` also supports `unix://` and `ws://`, and there is a
-`daemon` subcommand for a shared instance.
+What the transport now does, all covered by
+`tests::agent_session_correlates_replies_and_forwards_the_rest` (a scripted
+stand-in for the runtime) and `tests::a_turn_completes_over_the_real_runtime`
+(the real binary against a local Ollama, `#[ignore]`d because it needs a reachable
+provider and localhost):
+
+- a long-lived child instead of a process per run
+- request/response correlation by id, with a shared reply map
+- notification forwarding, including `item/agentMessage/delta` streaming
+- approval requests surfaced to the UI, and the answer written back over the
+  same pipe (`AgentSession::respond`, the path the UI command uses)
+- lifecycle: one session at a time, superseded sessions stay silent, exit on
+  stdout EOF (stderr closes early while the process stays alive — that is not an
+  exit)
+- attachments, the model catalog, `--oss` local providers and thread continuity,
+  because the credential and `CODEX_HOME` are set the same way `exec` sets them
+
+Still open before this becomes the default:
+
+- **steering** (`turn/steer`) is not wired to the UI
+- **the approval card lives in the composer**, so on a long transcript it can be
+  below the fold
+- **`--listen` also supports `unix://` and `ws://`**, and there is a `daemon`
+  subcommand for a shared instance — neither is used
+- **local models do not emit tool calls.** Observed, not assumed: with
+  `modelProvider: "ollama"` and a direct "call the shell tool" instruction,
+  `qwen2.5-coder:1.5b`, `qwen2.5-coder:7b` and `qwen3.5:9b` each replied with a
+  tool call written as *text* and never invoked a tool, so the turn ended without
+  an approval. The runtime warns "Unknown model … using fallback metadata",
+  which is the likely cause: a model absent from the catalog gets metadata that
+  may not advertise tools. `tests::a_real_approval_is_answered_and_the_turn_continues`
+  is the reproducer — it skips (loudly) in this case. This matters more than the
+  approval path: delegating to local models is a stated goal, and an agent that
+  cannot call tools is not delegating to anything.

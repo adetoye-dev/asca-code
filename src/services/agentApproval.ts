@@ -58,6 +58,16 @@ export function isAgentApprovalMode(value: unknown): value is AgentApprovalMode 
 }
 
 /**
+ * The runtime's answers to an approval request, verbatim from its schema.
+ *
+ * `CommandExecutionRequestApprovalResponse.decision` is one of these strings.
+ * It is not a boolean and not `{denied: {...}}`: an unrecognized value fails the
+ * runtime's deserialization, so the request is never really answered and the
+ * turn waits forever. Generating the protocol schema is what settled this.
+ */
+export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+
+/**
  * Provider ids that are a local runtime rather than an OpenAI-compatible API.
  *
  * These have to be handed to the agent runtime through its own local-provider
