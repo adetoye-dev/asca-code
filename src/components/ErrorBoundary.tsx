@@ -8,6 +8,7 @@
 import { Component, ErrorInfo, ReactNode } from "react";
 import { Trash2, ChevronRight, ChevronDown, RefreshCw, AlertCircle, X } from "lucide-react";
 import { Icon } from "./ui/Icon";
+import { reportCrash } from "../services/crashReporter";
 
 interface Props {
   children: ReactNode;
@@ -36,6 +37,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("[ACSA Code ErrorBoundary Caught Error]:", error, errorInfo);
+    // Written to the local crash log, redacted by the engine. Nothing leaves the
+    // machine; the point is that the user can attach it to a bug report.
+    void reportCrash("render", error, { componentStack: errorInfo.componentStack });
     this.setState({ errorInfo });
   }
 

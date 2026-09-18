@@ -11,6 +11,11 @@ import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
 import "./index.css";
+import { installCrashHandlers } from "./services/crashReporter";
+
+// Before the first render, so a crash during startup is recorded too — that is
+// the launch that has nothing else to go on.
+installCrashHandlers();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -73,7 +73,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Crash reporting | **[open]** | An `ErrorBoundary` catches render errors; nothing is reported or persisted. |
+| Crash reporting | **[done]** | `ErrorBoundary` plus two global handlers (window `error`, `unhandledrejection`) write a record through `crash_log.py` to `crashes.log` in the data directory. Local-only, matching the no-telemetry stance: redacted on the way in by the same key/value rules the runtime redactor uses plus known key prefixes (`sk-`, `ghp_`, `AKIA`, …), `0600`, rotated to the last 200 so a crash loop cannot fill a disk. Verified in the frozen engine. Not done: nothing in the UI points at the file yet, and there is no support bundle that collects it with the logs. |
 | Structured logs | **[partial]** | The engine logs JSON lines to stdout; there is no rotation, retention, or support bundle. |
 | Telemetry | **[done]** | None. Usage metrics are local (`usage_events`) and never leave the machine. |
 | Dependency updates | **[open]** | No Dependabot or scheduled audit. `npm audit` is not wired into CI. |
@@ -92,7 +92,8 @@ Anything marked open is a real gap for shipping to someone else's machine.
 ## Suggested order
 
 1. **An Apple Developer certificate** — so `release.yml` produces a signed, notarised build rather than an unsigned one.
-2. **Secret redaction in logs**, then **crash reporting**, so support is possible.
+2. **A support bundle.** Redaction and crash reporting are done; what is missing is the button
+   that collects the crash log beside the settings and versions into one file to attach.
 3. **Auto-update**, once builds are signed and there is a release host.
 4. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
 5. **Component tests.** Vitest now covers the services layer; nothing *renders*.
