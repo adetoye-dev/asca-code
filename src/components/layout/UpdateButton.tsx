@@ -76,7 +76,10 @@ export function UpdateButton() {
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/50 text-purple-200 transition-all shadow-sm"
       >
         <Icon icon={ArrowDownToLine} className="w-3.5 h-3.5" />
-        <span className="font-mono text-[11px]">{update.version}</span>
+        {/* "Update", not the version number. A bare number reads as *the* version
+            rather than *a newer one is waiting*, which is how it was reported. The
+            version itself is in the panel, where there is room to say it properly. */}
+        <span className="text-[11px] font-semibold">Update</span>
       </button>
 
       {open && (

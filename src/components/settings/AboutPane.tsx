@@ -13,9 +13,8 @@ import { RefreshCw, Check, AlertCircle, ArrowDownToLine } from "lucide-react";
 import {
   autoCheckEnabled,
   setAutoCheck,
-  checkForUpdate,
+  checkForUpdateDetailed,
   currentVersion,
-  type AvailableUpdate,
 } from "../../services/appUpdater";
 
 type CheckState = { kind: "idle" | "checking" | "current" | "available" | "failed"; detail?: string };
@@ -24,7 +23,7 @@ export function AboutPane() {
   const [version, setVersion] = useState("");
   const [auto, setAuto] = useState(autoCheckEnabled);
   const [state, setState] = useState<CheckState>({ kind: "idle" });
-  const [found, setFound] = useState<AvailableUpdate | null>(null);
+  const [found, setFound] = useState<{ version: string } | null>(null);
 
   useEffect(() => {
     void currentVersion().then(setVersion);
@@ -32,9 +31,15 @@ export function AboutPane() {
 
   const check = async () => {
     setState({ kind: "checking" });
-    const update = await checkForUpdate({ force: true });
-    setFound(update);
-    setState(update ? { kind: "available" } : { kind: "current" });
+    const outcome = await checkForUpdateDetailed({ force: true });
+    if (outcome.kind === "available") {
+      setFound(outcome.update);
+      setState({ kind: "available" });
+    } else if (outcome.kind === "current") {
+      setState({ kind: "current" });
+    } else {
+      setState({ kind: "failed", detail: outcome.detail });
+    }
   };
 
   return (

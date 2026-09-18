@@ -54,22 +54,38 @@ export function lastKnownUpdate(): AvailableUpdate | null {
 }
 
 /**
- * Ask the release host whether there is something newer.
+ * The three things a check can actually conclude.
  *
- * Returns `null` for "up to date", for "no manifest published yet", and for any
- * network failure — an update check must never be the thing that breaks the
- * app's startup, and there is nothing useful to say about a 404 on a manifest
- * that nobody has published.
+ * "Failed" is separate from "current" on purpose. Collapsing them is the one
+ * outcome that is actively misleading: a manifest that 404s, a permission that
+ * was not granted, and a genuinely up-to-date app all used to render as "You are
+ * up to date", so a broken update path looked like a healthy one. That is how
+ * the label on this very feature was reported as fine while nothing worked.
  */
-export async function checkForUpdate(options: { force?: boolean } = {}): Promise<AvailableUpdate | null> {
-  if (!options.force && Date.now() - lastCheckAt < CHECK_COOLDOWN_MS) return cached;
+export type CheckOutcome =
+  | { kind: "available"; update: AvailableUpdate }
+  | { kind: "current" }
+  | { kind: "failed"; detail: string };
+
+function describe(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/** The detailed answer, for a surface that has room to explain itself. */
+export async function checkForUpdateDetailed(
+  options: { force?: boolean } = {},
+): Promise<CheckOutcome> {
+  if (!options.force && Date.now() - lastCheckAt < CHECK_COOLDOWN_MS) {
+    return cached ? { kind: "available", update: cached } : { kind: "current" };
+  }
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     lastCheckAt = Date.now();
     if (!update?.available) {
       cached = null;
-      return null;
+      return { kind: "current" };
     }
     cached = {
       version: String(update.version),
@@ -77,11 +93,24 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
       notes: String(update.body ?? "").slice(0, 2000),
       date: update.date ? String(update.date) : undefined,
     };
-    return cached;
-  } catch {
+    return { kind: "available", update: cached };
+  } catch (error) {
     lastCheckAt = Date.now();
-    return null;
+    return { kind: "failed", detail: describe(error) };
   }
+}
+
+/**
+ * The same question, for the titlebar: an update or nothing.
+ *
+ * A failure returns `null` here, because a button cannot explain itself — the
+ * About pane is where the reason is shown.
+ */
+export async function checkForUpdate(
+  options: { force?: boolean } = {},
+): Promise<AvailableUpdate | null> {
+  const outcome = await checkForUpdateDetailed(options);
+  return outcome.kind === "available" ? outcome.update : null;
 }
 
 /**
