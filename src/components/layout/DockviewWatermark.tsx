@@ -92,7 +92,7 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
         ACSA Code
       </div>
       <div className="text-[11px] text-zinc-600 mb-6 font-mono">
-        Autonomous AI Engineering Workbench
+        Local-first agentic engineering workbench
       </div>
 
       {setupSlot}

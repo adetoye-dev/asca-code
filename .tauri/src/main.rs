@@ -569,7 +569,10 @@ fn create_project_template(
         _ => {
             if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
             {
-                PathBuf::from(home).join("AutonomousProjects")
+                // Named after the app: this folder is created in the user's home
+                // and is the first thing they see if they scaffold without
+                // choosing a location.
+                PathBuf::from(home).join("ACSA Projects")
             } else {
                 PathBuf::from("projects")
             }

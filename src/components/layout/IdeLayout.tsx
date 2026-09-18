@@ -3,7 +3,7 @@
  *
  * Full developer-grade layout integrating:
  * 1. Titlebar: Project picker, Quick Open file search bar, Layout toggles (Sidebar/Panel), Theme picker, Telemetry.
- * 2. Activity Bar: Explorer, Monitoring, Model Manager, Autonomous Agent Dock, Extensions & Themes.
+ * 2. Activity Bar: Explorer, Monitoring, Model Manager, Agent Dock, Marketplace & Themes.
  * 3. Primary Sidebar: Mounts the active activity bar view (toggleable via Cmd+B).
  * 4. Main Stage (Dockview): Multi-tab Monaco editor with split panes & Diff inspector.
  * 5. Dedicated Bottom Panel: Tabbed dock housing the interactive shell, the run's output, and problems.
@@ -694,7 +694,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "agent.run",
-      title: "Autonomous Agent: Execute & Verify Task",
+      title: "Agent: Execute & Verify Task",
       category: "Agent",
       icon: Bot,
       action: () => runPipeline(),

@@ -506,7 +506,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           </div>
           <div>
             <h2 className="text-xs font-bold text-white tracking-tight">Local AI Engine Setup</h2>
-            <p className="text-[10px] text-zinc-500">Autonomous Ollama Provisioning</p>
+            <p className="text-[10px] text-zinc-500">Runs on this machine</p>
           </div>
         </div>
         <button
