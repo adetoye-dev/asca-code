@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Named branches rather than `**`: every push used to start a full build,
+  # including on throwaway branches, and macOS minutes are the scarce resource.
   push:
-    branches: ["**"]
+    branches: [dev, main]
   pull_request:
 
 concurrency:
