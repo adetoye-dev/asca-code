@@ -116,11 +116,16 @@ jobs:
       - name: Fetch the Codex agent runtime
         run: scripts/fetch_codex_sidecar.sh
 
-      # After *both* sidecars, not before either. `cargo test` runs Tauri's
-      # build script, which asserts that every `bundle.resources` path exists,
-      # and two of them — `engine/` and `engine-codex/` — are gitignored build
-      # output. Placed after only the first, this failed on `engine-codex`; the
-      # lesson is that the assertion covers the whole list, so the tests go last.
+      # `tauri::generate_context!()` is a proc macro with opinions, and each of
+      # these three was a separate failed run to discover:
+      #   * every `bundle.resources` path must exist — `engine/` (Python freeze)
+      #     and `engine-codex/` (Codex fetch) are gitignored build output;
+      #   * `frontendDist` must exist — hence the build below, which the bundle
+      #     would otherwise be the first thing to create.
+      # So: build everything the config references, and only then compile tests.
+      - name: Build the frontend
+        run: npm run build
+
       - name: Rust tests
         run: cargo test --manifest-path .tauri/Cargo.toml
 
