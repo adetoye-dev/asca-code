@@ -60,6 +60,8 @@ async function runAgentOnCodex(params: {
   images?: string[];
   /** Called with the thread that ran, so the caller can resume it next time. */
   onThread?: (threadId: string) => void;
+  /** Why the run failed, in words the chat can show. */
+  onFailure?: (detail: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -546,6 +548,8 @@ export interface UsePipelineReturn {
   streamingAnswer: string;
   streamingThought: string;
   agentSteps: AgentStep[];
+  /** Why the last agent run failed, for the chat to show in place of a generic line. */
+  failureDetail: string;
 
   runPipeline: (
     customPrompt?: string,
@@ -769,6 +773,10 @@ export function usePipeline(): UsePipelineReturn {
   const [streamingAnswer, setStreamingAnswer] = useState<string>("");
   const [streamingThought, setStreamingThought] = useState<string>("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  // The reason a run failed, in the runtime's own words. The chat used to get
+  // this from the orchestration result; when that was removed nothing filled it
+  // in, so every failure fell through to "the task needs attention".
+  const [failureDetail, setFailureDetail] = useState("");
   // Code Intelligence & Symbol Graph Indexer state
   const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
     indexed: false,
@@ -1129,6 +1137,7 @@ export function usePipeline(): UsePipelineReturn {
       if (!activePrompt.trim()) return;
       if (!activeProject.path) {
         setStatus("failed");
+        setFailureDetail("No project is open. Open a folder first — the agent runs inside it.");
         setAgentSteps([]);
         setActivityLog([
           {
@@ -1143,6 +1152,7 @@ export function usePipeline(): UsePipelineReturn {
       }
 
       setStatus("running");
+      setFailureDetail("");
       setActivityLog([]);
       setCurrentDiff("");
       setStreamingAnswer("");
@@ -1212,6 +1222,7 @@ export function usePipeline(): UsePipelineReturn {
             resumeThreadId: resume,
             images: usableImages,
             onThread: (id) => agentThreadsRef.current.set(threadKey, id),
+            onFailure: setFailureDetail,
             projectRoot: activeProject.path,
           selection: modelOverride
             ? { providerId: modelOverride.provider, model: modelOverride.model }
@@ -1267,6 +1278,9 @@ export function usePipeline(): UsePipelineReturn {
         // worse than failing. If the runtime is missing, say so and how to fix it.
         if (codexStatus === "unavailable") {
           setStatus("failed");
+          setFailureDetail(
+            "The agent runtime is unavailable. Run scripts/fetch_codex_sidecar.sh, then relaunch the app.",
+          );
           setActivityLog((prev) => [
             ...prev,
             {
@@ -1370,6 +1384,7 @@ export function usePipeline(): UsePipelineReturn {
     streamingAnswer,
     streamingThought,
     agentSteps,
+    failureDetail,
   };
 }
 

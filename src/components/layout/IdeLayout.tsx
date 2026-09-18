@@ -208,6 +208,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     isTauriAvailable,
     streamingAnswer,
     streamingThought,
+    failureDetail,
     agentSteps,
   } = pipeline;
 
@@ -841,6 +842,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingAnswer,
     streamingThought,
     agentSteps,
+    failureDetail,
     onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
       // Leave full canvas and dock the assistant back to the side tool window.
@@ -1560,6 +1562,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               streamingAnswer={streamingAnswer}
               streamingThought={streamingThought}
               agentSteps={agentSteps}
+              failureDetail={failureDetail}
             />
           </aside>
         )}
