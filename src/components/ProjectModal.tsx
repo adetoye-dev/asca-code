@@ -6,13 +6,13 @@
  */
 
 import React, { useState } from "react";
-import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X } from "lucide-react";
+import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X, AlertCircle } from "lucide-react";
 import { Icon } from "./ui/Icon";
 
 interface ProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateProject: (name: string, template: string, parentDir?: string) => void;
+  onCreateProject: (name: string, template: string, parentDir?: string) => void | Promise<void>;
   onPickFolder?: () => Promise<string | null>;
 }
 
@@ -76,6 +76,8 @@ export function ProjectModal({
   const [projectName, setProjectName] = useState("");
   const [parentDir, setParentDir] = useState("~/AcsaProjects");
   const [selectedTemplate, setSelectedTemplate] = useState("nextjs");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   if (!isOpen) return null;
 
@@ -88,13 +90,26 @@ export function ProjectModal({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = projectName.trim().replace(/\s+/g, "-").toLowerCase();
-    if (!clean) return;
-    onCreateProject(clean, selectedTemplate, parentDir.trim());
-    setProjectName("");
-    onClose();
+    if (!clean || creating) return;
+
+    setError(null);
+    setCreating(true);
+    try {
+      await onCreateProject(clean, selectedTemplate, parentDir.trim());
+      setProjectName("");
+      onClose();
+    } catch (err) {
+      // Stay open, with the input intact. This used to close first and then
+      // raise an alert, which discarded the name the user had just typed and
+      // the path that actually needed fixing — and an alert on its own says
+      // nothing about which field is wrong.
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -224,6 +239,15 @@ export function ProjectModal({
           </div>
 
           {/* Actions */}
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] leading-relaxed text-red-200"
+            >
+              <Icon icon={AlertCircle} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" />
+              <span className="break-words">{error}</span>
+            </div>
+          )}
           <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
@@ -234,14 +258,15 @@ export function ProjectModal({
             </button>
             <button
               type="submit"
-              disabled={!projectName.trim()}
+              disabled={!projectName.trim() || creating}
+              aria-busy={creating}
               className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-lg transition-all ${
-                projectName.trim()
+                projectName.trim() && !creating
                   ? "bg-primary-action hover:bg-primary-action cursor-pointer shadow-sm"
                   : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
               }`}
             >
-              Scaffold Real Files
+              {creating ? "Scaffolding…" : "Scaffold Real Files"}
             </button>
           </div>
         </form>

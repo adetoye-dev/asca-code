@@ -446,6 +446,37 @@ fn applescript_literal(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// The user's home directory, read from the same variables the rest of the app
+/// uses (`HOME` here, `USERPROFILE` on Windows).
+fn user_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Expand a leading `~` to the home directory.
+///
+/// Rust expands nothing: `~` is a shell feature. But the New Project dialog seeds
+/// its destination with `~/AcsaProjects` and its placeholder suggests
+/// `~/Desktop`, so without this the default path is read as *relative* to the
+/// process working directory — `/` for a bundle launched from Finder — the write
+/// is denied, and scaffolding from the default location fails for every user.
+fn expand_home(path: &str) -> PathBuf {
+    let trimmed = path.trim();
+    if trimmed == "~" {
+        if let Some(home) = user_home() {
+            return home;
+        }
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = user_home() {
+            return home.join(rest);
+        }
+    }
+    // An absolute path, a relative path, and `~someone` are all left alone —
+    // expanding another user's home is not ours to guess.
+    PathBuf::from(trimmed)
+}
+
 /// Ask the user where to write a file that does not exist yet.
 ///
 /// Separate from `pick_folder` because `choose folder` can only ever return a
@@ -572,18 +603,13 @@ fn create_project_template(
     }
 
     let base = match parent_dir {
-        Some(p) if !p.trim().is_empty() => PathBuf::from(p),
-        _ => {
-            if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
-            {
-                // Named after the app: this folder is created in the user's home
-                // and is the first thing they see if they scaffold without
-                // choosing a location.
-                PathBuf::from(home).join("ACSA Projects")
-            } else {
-                PathBuf::from("projects")
-            }
-        }
+        Some(p) if !p.trim().is_empty() => expand_home(&p),
+        // Named after the app: this folder is created in the user's home and is
+        // the first thing they see if they scaffold without choosing a location.
+        _ => match user_home() {
+            Some(home) => home.join("ACSA Projects"),
+            None => PathBuf::from("projects"),
+        },
     };
 
     let project_dir = base.join(&clean_name);
@@ -3372,5 +3398,24 @@ for line in sys.stdin:
                 "{blocked} must not be reachable from the page"
             );
         }
+    }
+
+    /// The New Project dialog hands us `~/AcsaProjects` by default. Rust does not
+    /// expand `~`, so until this existed the default destination was a *relative*
+    /// path and every scaffold from the default location failed — silently, since
+    /// the modal closes before the write is attempted.
+    #[test]
+    fn a_leading_tilde_expands_to_the_home_directory() {
+        let home = user_home().expect("the test environment has a home directory");
+
+        assert_eq!(expand_home("~/AcsaProjects"), home.join("AcsaProjects"));
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("  ~/Desktop  "), home.join("Desktop"));
+
+        // Not a home shorthand: left exactly as given.
+        assert_eq!(expand_home("/tmp/absolute"), PathBuf::from("/tmp/absolute"));
+        assert_eq!(expand_home("relative/dir"), PathBuf::from("relative/dir"));
+        assert_eq!(expand_home("~someone-else"), PathBuf::from("~someone-else"));
+        assert_eq!(expand_home("~/"), home);
     }
 }

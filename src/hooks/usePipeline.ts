@@ -1420,24 +1420,23 @@ export function usePipeline(): UsePipelineReturn {
 
   const createProject = useCallback(
     async (name: string, template: string, parentDir?: string) => {
-      if (isTauriAvailable) {
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          const createdPath = await invoke<string>("create_project_template", {
-            name,
-            template,
-            parentDir: parentDir || null,
-          });
-          setActiveProject({ name, path: createdPath });
-          setOpenTabs([]);
-          setActiveTabPath(null);
-          setCurrentDiff("");
-        } catch (err) {
-          alert(`Scaffold failed: ${err}`);
-        }
-      } else {
-        alert(DESKTOP_REQUIRED_MESSAGE);
+      if (!isTauriAvailable) {
+        throw new Error(DESKTOP_REQUIRED_MESSAGE);
       }
+      // Deliberately uncaught: the caller owns the dialog the user is looking
+      // at, and it is the only place a message ends up next to the field that
+      // caused it. Swallowing it here meant the dialog had already closed by the
+      // time the user was told anything.
+      const { invoke } = await import("@tauri-apps/api/core");
+      const createdPath = await invoke<string>("create_project_template", {
+        name,
+        template,
+        parentDir: parentDir || null,
+      });
+      setActiveProject({ name, path: createdPath });
+      setOpenTabs([]);
+      setActiveTabPath(null);
+      setCurrentDiff("");
     },
     [isTauriAvailable]
   );
