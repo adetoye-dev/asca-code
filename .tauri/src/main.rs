@@ -1888,8 +1888,15 @@ async fn agent_start(
     };
 
     // One session at a time; a second run replaces the first the way the exec
-    // path always has. `spawn` marks the outgoing session as superseded, so its
-    // shutdown cannot be mistaken for this run's.
+    // path always has.
+    //
+    // Supersede *before* killing. `spawn` also bumps the counter, but it runs
+    // after this: in between, the outgoing process is dead and still counts as
+    // current, so its stdout EOF would be emitted as *this* run's exit. The
+    // listener is already attached by now, so the new run ended the moment it
+    // began — "turn finished in 0s", an empty answer, on the second message of
+    // every session and never the first. Superseding first closes the window.
+    SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     {
         let mut guard = state.session.lock().map_err(|e| e.to_string())?;
         if let Some(mut previous) = guard.take() {
@@ -2353,9 +2360,14 @@ mod tests {
     /// to run it as a program. A script that is simply written (not chmod'd) made
     /// an earlier version of this test pass while exercising nothing.
     fn fake_app_server() -> PathBuf {
+        // One file per call: cargo runs these tests in parallel threads of one
+        // process, so a shared name means one test's cleanup deletes another
+        // test's runtime mid-run.
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("acsa-fake-appserver-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("fake_app_server.py");
+        let path = dir.join(format!("fake_app_server_{}.py", n));
         // A permissions probe and a denial are both legal: this is a fake, not a
         // model, so it answers deterministically.
         std::fs::write(
@@ -2615,6 +2627,66 @@ for line in sys.stdin:
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         let _ = session.child.kill();
+    }
+
+    /// A replaced session must not announce its own death into the next run.
+    ///
+    /// This is the ordering bug behind "turn finished in 0s" — an empty answer on
+    /// the *second* message of a session and never the first. The outgoing
+    /// process was killed before the current-session counter moved, so its dying
+    /// stdout EOF was read as the new run's exit and the run ended the moment it
+    /// began. The fix is to supersede before killing; this holds it in place.
+    #[test]
+    fn a_superseded_session_exits_quietly_and_the_current_one_does_not() {
+        let script = fake_app_server();
+        let events: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let emitter: AgentEmitter = std::sync::Arc::new(move |name: &str, line: String| {
+            sink.lock().unwrap().push((name.to_string(), line));
+        });
+        let exits = || {
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == "agent:exit")
+                .count()
+        };
+
+        let mut superseded = AgentSession::spawn(
+            &script,
+            &std::env::temp_dir(),
+            ".",
+            &[],
+            emitter.clone(),
+        )
+        .expect("spawn the outgoing session");
+        // The order the fix enforces: mark it superseded first, *then* kill it.
+        SESSION_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = superseded.child.kill();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(
+            exits(),
+            0,
+            "a superseded session must stay quiet, or the next run ends instantly"
+        );
+
+        // The current session is the opposite case: its exit *is* the run's exit.
+        let mut current =
+            AgentSession::spawn(&script, &std::env::temp_dir(), ".", &[], emitter).expect("spawn");
+        let _ = current.child.kill();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while exits() == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(exits() >= 1, "the current session's exit must be emitted");
+
+        let _ = std::fs::remove_file(&script);
     }
 
     /// The approval round-trip against the real runtime.

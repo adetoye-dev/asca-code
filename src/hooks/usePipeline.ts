@@ -481,13 +481,16 @@ async function runAgentOnAppServer(params: {
       }),
     );
     unlisten.push(
-      await listen<string>("agent:exit", (event) => {
+      await listen<{ line?: string } | string>("agent:exit", (event) => {
         // Emitted when the runtime's stdout reaches EOF — the real exit. It no
         // longer fires when stderr closes, which the runtime does early while
         // staying alive.
         finished = true;
         turnFinished.value = true;
-        const note = String(event.payload ?? "").trim();
+        // Same frame as the other two agent channels; unwrap it the same way, or
+        // the note prints as "[object Object]".
+        const payload = event.payload;
+        const note = (typeof payload === "string" ? payload : String(payload?.line ?? "")).trim();
         params.log(`[agent] app-server exited${note ? ` — ${note.slice(0, 180)}` : ""}`);
       }),
     );

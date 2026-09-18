@@ -194,7 +194,11 @@ provider and localhost):
   same pipe (`AgentSession::respond`, the path the UI command uses)
 - lifecycle: one session at a time, superseded sessions stay silent, exit on
   stdout EOF (stderr closes early while the process stays alive — that is not an
-  exit)
+  exit). The supersede has to happen **before** the outgoing process is killed:
+  otherwise its EOF is read as the new run's exit and the run ends the instant it
+  begins — an empty answer on the second message of a session, never the first
+  ("turn finished in 0s"). `a_superseded_session_exits_quietly_and_the_current_one_does_not`
+  holds that order in place.
 - attachments, the model catalog, `--oss` local providers and thread continuity,
   because the credential and `CODEX_HOME` are set the same way `exec` sets them
 
