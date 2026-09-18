@@ -371,12 +371,20 @@ export function SettingsModal({
 
   return (
     <div
-      onClick={onClose}
+      // Click-outside-to-close is a mouse convenience; Escape is the keyboard
+      // route. Marked presentational so it is not announced as one huge
+      // interactive region.
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
     >
       {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
         className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-modal bg-workbench backdrop-blur-2xl border border-hairline shadow-[0_32px_80px_rgba(0,0,0,0.8),inset_0_1px_0_0_rgba(255,255,255,0.1)] overflow-hidden flex flex-col text-zinc-300 relative"
       >
         {/* ── Settings Header Bar ─────────────────────────────────────────── */}
@@ -517,7 +525,9 @@ export function SettingsModal({
                   {/* Provider Selection Cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {/* Local Ollama */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={provider === "ollama"}
                       onClick={() => setProvider("ollama")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "ollama"
@@ -537,10 +547,12 @@ export function SettingsModal({
                       <p className="text-[10px] text-zinc-400 leading-tight">
                         Connects to local daemon (Qwen 2.5 Coder, Llama 3.2, DeepSeek).
                       </p>
-                    </div>
+                    </button>
 
                     {/* Cloud OpenAI / Anthropic */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={provider === "openai"}
                       onClick={() => setProvider("openai")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "openai"
@@ -557,16 +569,15 @@ export function SettingsModal({
                       <p className="text-[10px] text-zinc-400 leading-tight">
                         GPT-4o, Claude 3.7 Sonnet, Google Gemini, DeepSeek Cloud.
                       </p>
-                    </div>
+                    </button>
                   </div>
 
                   {/* Provider Settings Details */}
                   <div className="space-y-3.5 pt-2 border-t border-hairline">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Model Identifier
-                      </label>
+                      <label htmlFor="settings-model" className="text-xs font-semibold text-zinc-200">                        Model Identifier</label>
                       <input
+                        id="settings-model"
                         type="text"
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
@@ -582,10 +593,9 @@ export function SettingsModal({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Base URL
-                      </label>
+                      <label htmlFor="settings-base-url" className="text-xs font-semibold text-zinc-200">                        Base URL</label>
                       <input
+                        id="settings-base-url"
                         type="text"
                         value={baseUrl}
                         onChange={(e) => setBaseUrl(e.target.value)}
@@ -602,11 +612,10 @@ export function SettingsModal({
 
                     {provider === "openai" && (
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-zinc-200">
-                          API Key
-                        </label>
+                        <label htmlFor="settings-api-key" className="text-xs font-semibold text-zinc-200">                        API Key</label>
                         <div className="relative flex items-center">
                           <input
+                            id="settings-api-key"
                             type={showApiKey ? "text" : "password"}
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
@@ -677,8 +686,10 @@ export function SettingsModal({
                     {Object.values(PRESET_THEMES).map((theme) => {
                       const isCurrent = themeId === theme.id;
                       return (
-                        <div
+                        <button
                           key={theme.id}
+                          type="button"
+                          aria-pressed={isCurrent}
                           onClick={() => onApplyTheme && onApplyTheme(theme.id)}
                           className={`p-3 rounded-card border cursor-pointer transition flex flex-col justify-between ${
                             isCurrent
@@ -723,7 +734,7 @@ export function SettingsModal({
                               {theme.type}
                             </span>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -744,10 +755,9 @@ export function SettingsModal({
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Font Family
-                      </label>
+                      <label htmlFor="settings-font-family" className="text-xs font-semibold text-zinc-200">                        Font Family</label>
                       <select
+                        id="settings-font-family"
                         value="JetBrains Mono"
                         disabled
                         className="w-full rounded-[8px] bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
@@ -757,10 +767,9 @@ export function SettingsModal({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Font Size: {fontSize}px
-                      </label>
+                      <label htmlFor="settings-font-size" className="text-xs font-semibold text-zinc-200">                        Font Size: {fontSize}px</label>
                       <input
+                        id="settings-font-size"
                         type="range"
                         min={11}
                         max={20}
@@ -800,9 +809,9 @@ export function SettingsModal({
 
                   {/* Live JetBrains Mono Code Preview Box */}
                   <div className="space-y-1.5 pt-2">
-                    <label className="text-xs font-medium text-zinc-400">
+                    <p className="text-xs font-medium text-zinc-400">
                       Live Font Preview
-                    </label>
+                    </p>
                     <div
                       className="rounded-panel bg-workbench/80 border border-hairline p-4 font-mono text-zinc-100 overflow-x-auto shadow-elevation-1"
                       style={{
@@ -1085,6 +1094,19 @@ function TreeItem({
   return (
     <div className="px-1.5 py-0.5">
       <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={hasChildren ? isExpanded : undefined}
+        aria-current={isSelected ? "true" : undefined}
+        onKeyDown={(e) => {
+          // Native buttons fire on Enter and Space; these rows are divs because
+          // they contain their own disclosure button.
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (hasChildren) onToggleNode(node.id, e as unknown as React.MouseEvent);
+            else onSelectSection(node.id);
+          }
+        }}
         onClick={handleClick}
         style={{ paddingLeft: `${6 + level * 14}px` }}
         className={`px-2 py-1.5 rounded-[8px] flex items-center justify-between cursor-pointer transition-colors group ${
@@ -1095,16 +1117,18 @@ function TreeItem({
       >
         <div className="flex items-center gap-1.5 min-w-0 font-sans">
           {hasChildren ? (
-            <span
+            <button
+              type="button"
+              aria-label={isExpanded ? `Collapse ${node.label}` : `Expand ${node.label}`}
               onClick={(e) => onToggleNode(node.id, e)}
-              className="w-3.5 h-3.5 flex items-center justify-center text-zinc-400 hover:text-zinc-200"
+              className="w-3.5 h-3.5 flex items-center justify-center text-zinc-400 hover:text-zinc-200 cursor-pointer"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3 h-3" />
               ) : (
                 <ChevronRight className="w-3 h-3" />
               )}
-            </span>
+            </button>
           ) : (
             <span className="w-3.5 h-3.5" />
           )}

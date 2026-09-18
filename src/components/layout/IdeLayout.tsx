@@ -418,6 +418,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     };
     window.addEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
     return () => window.removeEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
+    // Subscribed once, on purpose: this is a global event bus. `openAiManagerTab`
+    // only calls stable state setters, so there is nothing to re-subscribe for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Listen for Programmatic Start Coding with Ollama Requests ─────────────
@@ -585,7 +588,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTabPath, saveFile]);
+  }, [activeTabPath, saveFile, isCenterChatOpen, setIsSettingsModalOpen]);
 
   // Escape closes the topmost full-surface overlay (chat / full page).
   useEffect(() => {
@@ -955,7 +958,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         closeTab(panel.id);
       }
     });
-  }, [openTabs, selectTab, closeTab, refreshBranch, refreshProjectFiles]);
+  }, [
+    openTabs,
+    selectTab,
+    closeTab,
+    activeProject.path,
+    isTauriAvailable,
+  ]);
 
   // Synchronize open tabs with Dockview panels
   useEffect(() => {
@@ -989,7 +998,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         panel.api.setActive();
       }
     }
-  }, [openTabs, activeTabPath]);
+  }, [openTabs, activeTabPath, activeProject.path, isTauriAvailable]);
 
   // Isolate project state: close all previous project tabs & diffs when switching project
   useEffect(() => {
@@ -1113,7 +1122,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         </div>
 
         {/* Center: Command Palette / Omnibar Trigger */}
-        <div
+        <button
+          type="button"
+          aria-label="Search files or run a command"
           onClick={() => setIsCommandPaletteOpen(true)}
           className="flex-1 max-w-xl mx-4 h-7 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 rounded-lg px-2.5 flex items-center justify-between cursor-pointer transition-colors shadow-sm group"
         >
@@ -1126,7 +1137,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
             ⌘P
           </kbd>
-        </div>
+        </button>
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
@@ -1376,7 +1387,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           )}
 
           {/* Draggable Resize Handle */}
+          {/* Pointer-only: there is no keyboard equivalent, and the panel is
+              fully usable at its default width. Marked presentational so it is
+              not announced as an interactive control it is not. */}
           <div
+            role="presentation"
             onMouseDown={startResizingSidebar}
             className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-20 select-none ${
               isResizingSidebar ? "bg-zinc-500" : ""

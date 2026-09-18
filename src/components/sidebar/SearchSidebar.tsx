@@ -579,6 +579,17 @@ export function SearchSidebar({
               <div key={file.filePath} className="group/file flex flex-col">
                 {/* File Header Row */}
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!isCollapsed}
+                  onKeyDown={(e) => {
+                    // A real <button> is not possible here: the row contains its
+                    // own replace/dismiss buttons.
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleFileCollapse(file.filePath);
+                    }
+                  }}
                   onClick={() => toggleFileCollapse(file.filePath)}
                   className="flex items-center gap-1.5 px-1.5 py-1 rounded-sm hover:bg-zinc-800/70 cursor-pointer transition-colors text-zinc-300"
                 >
@@ -652,6 +663,14 @@ export function SearchSidebar({
                       return (
                         <div
                           key={`${matchKey}-${idx}`}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onOpenFile(file.filePath, match.lineNumber, match.column);
+                            }
+                          }}
                           onClick={() => onOpenFile(file.filePath, match.lineNumber, match.column)}
                           className="group/match flex items-center justify-between gap-1.5 px-1.5 py-0.5 rounded-sm hover:bg-zinc-800/70 cursor-pointer text-zinc-300 hover:text-zinc-100 transition-colors font-mono text-xs"
                         >

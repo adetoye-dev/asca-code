@@ -974,6 +974,76 @@ fn system_cleanup(project_root: String) -> Result<serde_json::Value, String> {
 ///
 /// Whitelisted on purpose: this is a bridge to the bundled engine, not a general
 /// command runner.
+/// How long an engine subcommand may run before it is treated as wedged.
+///
+/// Generous on purpose: a full index of a large project and a cloud model call
+/// both legitimately take a while. What this bounds is the case with no upper
+/// bound at all — verified on a real machine: with a macOS file-access prompt
+/// waiting to be answered, the engine sat inside a single `open()` syscall for
+/// minutes, so the UI spun forever and every hanging call left a live process
+/// behind it.
+const ENGINE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Run a command to completion, draining both pipes, or kill it at the deadline.
+///
+/// The pipes are drained on their own threads rather than polled: several
+/// subcommands emit more than a pipe buffer's worth of JSON (`index` returns the
+/// whole symbol table), and a child blocked writing to a full pipe looks exactly
+/// like a hung one if nobody is reading.
+fn run_with_timeout(
+    program: &Path,
+    args: &[String],
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run the engine: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("could not capture engine output")?;
+    let stderr = child.stderr.take().ok_or("could not capture engine errors")?;
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::BufReader::new(stdout).read_to_end(&mut buffer);
+        buffer
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::BufReader::new(stderr).read_to_end(&mut buffer);
+        buffer
+    });
+
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if started.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "the engine did not respond within {}s and was stopped",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("could not wait for the engine: {}", e)),
+        }
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_thread.join().unwrap_or_default(),
+        stderr: stderr_thread.join().unwrap_or_default(),
+    })
+}
+
 #[tauri::command]
 async fn engine_call(
     app_handle: tauri::AppHandle,
@@ -992,11 +1062,11 @@ async fn engine_call(
     argv.extend(args);
 
     let output = tauri::async_runtime::spawn_blocking(move || {
-        Command::new(&program).args(&argv).output()
+        run_with_timeout(&program, &argv, ENGINE_CALL_TIMEOUT)
     })
     .await
     .map_err(|e| format!("engine task failed: {}", e))?
-    .map_err(|e| format!("could not run the engine: {}", e))?;
+    ?;
 
     // The engine writes structured log lines before its result, so the envelope
     // is the last non-empty line — the same rule the dev bridge uses.
@@ -1659,6 +1729,52 @@ mod tests {
         assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64_encode(&[0xff, 0x00, 0xfe]), "/wD+");
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_wedged_child() {
+        // The real failure this exists for: the engine sat inside one `open()`
+        // for minutes while a permission prompt went unanswered, so the request
+        // never returned and the process never exited.
+        let started = std::time::Instant::now();
+        let result = run_with_timeout(
+            &PathBuf::from("/bin/sleep"),
+            &["30".to_string()],
+            std::time::Duration::from_millis(300),
+        );
+        assert!(result.is_err(), "a wedged child must not be reported as success");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the deadline was measured in tenths of a second, not respected"
+        );
+    }
+
+    #[test]
+    fn run_with_timeout_drains_output_larger_than_a_pipe_buffer() {
+        // `index` returns the whole symbol table. A child that fills the pipe
+        // blocks until someone reads it, which looks identical to a hang.
+        let args: Vec<String> = vec![
+            "-c".into(),
+            "head -c 300000 /dev/zero | tr '\\0' 'x'".into(),
+        ];
+        let out = run_with_timeout(
+            &PathBuf::from("/bin/sh"),
+            &args,
+            std::time::Duration::from_secs(20),
+        )
+        .expect("large output must not time out");
+        assert_eq!(out.stdout.len(), 300_000);
+    }
+
+    #[test]
+    fn run_with_timeout_returns_the_exit_status() {
+        let out = run_with_timeout(
+            &PathBuf::from("/bin/sh"),
+            &["-c".into(), "exit 3".into()],
+            std::time::Duration::from_secs(20),
+        )
+        .expect("a failing command still runs");
+        assert_eq!(out.status.code(), Some(3));
     }
 
     #[test]

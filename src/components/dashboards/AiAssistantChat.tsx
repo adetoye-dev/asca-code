@@ -85,7 +85,7 @@ export function cleanThoughtText(raw?: string): string {
     .replace(/```(?:json)?\s*\{\s*"(?:tool|name)"[\s\S]*?\}\s*```/gi, "")
     .replace(/Action:\s*[A-Za-z0-9_]+\s*\nAction Input:\s*\{[\s\S]*?\}/g, "")
     .replace(/(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+\]?[:*#`\s]*\n<{5,9}\s*SEARCH[\s\S]*?>{5,9}\s*REPLACE/g, "")
-    .replace(/(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$|\Z))/g, "")
+    .replace(/(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$))/g, "")
     .replace(/<\/(?:tool_call|invoke|function_call|call|action|parameter|arg|argument|think)>/gi, "")
     .trim();
 }
@@ -1360,13 +1360,19 @@ Click to re-index project.`}
                     {msg.images && msg.images.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-2">
                         {msg.images.map((img, i) => (
-                          <img
+                          <button
                             key={i}
-                            src={img}
-                            alt="Attachment"
-                            className="max-h-48 max-w-xs rounded-lg border border-zinc-700 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                            type="button"
+                            className="cursor-pointer rounded-lg border border-zinc-700 hover:opacity-90 transition-opacity"
+                            title="Open attachment in a new window"
                             onClick={() => window.open(img, "_blank")}
-                          />
+                          >
+                            <img
+                              src={img}
+                              alt="Attachment"
+                              className="max-h-48 max-w-xs rounded-lg object-cover"
+                            />
+                          </button>
                         ))}
                       </div>
                     )}

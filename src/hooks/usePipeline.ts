@@ -710,12 +710,15 @@ export function usePipeline(): UsePipelineReturn {
 
   // Active project state
   const [activeProject, setActiveProjectState] = useState<ProjectMeta>(() => {
-    // The active project is resolved from the app database during hydration
-    // (see the bootstrap effect). Until that completes we start on the bundled
-    // workbench itself rather than on whatever happens to be left in this
-    // browser's localStorage — that pointer used to resurrect an unrelated
-    // project on a machine that had ever opened one.
-    return { name: "acsa-code", path: "." };
+    // No project until hydration says which one (see the bootstrap effect).
+    //
+    // This used to be `"."`, which is resolved against the process working
+    // directory — for an app launched from Finder that is `/`, so a cold start
+    // listed the whole filesystem in the Explorer until the database answered,
+    // and an agent run started before hydration would have run there. A blank
+    // path renders the "open a folder" empty state instead, and the guards
+    // below refuse to touch the filesystem without one.
+    return { name: "", path: "" };
   });
 
   const setActiveProject = (proj: ProjectMeta) => {
@@ -772,6 +775,7 @@ export function usePipeline(): UsePipelineReturn {
   // Initial index probe when project path is ready
   useEffect(() => {
     if (activeProject?.path) {
+      if (!activeProject.path) return;
       getIndexStatus(activeProject.path).then((stat) => {
         setIndexStatus({
           indexed: stat.indexed,
@@ -787,6 +791,10 @@ export function usePipeline(): UsePipelineReturn {
 
   // ── File Tree Loading ─────────────────────────────────────────────────────
   const refreshProjectFiles = useCallback(async () => {
+    if (!activeProject.path) {
+      setProjectFiles([]);
+      return;
+    }
     if (isTauriAvailable) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -1062,7 +1070,7 @@ export function usePipeline(): UsePipelineReturn {
         alert(DESKTOP_REQUIRED_MESSAGE);
       }
     },
-    [isTauriAvailable, refreshProjectFiles]
+    [isTauriAvailable]
   );
 
   // ── Poll System Metrics via Central Service ──────────────────────────────
@@ -1086,6 +1094,20 @@ export function usePipeline(): UsePipelineReturn {
     ) => {
       const activePrompt = customPrompt ?? prompt;
       if (!activePrompt.trim()) return;
+      if (!activeProject.path) {
+        setStatus("failed");
+        setAgentSteps([]);
+        setActivityLog([
+          {
+            line_number: 1,
+            content:
+              "[agent] No project is open. Open a folder first — the agent runs inside it.",
+            stream: "stderr",
+            is_json: false,
+          },
+        ]);
+        return;
+      }
 
       setStatus("running");
       setActivityLog([]);
@@ -1191,7 +1213,7 @@ export function usePipeline(): UsePipelineReturn {
       }
       pipelineAbortRef.current = null;
     },
-    [prompt, activeProject.path, aiSettings, sliders, isTauriAvailable, refreshProjectFiles]
+    [prompt, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
   );
 
   const cancelPipeline = useCallback(async () => {

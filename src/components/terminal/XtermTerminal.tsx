@@ -114,7 +114,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
           onConnectionChangeRef.current?.(false);
         }
       },
-      [cwd, onConnectionChange]
+      // `onConnectionChange` is read through a ref so this callback stays stable.
+      [cwd]
     );
     const initShellRef = useRef(initShell);
     const sendInputRef = useRef(sendInput);
@@ -293,6 +294,10 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         term.dispose();
         if (flushTimeoutRef.current) clearTimeout(flushTimeoutRef.current);
       };
+      // Mount-only: this builds the terminal and spawns the shell. `fontSize` is
+      // read once here and applied on change by the effect below, so adding it
+      // would restart the shell every time the setting moved.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Sync dimensions and focus whenever visibility changes (e.g. tab switch)
@@ -323,6 +328,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
 
     return (
       <div
+        role="presentation"
+        title="Click to focus the terminal"
         onClick={() => termRef.current?.focus()}
         className="h-full w-full bg-workbench overflow-hidden select-none cursor-text relative"
       >

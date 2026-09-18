@@ -16,6 +16,9 @@ async function invokeTauri<T>(command: string, args?: Record<string, unknown>): 
 }
 
 export async function fetchStorageMetrics(projectRoot: string): Promise<StorageMetrics | null> {
+  // With no project open there is no volume to report on; the shell would
+  // otherwise measure whichever directory the app was launched from.
+  if (!projectRoot) return null;
   try {
     if (hasIpc()) {
       return await invokeTauri<StorageMetrics>("fetch_system_storage", { projectRoot });

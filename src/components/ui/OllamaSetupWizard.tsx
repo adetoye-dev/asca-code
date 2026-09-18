@@ -65,6 +65,8 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
 
   const addLog = (line?: string) => {
     if (!line) return;
+    // Control characters are the point: this strips ANSI colour codes.
+    // eslint-disable-next-line no-control-regex
     const clean = line.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "").trim();
     if (!clean) return;
     setLogs((prev) => {
@@ -346,7 +348,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
       return (
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="ollamasetupwizard-select-local-model-to-download-1" className="text-xs font-semibold text-zinc-300">
               Select Local Model to Download
             </label>
             {status && status.totalRamGb > 0 && (
@@ -355,7 +357,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 Recommended: <span className="text-purple-400 font-mono font-semibold">{status.recommendedModel}</span>
               </p>
             )}
-            <select
+            <select id="ollamasetupwizard-select-local-model-to-download-1"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               disabled={isBusy}

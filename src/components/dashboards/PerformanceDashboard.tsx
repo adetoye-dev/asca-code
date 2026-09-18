@@ -404,6 +404,10 @@ export function PerformanceDashboard({
     fetchStorageAndProcesses();
     const timer = setInterval(fetchStorageAndProcesses, 6000);
     return () => clearInterval(timer);
+    // Polls until the component unmounts; `fetchStorageAndProcesses` is
+    // re-declared each render, so depending on it would restart the interval
+    // every time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSafeCleanup = async () => {

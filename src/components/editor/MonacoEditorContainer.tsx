@@ -539,7 +539,9 @@ export function MonacoEditorContainer({
       });
 
     });
-  }, [reviewIssues, expandedFindings, collapsedZoneHeightRef]);
+    // `collapsedZoneHeightRef` is a ref: its identity never changes, so it was
+    // never doing anything in this list.
+  }, [reviewIssues, expandedFindings]);
 
   /**
    * Measures the cards Monaco has actually laid out and records their height.
@@ -656,7 +658,6 @@ export function MonacoEditorContainer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInlinePromptOpen]);
 
   // Drop stale findings and markers when the editor switches files.
@@ -905,7 +906,7 @@ export function MonacoEditorContainer({
 
       {/* Click-away backdrop so the inline prompt can always be dismissed */}
       {isInlinePromptOpen && (
-        <div className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
+        <div role="presentation" className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
       )}
 
       {/* Floating Cmd+K Inline Edit Overlay */}
@@ -948,6 +949,8 @@ export function MonacoEditorContainer({
               }}
               placeholder="Describe changes or ask AI to edit code... (Enter to apply, Esc to cancel)"
               className="flex-1 bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-purple-500 transition-colors"
+              // Cmd+K opened this box; the caret belongs in it.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
             />
             <button

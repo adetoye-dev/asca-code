@@ -21,6 +21,8 @@ export function HashProgressBar({
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
 
   const cleanStatus = (statusText || "Processing…")
+    // Control characters are the point: this strips ANSI colour codes.
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
     .trim();
 

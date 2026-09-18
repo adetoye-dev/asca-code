@@ -110,7 +110,7 @@ export function registerAiInlineCompletions(
                 },
               ],
             });
-          } catch (err) {
+          } catch {
             resolve({ items: [] });
           } finally {
             if (activeAbortController === controller) {

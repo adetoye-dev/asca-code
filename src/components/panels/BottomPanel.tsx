@@ -85,7 +85,10 @@ export function BottomPanel({
       className="w-full flex flex-col border-t border-[var(--vscode-border)] bg-[var(--vscode-panel-bg)] text-xs select-none relative shrink-0 transition-all duration-75"
     >
       {/* Draggable Top Resize Handle */}
+      {/* Pointer-only, like the sidebar handle: the panel is usable at its
+          default height and there is no keyboard equivalent to offer. */}
       <div
+        role="presentation"
         onMouseDown={handleMouseDown}
         className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-zinc-600/40 transition-colors z-20"
         title="Drag to resize bottom panel"

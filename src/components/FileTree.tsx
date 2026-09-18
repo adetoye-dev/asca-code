@@ -291,6 +291,9 @@ export function FileTree({
     return (
       <div key={node.path} className="select-none text-[13px] font-sans">
         <div
+          role="treeitem"
+          aria-selected={isActive}
+          aria-expanded={isDir ? expandedDirs.has(node.path) : undefined}
           onClick={() => {
             if (isDir) {
               toggleDir(node.path);
@@ -462,10 +465,10 @@ export function FileTree({
           <form onSubmit={handleCreateSubmit} className="space-y-2.5">
             {/* Target Location / Destination Folder Dropdown */}
             <div>
-              <label className="text-xs text-zinc-300 font-medium block mb-1">
+              <label htmlFor="filetree-destination-folder-1" className="text-xs text-zinc-300 font-medium block mb-1">
                 Destination Folder:
               </label>
-              <select
+              <select id="filetree-destination-folder-1"
                 value={newEntryModal.parentPath}
                 onChange={(e) =>
                   setNewEntryModal((prev) => (prev ? { ...prev, parentPath: e.target.value } : null))
@@ -482,10 +485,12 @@ export function FileTree({
 
             {/* Name / Subpath Input */}
             <div>
-              <label className="text-xs text-zinc-300 font-medium block mb-1">
+              <label htmlFor="filetree-field-2" className="text-xs text-zinc-300 font-medium block mb-1">
                 {newEntryModal.isDir ? "Folder Name (or subpath):" : "File Name (or subpath):"}
               </label>
-              <input
+              <input id="filetree-field-2"
+                // The user just asked for this input; focusing it is the point.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
                 type="text"
                 placeholder={
@@ -569,6 +574,7 @@ export function FileTree({
       {/* Right-click Context Menu */}
       {contextMenu && contextMenuPos && (
         <div
+          role="presentation"
           style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
           className="fixed z-50 min-w-[170px] bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-2xl p-1 text-xs text-zinc-200 animate-in fade-in zoom-in-95 duration-75 select-none font-sans"
           onClick={(e) => e.stopPropagation()}

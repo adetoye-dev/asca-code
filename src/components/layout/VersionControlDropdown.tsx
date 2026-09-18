@@ -73,6 +73,8 @@ export function VersionControlDropdown({
 
   useEffect(() => {
     fetchGitStatus();
+    // Re-runs when the project changes, by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectCwd]);
 
   useEffect(() => {
@@ -82,6 +84,8 @@ export function VersionControlDropdown({
       setActionMsg(null);
       setIsCreatingBranch(false);
     }
+    // Refreshes when the dropdown opens, by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   // Click outside or press Escape to close
@@ -327,6 +331,8 @@ export function VersionControlDropdown({
                 <input
                   type="text"
                   value={newBranchName}
+                  // The user just chose "create branch"; the field is the next step.
+                  // eslint-disable-next-line jsx-a11y/no-autofocus
                   autoFocus
                   placeholder="Branch name (e.g. feature/login)"
                   onChange={(e) => setNewBranchName(e.target.value)}

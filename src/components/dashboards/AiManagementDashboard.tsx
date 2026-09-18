@@ -101,6 +101,10 @@ export function AiManagementDashboard({
         }
       }).catch(() => {});
     }
+    // Keyed on which provider is selected. Depending on `activeProvider` would
+    // re-enter: the Ollama branch calls `setProviders`, which produces a new
+    // provider object, which would run this again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const handleStartOllama = async () => {
@@ -694,21 +698,20 @@ export function AiManagementDashboard({
                                 <>
                                   {/* Backdrop to dismiss when clicking outside */}
                                   <div
+                                    role="presentation"
                                     className="fixed inset-0 z-40"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenSpecsModelTag(null);
-                                    }}
+                                    onClick={() => setOpenSpecsModelTag(null)}
                                   />
 
                                   {/* Popover Card */}
                                   <div
+                                    role="dialog"
+                                    aria-label="Model specification"
                                     className={`absolute z-50 bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
                                       index % 2 === 1
                                         ? "sm:right-3.5 sm:left-auto left-3.5"
                                         : "left-3.5"
                                     }`}
-                                    onClick={(e) => e.stopPropagation()}
                                   >
                                     <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
                                       <div className="flex items-center gap-1.5">
@@ -895,7 +898,7 @@ export function AiManagementDashboard({
 
                         {/* 5. Custom Model Tag Input Field */}
                         <div className="pt-3 border-t border-zinc-800/80">
-                          <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
+                          <label htmlFor="aimanagementdashboard-pull-custom-model-by-tag-1" className="text-xs font-semibold text-zinc-300 block mb-1.5">
                             Pull Custom Model by Tag
                           </label>
                           <form
@@ -908,7 +911,7 @@ export function AiManagementDashboard({
                             }}
                             className="flex items-center gap-2"
                           >
-                            <input
+                            <input id="aimanagementdashboard-pull-custom-model-by-tag-1"
                               type="text"
                               value={customModelTag}
                               onChange={(e) => setCustomModelTag(e.target.value)}
@@ -947,7 +950,7 @@ export function AiManagementDashboard({
                   {/* Model Selection Dropdown */}
                   <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold text-zinc-300">Active Model</label>
+                        <label htmlFor="aimanagementdashboard-active-model-2" className="text-xs font-semibold text-zinc-300">Active Model</label>
                         {activeProvider.category === "cloud" && (
                           <button
                             type="button"
@@ -970,7 +973,7 @@ export function AiManagementDashboard({
                         const modelsToShow = displayModels.length > 0 ? displayModels : activeProvider.availableModels;
 
                         return (
-                          <select
+                          <select id="aimanagementdashboard-active-model-2"
                             value={selectedModel}
                             onChange={(e) => {
                               setSelectedModel(e.target.value);
@@ -994,7 +997,7 @@ export function AiManagementDashboard({
                             onSubmit={handleAddCustomModel}
                             className="flex items-center gap-2"
                           >
-                            <input
+                            <input id="aimanagementdashboard-api-key-secret-token-stored-in-the-app-3"
                               type="text"
                               value={customCloudModel}
                               onChange={(e) => setCustomCloudModel(e.target.value)}
@@ -1023,7 +1026,7 @@ export function AiManagementDashboard({
                   {/* API Key Input (if cloud provider) */}
                   {activeProvider.category === "cloud" ? (
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                      <label htmlFor="aimanagementdashboard-api-key-secret-token-stored-in-the-app-3" className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                         <span>API Key / Secret Token</span>
                         <span className="text-[11px] text-zinc-500 font-normal">
                           Stored in the app database on this device — never read back into the page
@@ -1031,7 +1034,7 @@ export function AiManagementDashboard({
                       </label>
                       <div className="flex items-center gap-2">
                         <div className="relative flex-1">
-                          <input
+                          <input id="aimanagementdashboard-base-url-endpoint-classname-text-1-4"
                             type={showApiKey ? "text" : "password"}
                             value={apiKeyInput}
                             onChange={(e) => setApiKeyInput(e.target.value)}
@@ -1072,7 +1075,7 @@ export function AiManagementDashboard({
 
               {/* Base URL / Endpoint */}
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                <label htmlFor="aimanagementdashboard-base-url-endpoint-classname-text-1-4" className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                   <span>Base URL / Endpoint</span>
                   <button
                     type="button"

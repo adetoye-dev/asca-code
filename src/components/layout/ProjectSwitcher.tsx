@@ -195,6 +195,7 @@ export function ProjectSwitcher({
 
   return (
     <div
+      role="presentation"
       ref={dropdownRef}
       onKeyDown={handleDropdownKeyDown}
       className="relative select-none text-[13px] font-sans"

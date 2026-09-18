@@ -116,8 +116,8 @@ export function CloneModal({
         <div className="space-y-3">
           {/* Repo URL */}
           <div>
-            <label className="text-[11px] font-semibold text-zinc-300">Repository URL</label>
-            <input
+            <label htmlFor="clonemodal-repository-url-1" className="text-[11px] font-semibold text-zinc-300">Repository URL</label>
+            <input id="clonemodal-repository-url-1"
               type="text"
               value={repoUrl}
               onChange={(e) => handleUrlChange(e.target.value)}
@@ -128,9 +128,9 @@ export function CloneModal({
 
           {/* Destination Path */}
           <div>
-            <label className="text-[11px] font-semibold text-zinc-300">Destination Directory</label>
+            <label htmlFor="clonemodal-destination-directory-2" className="text-[11px] font-semibold text-zinc-300">Destination Directory</label>
             <div className="flex items-center gap-2 mt-1">
-              <input
+              <input id="clonemodal-destination-directory-2"
                 type="text"
                 value={targetDir}
                 onChange={(e) => setTargetDir(e.target.value)}

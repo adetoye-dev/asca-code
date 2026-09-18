@@ -69,6 +69,8 @@ export function SourceControlSidebar({
 
   useEffect(() => {
     fetchStatus();
+    // Re-runs when the project changes, by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectCwd]);
 
   const handleOpenFileDiff = async (file: ChangedGitFile, isStaged: boolean) => {
@@ -326,6 +328,15 @@ export function SourceControlSidebar({
             {stagedFiles.length > 0 && (
               <div className="space-y-1">
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isStagedOpen}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setIsStagedOpen((prev) => !prev);
+                    }
+                  }}
                   onClick={() => setIsStagedOpen((prev) => !prev)}
                   className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-emerald-400 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
                 >
@@ -358,6 +369,14 @@ export function SourceControlSidebar({
                     {stagedFiles.map((file) => (
                       <div
                         key={file.path}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleOpenFileDiff(file, true);
+                          }
+                        }}
                         onClick={() => handleOpenFileDiff(file, true)}
                         className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-zinc-800/80 cursor-pointer transition-colors group"
                         title={`Click to review staged git diff for ${file.path}`}
@@ -393,6 +412,15 @@ export function SourceControlSidebar({
             {/* ── CHANGES (UNSTAGED) ────────────────────────────────────── */}
             <div className="space-y-1">
               <div
+                role="button"
+                tabIndex={0}
+                aria-expanded={isUnstagedOpen}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setIsUnstagedOpen((prev) => !prev);
+                  }
+                }}
                 onClick={() => setIsUnstagedOpen((prev) => !prev)}
                 className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
               >
@@ -425,6 +453,14 @@ export function SourceControlSidebar({
                   {unstagedFiles.map((file) => (
                     <div
                       key={file.path}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleOpenFileDiff(file, false);
+                        }
+                      }}
                       onClick={() => handleOpenFileDiff(file, false)}
                       className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-zinc-800/80 cursor-pointer transition-colors group"
                       title={`Click to review git diff for ${file.path}`}

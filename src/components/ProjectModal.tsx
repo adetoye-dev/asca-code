@@ -126,10 +126,13 @@ export function ProjectModal({
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Project Name Input */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="projectmodal-project-name-1" className="text-xs font-semibold text-zinc-300">
               Project Name
             </label>
-            <input
+            <input id="projectmodal-project-name-1"
+              // Focus lands in the first field of a dialog the user just opened,
+              // which is what the ARIA authoring practices recommend.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               type="text"
               placeholder="e.g. user-auth-service"
@@ -141,11 +144,11 @@ export function ProjectModal({
 
           {/* Destination Folder Location */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="projectmodal-save-inside-directory-2" className="text-xs font-semibold text-zinc-300">
               Save Inside Directory
             </label>
             <div className="flex items-center gap-2">
-              <input
+              <input id="projectmodal-save-inside-directory-2"
                 type="text"
                 placeholder="e.g. ~/Desktop or /Users/.../Projects"
                 value={parentDir}
@@ -165,16 +168,19 @@ export function ProjectModal({
 
           {/* Template Picker */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300">
+            {/* A group of template buttons, not a form control: a heading. */}
+            <p className="text-xs font-semibold text-zinc-300">
               Select Architecture Template
-            </label>
+            </p>
             <div className="grid grid-cols-1 gap-2">
               {TEMPLATES.map((tmpl) => {
                 const isSelected = selectedTemplate === tmpl.id;
                 const Icon = tmpl.icon;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={tmpl.id}
+                    aria-pressed={isSelected}
                     onClick={() => setSelectedTemplate(tmpl.id)}
                     className={`flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${
                       isSelected
@@ -211,7 +217,7 @@ export function ProjectModal({
                         {tmpl.description}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
