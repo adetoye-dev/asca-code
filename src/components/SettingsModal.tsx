@@ -14,7 +14,7 @@
  * - Standard IntelliJ footer with [?] Help, [Cancel], [Apply], [OK]
  */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
 import { PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
@@ -243,6 +243,32 @@ export function SettingsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialTab]);
 
+  /**
+   * Escape closes the dialog, and focus starts inside it.
+   *
+   * Neither was true. The backdrop click was the only way out that did not
+   * require aiming at a specific button, and a dialog that opens with focus
+   * still on the page behind it is unusable from the keyboard even when every
+   * control inside is reachable. (A comment claimed Escape was handled; it was
+   * not.)
+   */
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose?.();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    const first = dialogRef.current?.querySelector<HTMLElement>(
+      'input, select, textarea, button, [tabindex]:not([tabindex="-1"])',
+    );
+    first?.focus();
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
   const navigateTo = (sectionId: string) => {
     setSelectedSection(sectionId);
     const newHistory = history.slice(0, historyIndex + 1);
@@ -382,6 +408,7 @@ export function SettingsModal({
     >
       {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"

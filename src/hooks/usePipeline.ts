@@ -655,6 +655,15 @@ export function usePipeline(): UsePipelineReturn {
         ]);
         if (cancelled) return;
 
+        // Threads the agent ran in, so a follow-up after a relaunch still
+        // continues the same conversation instead of starting from nothing.
+        const storedThreads = settings["agent_threads"];
+        if (storedThreads && typeof storedThreads === "object" && !cancelled) {
+          for (const [key, id] of Object.entries(storedThreads as Record<string, unknown>)) {
+            if (typeof id === "string" && id) agentThreadsRef.current.set(key, id);
+          }
+        }
+
         // One-time migration of the pre-database settings blob.
         let savedAi = settings["ai_settings"] as AISettings | undefined;
         if (!savedAi) {
@@ -1124,6 +1133,21 @@ export function usePipeline(): UsePipelineReturn {
    */
   const agentThreadsRef = useRef<Map<string, string>>(new Map());
 
+  /**
+   * Write the thread map back to the database.
+   *
+   * Small and infrequent — one entry per project + model + approval mode — so it
+   * is written whole rather than patched. Best-effort: losing the pointers only
+   * costs a fresh thread on the next turn, which is what the caller already
+   * copes with when a resume fails.
+   */
+  const persistAgentThreads = useCallback(() => {
+    const entries = Array.from(agentThreadsRef.current.entries());
+    // Keep the map from growing without bound across projects and models.
+    const trimmed = Object.fromEntries(entries.slice(-40));
+    void appStore.setSetting("agent_threads", trimmed).catch(() => {});
+  }, []);
+
   const runPipeline = useCallback(
     async (
       customPrompt?: string,
@@ -1221,7 +1245,10 @@ export function usePipeline(): UsePipelineReturn {
             prompt: agentPrompt,
             resumeThreadId: resume,
             images: usableImages,
-            onThread: (id) => agentThreadsRef.current.set(threadKey, id),
+            onThread: (id) => {
+              agentThreadsRef.current.set(threadKey, id);
+              persistAgentThreads();
+            },
             onFailure: setFailureDetail,
             projectRoot: activeProject.path,
           selection: modelOverride
@@ -1261,6 +1288,7 @@ export function usePipeline(): UsePipelineReturn {
         // is not the "two edits" risk a mid-run retry would be.
         if (codexStatus === "unavailable" && resumeThreadId) {
           agentThreadsRef.current.delete(threadKey);
+          persistAgentThreads();
           setActivityLog((prev) => [
             ...prev,
             {
@@ -1318,7 +1346,14 @@ export function usePipeline(): UsePipelineReturn {
       }
       pipelineAbortRef.current = null;
     },
-    [prompt, activeProject.path, aiSettings, isTauriAvailable, refreshProjectFiles]
+    [
+      prompt,
+      activeProject.path,
+      aiSettings,
+      isTauriAvailable,
+      refreshProjectFiles,
+      persistAgentThreads,
+    ]
   );
 
   const cancelPipeline = useCallback(async () => {
