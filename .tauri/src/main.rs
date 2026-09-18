@@ -558,6 +558,131 @@ fn create_project_template(
 
 // ── Helper: Resolve the core-engine path ────────────────────────────────────
 
+/// Words that introduce a credential. Ordered longest-first so `client_secret`
+/// wins over `secret`.
+const SECRET_KEYS: &[&str] = &[
+    "acsa_codex_api_key",
+    "acsa_secret_",
+    "client_secret",
+    "private_key",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "api_key",
+    "api-key",
+    "apikey",
+    "password",
+    "passwd",
+    "env_key",
+    "secret",
+    "bearer",
+    "token",
+];
+
+/// Shortest value worth masking. Below this, the "value" is prose — `token: 42`.
+const MIN_SECRET_LEN: usize = 6;
+
+const MASK: &str = "***";
+
+/// Mask credential-shaped text before it reaches a panel the user may screenshot.
+///
+/// The runtime's stderr is forwarded verbatim, and on purpose: it is the only
+/// window into a failed run. But a runtime that dumps its environment or echoes a
+/// header on failure would print a live key into the OUTPUT panel, which is easy
+/// to screenshot and easy to paste into a bug report. So free-text channels are
+/// masked, and anything we handed the child as a credential is masked wherever it
+/// appears, whatever it looks like.
+///
+/// `agent:event` is deliberately *not* passed through here. It is JSON-RPC the UI
+/// parses and answers, and an approval has to show the command it is really
+/// approving — a masked command would be worse than a visible one.
+fn redact_for_display(line: &str, known: &[String]) -> String {
+    let mut out = line.to_string();
+
+    // Whatever we put in the child's environment, wherever it turns up.
+    for secret in known {
+        if secret.len() >= MIN_SECRET_LEN && out.contains(secret.as_str()) {
+            out = out.replace(secret.as_str(), MASK);
+        }
+    }
+
+    let chars: Vec<char> = out.chars().collect();
+    let lowered: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
+    // A value follows a *strong* separator. A plain space is not one, or prose
+    // like "reading token counts" gets a hole punched in it.
+    let strong_separator = |c: char| matches!(c, ':' | '=' | '"' | '\'');
+    let blank = |c: char| matches!(c, ' ' | '\t');
+    let ends_value = |c: char| strong_separator(c) || blank(c) || matches!(c, ',' | '}' | ']' | ';');
+
+    let mut result = String::with_capacity(out.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let key = SECRET_KEYS.iter().find(|key| {
+            let k: Vec<char> = key.chars().collect();
+            i + k.len() <= lowered.len() && lowered[i..i + k.len()] == k[..]
+        });
+
+        let Some(key) = key else {
+            result.push(chars[i]);
+            i += 1;
+            continue;
+        };
+
+        let klen = key.chars().count();
+        let key_end = i + klen;
+        let mut j = key_end;
+        let mut saw_separator = false;
+        while j < chars.len() {
+            // `Bearer <token>` is separated by the space, and only by that.
+            if strong_separator(chars[j]) || (*key == "bearer" && blank(chars[j])) {
+                saw_separator = true;
+                j += 1;
+            } else if saw_separator && blank(chars[j]) {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+
+        let value_start = j;
+        while j < chars.len() && !ends_value(chars[j]) {
+            j += 1;
+        }
+        let value: String = chars[value_start..j].iter().collect();
+
+        // `Authorization: Bearer <token>` — the scheme is not the credential.
+        if saw_separator && matches!(value.to_ascii_lowercase().as_str(), "bearer" | "basic") {
+            let mut k = j;
+            while k < chars.len() && blank(chars[k]) {
+                k += 1;
+            }
+            let token_start = k;
+            while k < chars.len() && !ends_value(chars[k]) {
+                k += 1;
+            }
+            if k - token_start >= MIN_SECRET_LEN {
+                result.extend(&chars[i..j]);
+                result.extend(&chars[j..token_start]);
+                result.push_str(MASK);
+                i = k;
+                continue;
+            }
+        }
+
+        if saw_separator && j - value_start >= MIN_SECRET_LEN {
+            // Keep the separator, mask only the value, so the line still reads.
+            result.extend(&chars[i..value_start]);
+            result.push_str(MASK);
+            i = j;
+            continue;
+        }
+
+        result.extend(&chars[i..key_end]);
+        i = key_end;
+    }
+    result
+}
+
 /// Name of the frozen engine executable shipped as a Tauri sidecar.
 ///
 /// Tauri strips the target-triple suffix when bundling, so at runtime it sits
@@ -1720,6 +1845,13 @@ impl AgentSession {
         let reader_pending = pending.clone();
         let reader_emitter = emitter.clone();
         let reader_turn = turn_id.clone();
+        // Whatever we are about to hand the child as a credential, masked if it
+        // comes back out. Built here because `env` does not outlive the spawn.
+        let known_secrets: Vec<String> = env
+            .iter()
+            .map(|(_, value)| value.clone())
+            .filter(|value| value.len() >= MIN_SECRET_LEN)
+            .collect();
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
 
@@ -1727,7 +1859,7 @@ impl AgentSession {
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                     if !line.trim().is_empty() {
-                        stderr_emitter("agent:stderr", line);
+                        stderr_emitter("agent:stderr", redact_for_display(&line, &known_secrets));
                     }
                 }
             });
@@ -2280,8 +2412,12 @@ async fn codex_exec(
 
     // Codex reads the key from the environment named by `env_key`, so it is set here
     // rather than accepted from the caller — the credential stays on this side.
+    let mut known_secrets: Vec<String> = Vec::new();
     if !provider_id.trim().is_empty() {
         if let Some(key) = engine_resolve_key(&app_handle, provider_id.trim()) {
+            if key.len() >= MIN_SECRET_LEN {
+                known_secrets.push(key.clone());
+            }
             command.env("ACSA_CODEX_API_KEY", key);
         }
     }
@@ -2343,7 +2479,10 @@ async fn codex_exec(
             );
         }
         let stderr_text = stderr_thread.join().unwrap_or_default();
-        let _ = stderr_handle.emit("codex:exit", stderr_text.trim().to_string());
+        let _ = stderr_handle.emit(
+            "codex:exit",
+            redact_for_display(stderr_text.trim(), &known_secrets),
+        );
     });
 
     Ok(())
@@ -2934,6 +3073,60 @@ for line in sys.stdin:
             "no turn/completed within 150s (answered={}); events: {:#?}",
             answered, log
         );
+    }
+
+    /// The OUTPUT panel is carried verbatim from the runtime, so it is also the
+    /// most likely place for a live credential to end up on screen.
+    #[test]
+    fn credentials_are_masked_before_they_reach_the_panel() {
+        let none: Vec<String> = Vec::new();
+        let cases = [
+            ("Authorization: Bearer sk-live-abcdef123456", "sk-live-abcdef123456"),
+            ("api_key=sk-abcdef123456", "sk-abcdef123456"),
+            (r#"{"apiKey":"sk-abcdef123456"}"#, "sk-abcdef123456"),
+            ("ACSA_CODEX_API_KEY=abcdef123456", "abcdef123456"),
+            ("client_secret: abcdef123456", "abcdef123456"),
+            ("password=hunter2hunter2", "hunter2hunter2"),
+        ];
+        for (line, secret) in cases {
+            let masked = redact_for_display(line, &none);
+            assert!(!masked.contains(secret), "not masked: {masked}");
+            assert!(masked.contains(MASK), "nothing masked: {masked}");
+        }
+    }
+
+    #[test]
+    fn a_credential_we_handed_over_is_masked_wherever_it_appears() {
+        // Whatever it looks like — a key with no recognisable prefix still goes.
+        let known = vec!["zz9-plainvalue-noprefix".to_string()];
+        let masked = redact_for_display("failed to authenticate with zz9-plainvalue-noprefix (401)", &known);
+        assert!(!masked.contains("zz9-plainvalue-noprefix"), "{masked}");
+        assert!(masked.contains("(401)"), "the diagnosis survived: {masked}");
+    }
+
+    #[test]
+    fn ordinary_log_lines_are_left_alone() {
+        // Masking is display-only, so a false positive costs real information:
+        // a turn id, a token count and a commit sha all stay readable.
+        let none: Vec<String> = Vec::new();
+        for line in [
+            r#"{"type":"turn.completed","usage":{"input_tokens":2050,"output_tokens":2}}"#,
+            r#"{"sha":"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"}"#,
+            "no secrets are logged here",
+            "reading token counts from turn.completed",
+            "héllo wörld — ünchanged",
+        ] {
+            assert_eq!(redact_for_display(line, &none), line, "changed: {line}");
+        }
+    }
+
+    #[test]
+    fn redaction_survives_non_ascii_around_the_secret() {
+        let none: Vec<String> = Vec::new();
+        let masked = redact_for_display("clé — secret: abcdef123456 — fin", &none);
+        assert!(masked.contains("clé"), "text before kept: {masked}");
+        assert!(masked.contains("fin"), "text after kept: {masked}");
+        assert!(!masked.contains("abcdef123456"), "value masked: {masked}");
     }
 
     #[test]
