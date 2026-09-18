@@ -58,6 +58,43 @@ class ArgumentTests(unittest.TestCase):
         )
         self.assertEqual(cleaned, {"cmd": "echo hi", "tty": True})
 
+    def test_arguments_that_cannot_match_the_schema_are_dropped(self):
+        # llama3.2:3b sent `"prefix_rule": ""` where exec_command declares an
+        # array, and the call died with 'invalid type: string "", expected a
+        # sequence' before anything ran. The tool's own schema is in the request,
+        # so the guess can be dropped instead of failing the call.
+        schema = {
+            "type": "object",
+            "properties": {
+                "cmd": {"type": "string"},
+                "yield_time_ms": {"type": "integer"},
+                "prefix_rule": {"type": ["array", "null"]},
+            },
+        }
+        cleaned = json.loads(
+            adapter.clean_arguments(
+                '{"cmd": "echo hi", "yield_time_ms": null, "prefix_rule": ""}', schema
+            )
+        )
+        self.assertEqual(cleaned, {"cmd": "echo hi"})
+
+    def test_unknown_arguments_survive_unless_the_schema_forbids_them(self):
+        permissive = {"properties": {"cmd": {"type": "string"}}}
+        self.assertEqual(
+            json.loads(adapter.clean_arguments('{"cmd":"x","extra":1}', permissive)),
+            {"cmd": "x", "extra": 1},
+        )
+        strict = {"properties": {"cmd": {"type": "string"}}, "additionalProperties": False}
+        self.assertEqual(
+            json.loads(adapter.clean_arguments('{"cmd":"x","extra":1}', strict)), {"cmd": "x"}
+        )
+
+    def test_a_boolean_is_not_accepted_where_a_number_was_asked_for(self):
+        # `True` is an `int` in Python, so this needs saying explicitly.
+        schema = {"properties": {"n": {"type": "integer"}}}
+        self.assertEqual(json.loads(adapter.clean_arguments('{"n": true}', schema)), {})
+        self.assertEqual(json.loads(adapter.clean_arguments('{"n": 3}', schema)), {"n": 3})
+
     def test_unparseable_arguments_pass_through_so_the_error_survives(self):
         broken = '{"cmd": "echo hi"'
         self.assertEqual(adapter.clean_arguments(broken), broken)

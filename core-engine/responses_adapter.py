@@ -98,14 +98,32 @@ def as_object(raw):
     return {}
 
 
-def clean_arguments(raw) -> str:
-    """Tool arguments as a JSON string, with explicit nulls dropped.
+# JSON Schema type name -> the Python type an instance must have to be valid.
+_SCHEMA_TYPES = {
+    "array": list,
+    "object": dict,
+    "string": str,
+    "boolean": bool,
+    "integer": int,
+    "number": (int, float),
+}
 
-    Small local models routinely emit `"yield_time_ms": null` for optional numeric
-    fields, and Codex's own tool schema wants a u64 there, so the call is rejected
-    outright ("invalid type: null, expected u64") even though the model meant "use
-    the default". Dropping nulls is what it meant. Anything unparseable is passed
-    through untouched so the real error stays visible.
+
+def clean_arguments(raw, schema=None) -> str:
+    """Tool arguments as a JSON string, with the model's guesses removed.
+
+    Small local models do not leave optional fields alone. They fill them with
+    something shaped like a value, and Codex's own tool schemas are strict, so the
+    call is rejected outright before anything runs:
+
+        "yield_time_ms": null        -> "invalid type: null, expected u64"
+        "prefix_rule": ""            -> "invalid type: string \"\", expected a sequence"
+
+    Both are the model saying "use the default" in a way the schema cannot accept.
+    The tool's own `parameters` is right here in the request, so an argument that
+    cannot possibly be valid for its declared type is dropped rather than passed
+    on to fail — that is what the model meant. Anything unparseable is left
+    untouched so the real error stays visible.
     """
     if isinstance(raw, str):
         try:
@@ -116,9 +134,39 @@ def clean_arguments(raw) -> str:
         return "{}"
     else:
         parsed = raw
-    if isinstance(parsed, dict):
-        parsed = {key: value for key, value in parsed.items() if value is not None}
-    return json.dumps(parsed)
+    if not isinstance(parsed, dict):
+        return json.dumps(parsed)
+
+    schema = schema if isinstance(schema, dict) else {}
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    strict = schema.get("additionalProperties") is False
+
+    cleaned = {}
+    for key, value in parsed.items():
+        if value is None:
+            continue
+        declared = properties.get(key)
+        if declared is None:
+            # Not in the schema: only dropped when the schema says extras are not
+            # allowed, which is exactly when it would fail.
+            if not strict:
+                cleaned[key] = value
+            continue
+        declared_type = declared.get("type") if isinstance(declared, dict) else None
+        # Codex writes nullable fields as `["array", "null"]`; the non-null arm is
+        # the one that says what a value would have to look like.
+        if isinstance(declared_type, list):
+            declared_type = next((part for part in declared_type if part != "null"), None)
+        want = _SCHEMA_TYPES.get(declared_type) if isinstance(declared_type, str) else None
+        if want is not None:
+            # `True` is an `int` in Python; a boolean where a number was asked for
+            # is a guess, not a number.
+            if isinstance(value, bool) and want is not bool:
+                continue
+            if not isinstance(value, want):
+                continue
+        cleaned[key] = value
+    return json.dumps(cleaned)
 
 
 def text_of(content) -> str:
@@ -268,6 +316,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         model = body.get("model") or "llama3.2:3b"
         stream = bool(body.get("stream", True))
+        # name -> declared parameters, so a tool call can be checked against the
+        # schema the model was actually given.
+        schemas = {
+            tool.get("name"): tool.get("parameters")
+            for tool in (body.get("tools") or [])
+            if isinstance(tool, dict) and tool.get("type") == "function" and tool.get("name")
+        }
         chat_body = {
             "model": model,
             "messages": chat_messages(body),
@@ -279,12 +334,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         log("request", model, len(chat_body["messages"]), "messages,", len(tools), "tools")
 
         if not stream:
-            self._respond_once(chat_body, model)
+            self._respond_once(chat_body, model, schemas)
             return
-        self._respond_stream(chat_body, model)
+        self._respond_stream(chat_body, model, schemas)
 
     # ── non-streaming ───────────────────────────────────────────────────────
-    def _respond_once(self, chat_body: dict, model: str) -> None:
+    def _respond_once(self, chat_body: dict, model: str, schemas: dict) -> None:
         payload = dict(chat_body, stream=False)
         try:
             result = self._ollama_chat(payload, stream=False)
@@ -293,7 +348,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         resp_id = new_id("resp")
         message = (result or {}).get("message") or {}
-        output, _ = self._output_items(message, resp_id, 0)
+        output, _ = self._output_items(message, resp_id, 0, schemas)
         body = json.dumps(envelope(resp_id, model, "completed", output)).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -302,7 +357,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     # ── streaming ───────────────────────────────────────────────────────────
-    def _respond_stream(self, chat_body: dict, model: str) -> None:
+    def _respond_stream(self, chat_body: dict, model: str, schemas: dict) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -356,7 +411,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     )
                 calls = message.get("tool_calls") or []
                 if calls:
-                    self._emit_tool_calls(calls, output_index=1, send=send, resp_id=resp_id)
+                    self._emit_tool_calls(calls, output_index=1, send=send, resp_id=resp_id, schemas=schemas)
         except Exception as error:  # noqa: BLE001 - surfaced as a failed response
             log("stream failed:", error)
             send("response.failed", {"response": envelope(resp_id, model, "failed", [])})
@@ -422,11 +477,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         send("response.completed", {"response": envelope(resp_id, model, "completed", finished, usage)})
         self._chunk(b"")
 
-    def _emit_tool_calls(self, calls, output_index: int, send, resp_id: str) -> None:
+    def _emit_tool_calls(self, calls, output_index: int, send, resp_id: str, schemas: dict) -> None:
         for call in calls:
             fn = call.get("function") or {}
             name = fn.get("name") or ""
-            arguments = clean_arguments(fn.get("arguments"))
+            arguments = clean_arguments(fn.get("arguments"), schemas.get(name))
             call_id = call.get("id") or new_id("call")
             item_id = new_id("fc")
             send(
@@ -463,7 +518,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._pending_calls.append(done)
             output_index += 1
 
-    def _output_items(self, message: dict, resp_id: str, index: int):
+    def _output_items(self, message: dict, resp_id: str, index: int, schemas: dict):
         items = []
         text = message.get("content") or ""
         if text:
@@ -478,7 +533,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
         for call in message.get("tool_calls") or []:
             fn = call.get("function") or {}
-            args = clean_arguments(fn.get("arguments"))
+            args = clean_arguments(fn.get("arguments"), schemas.get(fn.get("name")))
             items.append(
                 {
                     "arguments": args,

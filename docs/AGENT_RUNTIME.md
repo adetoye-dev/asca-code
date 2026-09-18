@@ -209,10 +209,10 @@ Still open before this becomes the default:
   below the fold
 - **`--listen` also supports `unix://` and `ws://`**, and there is a `daemon`
   subcommand for a shared instance — neither is used
-- **local models cannot act.** See the section below — this is the biggest thing
-  standing between this app and cheap local delegation, and it is not our bug.
+- **the local tool adapter is a process to look after** — it is started on demand
+  and reused per provider, but nothing restarts it if it dies mid-run.
 
-## Local models cannot call tools, and why
+## Local models and tools: why this adapter exists
 
 An agent run on a local model reads and replies but never edits a file or runs a
 command. It looks like a broken agent; it is an upstream shape mismatch. Measured,
@@ -235,11 +235,29 @@ not guessed:
    `qwen2.5-coder:1.5b` or `:7b` — those models cannot tool-call at all, which is
    a second, independent reason to try a tool-trained model.)
 
-So the break is the Responses shim, not the model and not us. The fix is a small
-local adapter: speak `/v1/responses` to the runtime, proxy to Ollama's
-`/api/chat`, and translate `tool_calls` back into Responses items. Everything
-needed to build it is in the four points above. Until then, agent mode belongs on
-a hosted provider and local models belong in chat.
+So the break is the Responses shim, not the model and not us — and it is now
+fixed by **`core-engine/responses_adapter.py`**: it speaks `/v1/responses` to the
+runtime, proxies to Ollama's `/api/chat`, and translates tool calls and results
+both ways. Stdlib only, reached as `acsa-engine adapter --port N`.
 
-`tests::a_real_approval_is_answered_and_the_turn_continues` is the reproducer: it
-asks a local model to run a command and reports that no approval ever arrived.
+Verified through that entry point, with no API key set: with a provider table
+pointed at the adapter and `llama3.2:3b` as the model,
+`codex exec "Run the shell command: echo adapter-e2e-ok"` returned
+`item.completed command_execution … aggregated_output: "adapter-e2e-ok\n",
+exit_code: 0`. Ollama's `prompt_eval_count` / `eval_count` come back as Responses
+usage, so local runs report real tokens.
+
+Two shapes cost the most time and are asserted in `tests/test_responses_adapter.py`:
+Ollama wants tool-call `arguments` as an **object** (the Responses string is a 400,
+"Value looks like object, but can't find closing '}'"), and small models fill
+optional fields with guesses the runtime's strict schemas reject
+(`"yield_time_ms": null` → "expected u64"; `"prefix_rule": ""` → "expected a
+sequence"). The tool's own `parameters` is in the request, so an argument that
+cannot match its declared type is dropped rather than forwarded to fail.
+
+The app wires this in `usePipeline.ts`: a local provider starts the adapter and
+gets a normal `[model_providers.acsa-local]` table (not `ollama` — that id is
+reserved and cannot be overridden), with no `env_key` because a local runtime has
+no credential. If the adapter cannot start, the run falls back to the runtime's
+own `--oss --local-provider` path and says so in the OUTPUT panel, because that
+path reaches the model but cannot run tools.

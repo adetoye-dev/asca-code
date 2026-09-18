@@ -2048,6 +2048,118 @@ async fn agent_interrupt(
     Ok(())
 }
 
+/// A local-model tool adapter, if one is running.
+///
+/// It speaks the Responses API to the runtime and Ollama's native `/api/chat` to
+/// the model. That indirection is the whole point: the runtime requires
+/// `wire_api = "responses"`, and Ollama's implementation of that accepts `tools`
+/// and ignores them — which is why a local model used to read and reply and
+/// never act.
+#[derive(Default)]
+pub struct LocalAdapterState {
+    server: std::sync::Mutex<Option<LocalAdapter>>,
+}
+
+struct LocalAdapter {
+    child: std::process::Child,
+    port: u16,
+    provider_id: String,
+}
+
+/// A port nothing is listening on, offered by the OS and released for the child.
+fn free_local_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|listener| listener.local_addr().ok())
+        .map(|addr| addr.port())
+}
+
+/// Start (or reuse) the adapter for one provider and return its Responses base URL.
+#[tauri::command]
+async fn local_adapter_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, LocalAdapterState>,
+    provider_id: String,
+) -> Result<String, String> {
+    {
+        let guard = state.server.lock().map_err(|e| e.to_string())?;
+        if let Some(existing) = guard.as_ref() {
+            if existing.provider_id == provider_id {
+                return Ok(format!("http://127.0.0.1:{}/v1", existing.port));
+            }
+        }
+    }
+    {
+        let mut guard = state.server.lock().map_err(|e| e.to_string())?;
+        if let Some(mut previous) = guard.take() {
+            let _ = previous.child.kill();
+            let _ = previous.child.wait();
+        }
+    }
+
+    let port = free_local_port().ok_or("could not find a free local port")?;
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut args) = engine_invocation(resource_dir.as_deref(), "adapter");
+    args.push("--port".to_string());
+    args.push(port.to_string());
+
+    let mut child = Command::new(&program)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        // Discarded rather than piped: nothing drains a piped stderr, and a full
+        // pipe buffer would block the adapter mid-turn.
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "could not start the local tool adapter ({}): {}",
+                program.display(),
+                e
+            )
+        })?;
+
+    // Wait until it accepts connections. Without this the first turn races the
+    // listener and dies with a connection error that reads like a provider fault.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!(
+                "the local tool adapter exited before it was ready ({})",
+                status
+            ));
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            return Err("the local tool adapter did not start within 20s".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+
+    let url = format!("http://127.0.0.1:{}/v1", port);
+    let mut guard = state.server.lock().map_err(|e| e.to_string())?;
+    *guard = Some(LocalAdapter {
+        child,
+        port,
+        provider_id,
+    });
+    Ok(url)
+}
+
+/// Stop the adapter. Safe to call when none is running.
+#[tauri::command]
+fn local_adapter_stop(state: State<'_, LocalAdapterState>) -> Result<(), String> {
+    let mut guard = state.server.lock().map_err(|e| e.to_string())?;
+    if let Some(mut adapter) = guard.take() {
+        let _ = adapter.child.kill();
+        let _ = adapter.child.wait();
+    }
+    Ok(())
+}
+
 /// End the session entirely.
 #[tauri::command]
 fn agent_stop(state: State<'_, AgentState>) -> Result<(), String> {
@@ -2248,6 +2360,7 @@ fn main() {
         .manage(ChatState::new())
         .manage(OllamaState::new())
         .manage(AgentState::default())
+        .manage(LocalAdapterState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -2278,6 +2391,8 @@ fn main() {
             agent_respond,
             agent_interrupt,
             agent_stop,
+            local_adapter_start,
+            local_adapter_stop,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

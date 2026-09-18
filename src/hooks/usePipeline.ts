@@ -34,6 +34,31 @@ import {
 } from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
 
+/**
+ * The provider id a local run uses once the tool adapter is in front of it.
+ *
+ * It cannot be `ollama`: that id is built into the runtime, and a
+ * `[model_providers.ollama]` table is a hard config error ("Built-in providers
+ * cannot be overridden").
+ */
+const LOCAL_ADAPTER_PROVIDER_ID = "acsa-local";
+
+/**
+ * Start the local-model tool adapter and return its Responses base URL.
+ *
+ * Best effort by design: a build without the adapter still runs, just without
+ * tool calls, and the caller logs which of the two happened.
+ */
+async function startLocalToolAdapter(providerId: string): Promise<string | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const url = await invoke<string>("local_adapter_start", { providerId });
+    return typeof url === "string" && url.startsWith("http") ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 
 /**
  * Run an agent task on Codex, when its runtime is present.
@@ -106,31 +131,43 @@ async function runAgent(params: {
   // default routes them through the automatic reviewer instead. Verified against the
   // binary: `on-request` + `auto_review` completes tool calls that `never` refuses.
   //
-  // A local runtime is different: Ollama speaks OpenAI-compatible
-  // `/v1/chat/completions`, not the Responses API, so a `model_providers` table with
-  // `wire_api = "responses"` cannot reach it at all. Those runs go through the
-  // runtime's own local-provider switch instead, and get no provider table.
+  // A local runtime needs help that a hosted one does not. Ollama's Responses
+  // API accepts `tools` and drops them, so a local model reads and replies and
+  // never acts. The adapter speaks Responses to the runtime and Ollama's native
+  // `/api/chat` to the model, which is where tool calls actually work.
   const localProvider = localProviderFor(providerId);
-  // A local provider in agent mode does nothing observable — say why, up front,
-  // rather than let an empty run look like a broken agent.
-  {
+  const adapterBaseUrl = localProvider ? await startLocalToolAdapter(providerId) : null;
+  if (adapterBaseUrl) {
+    params.log(`[agent] local models run through the tool adapter at ${adapterBaseUrl}`);
+  } else {
+    // No adapter: fall back to the runtime's own local-provider switch, which
+    // reaches the model but cannot run tools. Say so rather than let an empty run
+    // look like a broken agent.
     const note = localToolCallingNote(providerId);
     if (note) params.log(note);
   }
+  // With the adapter the provider is a plain Responses endpoint, so it gets a
+  // table like any hosted provider — under a name of its own, because `ollama`
+  // is reserved and cannot be overridden.
+  const runtimeProviderId = adapterBaseUrl ? LOCAL_ADAPTER_PROVIDER_ID : providerId;
+  const runtimeBaseUrl = adapterBaseUrl ?? provider.baseUrl;
+  const runtimeProviderName = adapterBaseUrl ? "Local models (ACSA tool adapter)" : provider.name || providerId;
   const configToml = [
     `model = "${model}"`,
-    ...(localProvider ? [] : [`model_provider = "${providerId}"`]),
+    ...(localProvider && !adapterBaseUrl ? [] : [`model_provider = "${runtimeProviderId}"`]),
     `approval_policy = "${approval.approvalPolicy}"`,
     `approvals_reviewer = "${approval.approvalsReviewer}"`,
     `sandbox_mode = "${approval.sandboxMode}"`,
-    ...(localProvider
+    ...(localProvider && !adapterBaseUrl
       ? []
       : [
           "",
-          `[model_providers.${providerId}]`,
-          `name = "${provider.name || providerId}"`,
-          `base_url = "${provider.baseUrl}"`,
-          'env_key = "ACSA_CODEX_API_KEY"',
+          `[model_providers.${runtimeProviderId}]`,
+          `name = "${runtimeProviderName}"`,
+          `base_url = "${runtimeBaseUrl}"`,
+          // A local runtime has no credential, and `env_key` naming a variable
+          // that is not set is a startup failure. Hosted providers still get it.
+          ...(adapterBaseUrl ? [] : ['env_key = "ACSA_CODEX_API_KEY"']),
           'wire_api = "responses"',
         ]),
   ].join("\n");
@@ -218,7 +255,8 @@ async function runAgent(params: {
       prompt: params.prompt,
       projectRoot: params.projectRoot,
       configToml: configToml + mcpToml,
-      providerId,
+      // Same id the exec path uses, so both transports reach the same provider.
+      providerId: runtimeProviderId,
       catalogJson,
       model,
       approvalMode: params.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
@@ -322,10 +360,13 @@ async function runAgent(params: {
         prompt: params.prompt,
         projectRoot: params.projectRoot,
         configToml: configToml + mcpToml,
-        providerId,
+        // The id the *runtime* sees. With the adapter it is a normal Responses
+        // provider, so the runtime's own `--oss` local-provider switch must not
+        // also fire — `localProvider: null` is what stops it.
+        providerId: runtimeProviderId,
         catalogJson,
         model,
-        localProvider,
+        localProvider: adapterBaseUrl ? null : localProvider,
         resumeThreadId: params.resumeThreadId,
         images: params.images ?? [],
       });
