@@ -729,7 +729,7 @@ export function AiAssistantChat({
         ref={modelMenuRef}
         className={`absolute ${
           isCenterHero ? "top-full mt-2 left-0 max-w-[calc(100vw-2rem)]" : "bottom-full mb-1.5 right-0 max-w-[calc(100%-0.5rem)]"
-        } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col text-left`}
+        } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-popover flex flex-col text-left`}
       >
         <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-800/80 shrink-0">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider font-mono">
@@ -835,7 +835,7 @@ export function AiAssistantChat({
     <div
       className={`absolute ${
         isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
-      } w-60 max-w-[calc(100vw-1.5rem)] bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
+      } w-60 max-w-[calc(100vw-1.5rem)] bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-popover space-y-1 text-left`}
     >
       {/* Option 1: Agent (Default) */}
       <button
@@ -920,7 +920,7 @@ export function AiAssistantChat({
     <div
       className={`absolute ${
         isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
-      } w-52 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-0.5 text-left animate-in fade-in-0 zoom-in-95 duration-100`}
+      } w-52 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-popover space-y-0.5 text-left animate-in fade-in-0 zoom-in-95 duration-100`}
     >
       <div className="px-2.5 py-1.5 text-[11px] font-semibold text-zinc-400 select-none">
         Add Context

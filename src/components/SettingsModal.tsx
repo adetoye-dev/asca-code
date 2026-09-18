@@ -418,7 +418,7 @@ export function SettingsModal({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose?.();
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
     >
       {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div

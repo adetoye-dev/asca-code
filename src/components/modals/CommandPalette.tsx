@@ -122,7 +122,7 @@ export function CommandPalette({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-start justify-center pt-[10vh] p-4 select-none"
+      className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-start justify-center pt-[10vh] p-4 select-none"
     >
       <div
         role="dialog"

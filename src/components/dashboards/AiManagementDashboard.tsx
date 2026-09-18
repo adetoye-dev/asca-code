@@ -699,7 +699,7 @@ export function AiManagementDashboard({
                                   {/* Backdrop to dismiss when clicking outside */}
                                   <div
                                     role="presentation"
-                                    className="fixed inset-0 z-40"
+                                    className="fixed inset-0 z-scrim"
                                     onClick={() => setOpenSpecsModelTag(null)}
                                   />
 
@@ -707,7 +707,7 @@ export function AiManagementDashboard({
                                   <div
                                     role="dialog"
                                     aria-label="Model specification"
-                                    className={`absolute z-50 bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
+                                    className={`absolute z-popover bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
                                       index % 2 === 1
                                         ? "sm:right-3.5 sm:left-auto left-3.5"
                                         : "left-3.5"

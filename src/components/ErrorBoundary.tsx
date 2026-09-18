@@ -66,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-sans text-zinc-200 select-none">
+        <div className="fixed inset-0 z-critical flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-sans text-zinc-200 select-none">
           <div className="w-[620px] max-w-[95vw] rounded-xl bg-workbench border border-hairline/40 shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col">
             {/* Header */}
             <div className="h-11 bg-workbench border-b border-hairline px-4 flex items-center justify-between">

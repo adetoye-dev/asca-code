@@ -90,7 +90,7 @@ export function BottomPanel({
       <div
         role="presentation"
         onMouseDown={handleMouseDown}
-        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-zinc-600/40 transition-colors z-20"
+        className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-zinc-600/40 transition-colors z-dock"
         title="Drag to resize bottom panel"
       />
 

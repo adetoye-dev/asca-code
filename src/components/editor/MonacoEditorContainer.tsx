@@ -739,7 +739,7 @@ export function MonacoEditorContainer({
   return (
     <div className="relative h-full w-full bg-workbench overflow-hidden">
       {/* ── AI Review Controls ──────────────────────────────────────── */}
-      <div className="absolute top-2 right-3 z-40 flex items-center gap-2">
+      <div className="absolute top-2 right-3 z-raised flex items-center gap-2">
         <button
           type="button"
           onClick={handleReviewFile}
@@ -795,7 +795,7 @@ export function MonacoEditorContainer({
       {/* ── Review status (errors / notes) ───────────────────────── */}
       {(reviewError || reviewNote) && (
         <div
-          className={`absolute top-11 right-3 z-40 max-w-[320px] px-2.5 py-1.5 rounded-md text-[11px] leading-snug backdrop-blur-sm border ${
+          className={`absolute top-11 right-3 z-editor max-w-[320px] px-2.5 py-1.5 rounded-md text-[11px] leading-snug backdrop-blur-sm border ${
             reviewError
               ? "bg-red-500/10 border-red-500/30 text-red-300"
               : "bg-amber-500/10 border-amber-500/30 text-amber-300"
@@ -906,12 +906,12 @@ export function MonacoEditorContainer({
 
       {/* Click-away backdrop so the inline prompt can always be dismissed */}
       {isInlinePromptOpen && (
-        <div role="presentation" className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
+        <div role="presentation" className="absolute inset-0 z-raised" onMouseDown={closeInlinePrompt} />
       )}
 
       {/* Floating Cmd+K Inline Edit Overlay */}
       {isInlinePromptOpen && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-editor animate-in fade-in-0 zoom-in-95 duration-150">
           <div className="flex items-center justify-between mb-1.5 px-1">
             <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
               <span>✨</span>

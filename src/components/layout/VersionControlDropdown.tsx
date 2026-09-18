@@ -263,7 +263,7 @@ export function VersionControlDropdown({
 
       {/* ── Dropdown Window (Concentric R_outer = 12px, P = 4px, R_item = 8px) ── */}
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-50 p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1.5 backdrop-blur-xl font-sans">
+        <div className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-popover p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1.5 backdrop-blur-xl font-sans">
           {/* Header Info */}
           <div className="flex items-center justify-between p-2 pb-1.5 border-b border-hairline">
             <div className="flex items-center gap-1.5">

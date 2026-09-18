@@ -276,7 +276,7 @@ export function CodeMapGraph({
       {hover && (
         <div
           ref={tooltipRef}
-          className="pointer-events-none absolute left-0 top-0 z-10 max-w-[300px] rounded-lg border border-zinc-700/80 bg-[#16161a]/95 px-2.5 py-2 shadow-xl backdrop-blur-sm"
+          className="pointer-events-none absolute left-0 top-0 z-raised max-w-[300px] rounded-lg border border-zinc-700/80 bg-[#16161a]/95 px-2.5 py-2 shadow-xl backdrop-blur-sm"
         >
           <div className="flex items-center gap-1.5">
             <span

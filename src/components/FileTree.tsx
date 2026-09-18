@@ -576,7 +576,7 @@ export function FileTree({
         <div
           role="presentation"
           style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
-          className="fixed z-50 min-w-[170px] bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-2xl p-1 text-xs text-zinc-200 animate-in fade-in zoom-in-95 duration-75 select-none font-sans"
+          className="fixed z-popover min-w-[170px] bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-2xl p-1 text-xs text-zinc-200 animate-in fade-in zoom-in-95 duration-75 select-none font-sans"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-2.5 py-1 text-[11px] text-zinc-400 font-mono truncate border-b border-white/5 mb-1 max-w-[200px]">

@@ -250,7 +250,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
   return (
     <div className="flex flex-col h-full w-full bg-workbench text-zinc-200 select-none font-sans overflow-hidden">
       {/* Toolbar */}
-      <div className="flex-none px-3.5 py-2 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between gap-3 z-10">
+      <div className="flex-none px-3.5 py-2 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between gap-3 z-raised">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="p-1 rounded-md bg-zinc-800 border border-zinc-700/60 text-zinc-300 shrink-0">
             <Icon icon={ImageIcon} className="w-3.5 h-3.5" />

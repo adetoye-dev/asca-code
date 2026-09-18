@@ -59,6 +59,28 @@ export default {
         accent: "var(--text-accent)",
         "primary-icon": "var(--text-primary-icon)",
       },
+      /**
+       * One ordinal scale for everything that stacks.
+       *
+       * Every one of these used to be `z-50` — the full-page dashboards, the
+       * titlebar dropdowns, the chat menus and every modal — so which element won
+       * came down to DOM order. A dropdown in the titlebar lost to a dashboard
+       * panel rendered later, and got clipped by it. Named layers answer the
+       * question once: a popover is always above an overlay, a modal above both.
+       */
+      zIndex: {
+        raised: "10",   // in-flow but lifted: chat dock, editor toolbar
+        editor: "15",   // surfaces *inside* an editor pane: inline prompt, review
+                        // note. Deliberately below `overlay`, so a full-page
+                        // dashboard covers them instead of having them float on top.
+        dock: "20",
+        overlay: "30",  // full-page dashboards, covering the editor only
+        scrim: "35",    // the click-catcher behind an open popover
+        popover: "40",  // dropdowns, menus, context menus
+        modal: "50",    // dialogs and their backdrops
+        toast: "60",    // transient notices
+        critical: "70", // error boundary, setup wizard
+      },
       borderRadius: {
         pill: "var(--radius-xl)",
         dropdown: "var(--dropdown-radius-outer)",

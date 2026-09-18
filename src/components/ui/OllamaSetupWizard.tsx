@@ -555,7 +555,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
   if (!asModal) return inner;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-critical flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       {inner}
     </div>
   );
@@ -589,7 +589,7 @@ interface OllamaBannerProps {
 
 export function OllamaNotRunningBanner({ onOpenSetup, onDismiss }: OllamaBannerProps) {
   return (
-    <div className="fixed bottom-6 right-6 z-[9000] flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
+    <div className="fixed bottom-6 right-6 z-toast flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
       <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-white truncate">No AI model is configured</p>

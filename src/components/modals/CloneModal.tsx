@@ -89,7 +89,7 @@ export function CloneModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
+    <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
       <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 p-5 space-y-4 text-xs text-zinc-200">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800">

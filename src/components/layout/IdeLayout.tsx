@@ -1205,7 +1205,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       {/* ── Main Workbench Body ──────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden relative">
         {/* Activity Bar (VS Code Vertical Strip) */}
-        <aside className="w-11 bg-[var(--vscode-activitybar-bg)] border-r border-[var(--vscode-border)] flex flex-col items-center py-2 gap-2.5 shrink-0 z-10">
+        <aside className="w-11 bg-[var(--vscode-activitybar-bg)] border-r border-[var(--vscode-border)] flex flex-col items-center py-2 gap-2.5 shrink-0 z-raised">
           {/* Explorer Tab */}
           <button
             type="button"
@@ -1391,7 +1391,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <div
             role="presentation"
             onMouseDown={startResizingSidebar}
-            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-20 select-none ${
+            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-dock select-none ${
               isResizingSidebar ? "bg-zinc-500" : ""
             }`}
             title="Drag to resize sidebar"
@@ -1438,11 +1438,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
             {/* Full-Canvas AI Assistant — a true overlay with no dockview tab
                 chrome. Only one assistant surface is ever mounted: opening this
-                closes the side dock and vice versa. z-50 keeps it above the
-                editor's own floating chrome (Review button etc.); global modals
-                render later in the DOM at the same level, so they stay on top. */}
+                closes the side dock and vice versa. `z-overlay` keeps it above the
+                editor's own floating chrome (Review button etc.) and — deliberately —
+                *below* `z-popover`, so a titlebar dropdown still lands on top of it
+                rather than being clipped by it. */}
             {isCenterChatOpen && (
-              <div className="absolute inset-0 z-50 bg-[#141416]">
+              <div className="absolute inset-0 z-overlay bg-[#141416]">
                 <AiAssistantChat {...centerChatProps} />
               </div>
             )}
@@ -1450,7 +1451,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             {/* Full-page surfaces (Host Health, AI Models, Code Map). Rendered
                 as overlays for the same reason as the chat: no tab chrome. */}
             {fullPage && (
-              <div className="absolute inset-0 z-50 bg-[#141416] flex flex-col">
+              <div className="absolute inset-0 z-overlay bg-[#141416] flex flex-col">
                 <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
                   <div className="flex items-center gap-2">
                     <Icon icon={FULL_PAGE_ICONS[fullPage]} className="w-4 h-4 text-zinc-300" />
@@ -1534,7 +1535,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
         {isRightPanelOpen && (
-          <aside className="w-[clamp(300px,30vw,520px)] max-w-[48%] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
+          <aside className="w-[clamp(300px,30vw,520px)] max-w-[48%] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-raised shadow-2xl">
             <AiAssistantChat
               prompt={prompt}
               setPrompt={setPrompt}

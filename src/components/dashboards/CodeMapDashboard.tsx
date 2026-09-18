@@ -874,7 +874,7 @@ export function CodeMapDashboard({
             </div>
 
             {selectedFile && (
-              <div className="absolute top-3 right-3 bottom-3 w-[clamp(240px,28%,340px)] z-10 overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
+              <div className="absolute top-3 right-3 bottom-3 w-[clamp(240px,28%,340px)] z-popover overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
                 {detailsPane}
               </div>
             )}
@@ -911,7 +911,7 @@ function Chip({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wide text-zinc-500 sticky top-0 bg-canvas/95 backdrop-blur-sm z-10">
+    <div className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wide text-zinc-500 sticky top-0 bg-canvas/95 backdrop-blur-sm z-popover">
       {children}
     </div>
   );
