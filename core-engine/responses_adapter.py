@@ -188,57 +188,82 @@ def _might_be_a_tool_call(text: str) -> bool:
     return False
 
 
+def _json_objects(text: str):
+    """Every balanced `{...}` span, outermost first.
+
+    Brace matching with a string/escape guard, so a `}` inside a command string
+    does not end the object early.
+    """
+    depth = 0
+    start = None
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    yield text[start : index + 1]
+                    start = None
+
+
 def tool_call_from_text(text: str, schemas: dict):
     """Recover a tool call that a model wrote as text.
 
     Not every local model can emit native tool calls. `qwen2.5-coder` and
-    `deepseek-coder` answer with the call as JSON in the message body, which the
-    runtime then shows as prose and never executes — measured, that is exactly
-    what they do. When the whole answer is one object naming a tool this request
-    actually offered, it is that call.
+    `deepseek-coder` answer with the call as JSON in the message body — and often
+    with a sentence in front of it, "Here is the command you should run:" — which
+    the runtime then shows as prose and never executes. Measured, both ways.
 
-    Deliberately strict, because the alternative is worse than not trying: the
-    entire trimmed text must be a single JSON object, the name must match an
-    offered tool, and the arguments must be an object. A chatty answer that merely
-    mentions a tool is never rewritten into one.
+    So any balanced JSON object in the answer is a candidate, and it counts only
+    if it names a tool this request actually offered with an object of arguments.
+    That gate is what makes searching the whole answer safe: the name has to be
+    one of a handful of tools the runtime just advertised, so prose that merely
+    mentions a tool is not rewritten into one.
     """
     if not schemas:
         return None
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped[3:]
-        if stripped[:4].lower() == "json":
-            stripped = stripped[4:]
-        stripped = stripped.strip()
-        if stripped.endswith("```"):
-            stripped = stripped[:-3].strip()
-    if not stripped.startswith("{"):
-        return None
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-
-    inner = parsed.get("function") if isinstance(parsed.get("function"), dict) else {}
-    name = parsed.get("name") or inner.get("name") or parsed.get("tool")
-    if not isinstance(name, str) or name not in schemas:
-        return None
-
-    arguments = parsed.get("arguments")
-    if arguments is None:
-        arguments = inner.get("arguments")
-    if arguments is None:
-        arguments = parsed.get("parameters")
-    if isinstance(arguments, str):
+    for candidate in _json_objects(text):
         try:
-            arguments = json.loads(arguments)
+            parsed = json.loads(candidate)
         except json.JSONDecodeError:
-            return None
-    if not isinstance(arguments, dict):
-        return None
-    return name, arguments
+            continue
+        if not isinstance(parsed, dict):
+            continue
+
+        inner = parsed.get("function") if isinstance(parsed.get("function"), dict) else {}
+        name = parsed.get("name") or inner.get("name") or parsed.get("tool")
+        if not isinstance(name, str) or name not in schemas:
+            continue
+
+        arguments = parsed.get("arguments")
+        if arguments is None:
+            arguments = inner.get("arguments")
+        if arguments is None:
+            arguments = parsed.get("parameters")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(arguments, dict):
+            continue
+        return name, arguments
+    return None
 
 
 def text_of(content) -> str:

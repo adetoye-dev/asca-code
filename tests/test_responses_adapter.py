@@ -125,10 +125,39 @@ class RecoveredToolCallTests(unittest.TestCase):
         )
         self.assertEqual(recovered, ("exec_command", {"cmd": "ls"}))
 
-    def test_chatty_prose_is_never_rewritten(self):
+    def test_a_call_with_a_sentence_in_front_is_still_recovered(self):
+        # The observed shape that started this: `qwen2.5-coder:7b` answers the
+        # request to run curl with a preamble, then the call in a fence. Requiring
+        # the whole answer to be JSON missed it and the command never ran.
+        text = (
+            "To execute the shell command, you can use the following approach:\n"
+            "1. Run the command with escalated permissions\n"
+            "Here is the command you should run: ```json\n"
+            '{"name": "exec_command", "arguments": {"cmd": "curl -sS https://example.com"}}\n'
+            "``` This will fetch the data."
+        )
+        self.assertEqual(
+            adapter.tool_call_from_text(text, self.SCHEMAS),
+            ("exec_command", {"cmd": "curl -sS https://example.com"}),
+        )
+
+    def test_a_brace_inside_a_command_does_not_end_the_object(self):
+        # Brace matching has to respect strings, or the candidate is truncated and
+        # a perfectly good call is dropped.
+        text = '{"name": "exec_command", "arguments": {"cmd": "echo \\"}\\" | wc -l"}}'
+        self.assertEqual(
+            adapter.tool_call_from_text(text, self.SCHEMAS),
+            ("exec_command", {"cmd": 'echo "}" | wc -l'}),
+        )
+
+    def test_prose_is_not_rewritten_when_no_offered_tool_is_named(self):
+        # The gate that keeps the search safe: the name must be a tool this request
+        # advertised. Anything else, including JSON that is plainly an answer, is
+        # left as prose.
         for text in (
             "I ran exec_command for you.",
-            'Sure! {"name": "exec_command", "arguments": {"cmd": "ls"}} — that is the call.',
+            'The config is {"name": "my-app", "arguments": {}}.',
+            '{"answer": 42}',
             "",
         ):
             self.assertIsNone(adapter.tool_call_from_text(text, self.SCHEMAS))
