@@ -56,7 +56,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Typecheck | **[done]** | `strict: true`, including the Node-side dev-bridge config. |
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
 | Flake budget | **[done]** | The default suite is deterministic and offline: 92 Python tests plus 12 Rust tests, none of which touch the network. The two real-runtime tests are opt-in and self-skipping, so they cannot flake the build. |
-| Frontend tests | **[open]** | There is no TypeScript test runner at all. Everything in `src/` is covered by typecheck and lint only — the model-picker, layout and z-index work in this repo was verified by driving the running app, not by automation. This is the largest hole in the gate. |
+| Frontend tests | **[partial]** | Vitest runs in `verify` (`npm run test:ui`), covering the services layer: the approval decision vocabulary, the ask-me/app-server rule, the local-provider notes, and the model-registry reconciliation — including the deleted-model bug, which a deliberately broken `syncOllamaModels` fails. Not covered: components. There is no jsdom and no React Testing Library, so nothing renders — the model picker, layout and z-index fixes are still only verified by hand. |
 | Generated-class check | **[open]** | Tailwind dropped 13 utility classes silently because an opacity modifier cannot be applied to a `var()` colour, and nothing said so. A build step that greps the source for `bg-*`/`text-*`/`border-*` and asserts each has a generated rule would catch the next one. |
 
 ## UX & accessibility
@@ -95,9 +95,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 2. **Secret redaction in logs**, then **crash reporting**, so support is possible.
 3. **Auto-update**, once builds are signed and there is a release host.
 4. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-5. **A frontend test runner.** Nothing under `src/` is covered by a test. Every UI
-   fix here — the model picker, the layout pass, the z-index scale — was verified
-   by hand, which does not survive the next change.
+5. **Component tests.** Vitest now covers the services layer; nothing *renders*.
+   The model picker, the layout pass and the z-index scale are still verified by
+   hand, and a render test is what would keep them honest.
 6. **Backup/restore** and **OS keychain** for credentials.
 7. **The manual half of the accessibility audit** — the automated half is in `verify`.
 8. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in; drop the real logo over `.tauri/icon-source.svg` and `public/logos/acsa.svg`.
