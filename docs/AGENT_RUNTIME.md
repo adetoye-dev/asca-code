@@ -164,6 +164,26 @@ fails the runtime's deserialization, so the request is never really answered and
 the turn hangs — this cost a debugging cycle, so the schema is quoted here rather
 than paraphrased.
 
+**Verified live, end to end.** With `ask-me` and a local model, asking for a
+network command rendered the card (`Approval needed`, the command, and the three
+buttons), and clicking *Approve & run* completed the round trip. The OUTPUT panel
+is the evidence:
+
+```
+[agent] local models run through the tool adapter at http://127.0.0.1:54422/v1
+[agent] app-server: thread 01a0b2d5
+[agent] the runtime is asking: item/commandExecution/requestApproval
+[agent] app-server: turn finished in 61s
+```
+
+The turn *finished*. Before the decision string was corrected this same request
+left the turn waiting with no answer, which is what "it just sits there" was.
+
+Note that this can only be exercised on **app-server**. `codex exec` is one-shot
+with no channel to answer on: given the same command it runs it and reports the
+sandbox's refusal rather than asking, which is why `ask-me` selects the other
+transport.
+
 Two more things the schema settles:
 
 - **`turn/interrupt` requires `threadId` *and* `turnId`.** Both are `required`.
