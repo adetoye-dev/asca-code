@@ -482,7 +482,7 @@ export function PerformanceDashboard({
 
   return (
     <div className="h-full w-full overflow-y-auto bg-canvas text-zinc-200 p-4 sm:p-6 lg:p-7 font-sans select-none">
-      <div className="max-w-7xl mx-auto space-y-5">
+      <div className="max-w-[clamp(64rem,92vw,110rem)] mx-auto space-y-5">
 
         {/* ── TOP CONTEXT / RIG METADATA STRIP (Exact Reference Inspiration) ──── */}
         <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-zinc-400 pb-3 border-b border-hairline">

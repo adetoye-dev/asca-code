@@ -245,7 +245,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const delta = moveEvent.clientX - startX;
-      const newWidth = Math.max(180, Math.min(500, startWidth + delta));
+      // Bound by the window as well as a fixed ceiling: 500px is fine on a
+      // desktop and most of a small window.
+      const ceiling = Math.max(180, Math.min(500, Math.round(window.innerWidth * 0.4)));
+      const newWidth = Math.max(180, Math.min(ceiling, startWidth + delta));
       setSidebarWidth(newWidth);
       sidebarWidthRef.current = newWidth;
     };
@@ -1340,7 +1343,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         {/* Primary Sidebar Area */}
         <aside
           style={{ width: isSidebarOpen ? `${sidebarWidth}px` : 0 }}
-          className={`relative border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
+          className={`relative max-w-[40%] border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
             isSidebarOpen ? "" : "hidden"
           }`}
         >
@@ -1494,7 +1497,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     // A centred column rather than the full width: this was a
                     // sidebar, and stretched across a wide monitor its rows read
                     // as a spreadsheet.
-                    <div className="h-full w-full max-w-4xl mx-auto">
+                    <div className="h-full w-full max-w-[clamp(40rem,86vw,90rem)] mx-auto">
                       <MarketplaceSidebar projectRoot={activeProject.path} />
                     </div>
                   )}
@@ -1531,7 +1534,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
         {isRightPanelOpen && (
-          <aside className="w-[410px] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
+          <aside className="w-[clamp(300px,30vw,520px)] max-w-[48%] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
             <AiAssistantChat
               prompt={prompt}
               setPrompt={setPrompt}

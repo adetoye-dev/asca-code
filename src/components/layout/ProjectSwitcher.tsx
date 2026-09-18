@@ -217,7 +217,7 @@ export function ProjectSwitcher({
         </div>
 
         {/* Project Name */}
-        <span className="font-semibold text-[13px] tracking-tight max-w-[140px] truncate text-zinc-100">
+        <span className="font-semibold text-[13px] tracking-tight max-w-[clamp(90px,18vw,240px)] truncate text-zinc-100">
           {activeProject.name}
         </span>
 
@@ -235,7 +235,7 @@ export function ProjectSwitcher({
         <div
           role="menu"
           tabIndex={0}
-          className="absolute left-0 top-full mt-1.5 w-72 bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-50 p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-xl font-sans focus:outline-none"
+          className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-50 p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-xl font-sans focus:outline-none"
         >
           {/* Top Actions: New, Open, Clone */}
           <div className="space-y-0.5 pb-1 border-b border-hairline">

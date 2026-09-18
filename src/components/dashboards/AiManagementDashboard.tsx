@@ -312,7 +312,7 @@ export function AiManagementDashboard({
   return (
     <>
     <div className="h-full w-full bg-workbench text-zinc-200 p-4 md:p-6 font-sans select-none overflow-hidden flex flex-col">
-      <div className="max-w-6xl w-full mx-auto h-full flex flex-col min-h-0 space-y-4">
+      <div className="w-full max-w-[clamp(48rem,88vw,96rem)] mx-auto h-full flex flex-col min-h-0 space-y-4">
         {/* ── Top Header Toolbar ────────────────────────────────────────── */}
         <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
           <div>

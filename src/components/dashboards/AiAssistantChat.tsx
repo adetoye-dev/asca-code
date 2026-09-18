@@ -835,7 +835,7 @@ export function AiAssistantChat({
     <div
       className={`absolute ${
         isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
-      } w-60 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
+      } w-60 max-w-[calc(100vw-1.5rem)] bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
     >
       {/* Option 1: Agent (Default) */}
       <button
@@ -1812,7 +1812,7 @@ Click to re-index project.`}
                   </div>
 
                   {/* Model Selector Dropdown Button */}
-                  <div className="relative min-w-0 max-w-[150px]" ref={menuRef}>
+                  <div className="relative min-w-0 flex-1" ref={menuRef}>
                     <button
                       type="button"
                       onClick={() => {

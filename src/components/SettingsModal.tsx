@@ -458,7 +458,7 @@ export function SettingsModal({
         {/* ── Main Two-Column Stage ────────────────────────────────────────── */}
         <div className="flex flex-1 min-h-0 overflow-hidden font-sans">
           {/* Left Column: Navigation Category Tree */}
-          <aside className="w-[260px] bg-black/25 backdrop-blur-xl border-r border-white/[0.08] flex flex-col shrink-0">
+          <aside className="w-[clamp(180px,24%,260px)] bg-black/25 backdrop-blur-xl border-r border-white/[0.08] flex flex-col shrink-0">
             {/* Search Settings Input */}
             <div className="p-2.5 border-b border-white/[0.06]">
               <div className="relative flex items-center">

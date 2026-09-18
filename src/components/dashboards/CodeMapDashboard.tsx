@@ -672,7 +672,7 @@ export function CodeMapDashboard({
 
       <div className="flex-1 min-h-0 flex">
         {/* ── Left: search + file index ─────────────────────────────────── */}
-        <div className="w-[330px] shrink-0 border-r border-hairline flex flex-col min-h-0">
+        <div className="w-[clamp(230px,24%,330px)] shrink-0 border-r border-hairline flex flex-col min-h-0">
           <div className="p-3 border-b border-hairline">
             <div className="relative">
               <Icon
@@ -874,7 +874,7 @@ export function CodeMapDashboard({
             </div>
 
             {selectedFile && (
-              <div className="absolute top-3 right-3 bottom-3 w-[340px] z-10 overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
+              <div className="absolute top-3 right-3 bottom-3 w-[clamp(240px,28%,340px)] z-10 overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
                 {detailsPane}
               </div>
             )}
