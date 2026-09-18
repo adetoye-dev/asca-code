@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -34,6 +35,16 @@ class AppDbTestCase(unittest.TestCase):
 
 
 class SchemaTests(AppDbTestCase):
+    def test_a_scoped_connection_closes_when_its_block_ends(self):
+        # `with sqlite3.connect(...) as conn` only commits; it does not close.
+        # The connection here is a subclass that does, because every caller
+        # treats the block as the connection's lifetime — and the ones that did
+        # not left open handles for the collector (Python 3.14 warns about it).
+        with app_db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT 1").fetchone()[0], 1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
     def test_database_file_is_owner_only(self):
         app_db.connect().close()
         mode = stat.S_IMODE(app_db.db_path().stat().st_mode)

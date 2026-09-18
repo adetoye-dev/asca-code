@@ -207,6 +207,24 @@ def env_var_for_secret(name: str) -> str:
     return f"ACSA_SECRET_{cleaned}"
 
 
+class _ScopedConnection(sqlite3.Connection):
+    """A connection that closes when its `with` block ends.
+
+    `with sqlite3.connect(...) as conn` only commits — it does **not** close the
+    connection. Every reader here uses that form for a scoped read, so each one
+    left an open handle until the garbage collector happened to reach it; Python
+    3.14 says so out loud ("unclosed database") dozens of times per test run.
+    Closing on exit is what the callers already mean, so say it once here rather
+    than add a `finally: conn.close()` to thirty call sites.
+    """
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 def connect() -> sqlite3.Connection:
     """Open the database with the pragmas this app relies on."""
     init_db()
@@ -214,7 +232,7 @@ def connect() -> sqlite3.Connection:
     # than inheriting a permissive default.
     previous = os.umask(0o077)
     try:
-        conn = sqlite3.connect(str(db_path()), timeout=10)
+        conn = sqlite3.connect(str(db_path()), timeout=10, factory=_ScopedConnection)
     finally:
         os.umask(previous)
     _restrict(db_path(), 0o600)
@@ -296,21 +314,23 @@ def delete_setting(key: str) -> None:
 
 
 def get_providers() -> dict[str, dict[str, Any]]:
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM providers").fetchall()
     providers: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        try:
-            models = json.loads(row["available_models"] or "[]")
-        except json.JSONDecodeError:
-            models = []
-        providers[row["id"]] = {
-            "baseUrl": row["base_url"] or "",
-            "selectedModel": row["selected_model"] or "",
-            "availableModels": models,
-            # Surfaced so the UI can show "key configured" without the key.
-            "hasApiKey": has_secret(secret_name_for_provider(row["id"]), conn=conn),
-        }
+    with connect() as conn:
+        for row in conn.execute("SELECT * FROM providers").fetchall():
+            try:
+                models = json.loads(row["available_models"] or "[]")
+            except json.JSONDecodeError:
+                models = []
+            providers[row["id"]] = {
+                "baseUrl": row["base_url"] or "",
+                "selectedModel": row["selected_model"] or "",
+                "availableModels": models,
+                # Surfaced so the UI can show "key configured" without the key.
+                # Read inside the block: the connection is scoped to it, and
+                # reading it afterwards only ever worked while the connection
+                # was leaking.
+                "hasApiKey": has_secret(secret_name_for_provider(row["id"]), conn=conn),
+            }
     return providers
 
 
