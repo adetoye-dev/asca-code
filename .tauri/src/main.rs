@@ -456,8 +456,13 @@ fn applescript_literal(text: &str) -> String {
 fn pick_save_file(default_name: String, prompt: String) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
+        // Start at the Desktop instead of whatever folder the app last touched.
+        // The panel otherwise opens inside the project directory, and a backup or
+        // support bundle dropped into a repository is a file the user can commit
+        // by accident — observed, not hypothetical: the first bundle written
+        // through this path landed in a checked-out repo.
         let script = format!(
-            "POSIX path of (choose file name with prompt \"{}\" default name \"{}\")",
+            "POSIX path of (choose file name with prompt \"{}\" default name \"{}\" default location (path to desktop folder))",
             applescript_literal(&prompt),
             applescript_literal(&default_name)
         );
@@ -486,8 +491,10 @@ fn pick_save_file(default_name: String, prompt: String) -> Result<Option<String>
 fn pick_open_file(prompt: String) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
+        // Same starting point as the save panel, so a backup exported to the
+        // Desktop is where the next import looks for it.
         let script = format!(
-            "POSIX path of (choose file with prompt \"{}\")",
+            "POSIX path of (choose file with prompt \"{}\" default location (path to desktop folder))",
             applescript_literal(&prompt)
         );
         let output = std::process::Command::new("osascript")
