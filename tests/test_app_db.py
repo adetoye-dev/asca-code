@@ -281,6 +281,14 @@ class DatabaseCliTests(AppDbTestCase):
         _, out = self._run("chat.load", json.dumps({"projectPath": "/tmp/x"}))
         self.assertEqual(out["data"][0]["content"], "hi")
 
+    def test_the_accounts_surface_is_gone_not_dormant(self):
+        # Removed on purpose, so this pins the removal: an unreachable endpoint
+        # with no screen is a claim the app cannot back, and it is the sort of
+        # thing that quietly comes back.
+        for command in ("auth.register", "auth.login", "auth.me", "accounts.list"):
+            code, _ = self._run(command, json.dumps({"email": "a@b.com", "password": "pw"}))
+            self.assertNotEqual(code, 0, f"{command} still exists")
+
     def test_unknown_command_is_reported(self):
         code, out = self._run("nope.nope")
         self.assertEqual(code, 2)
