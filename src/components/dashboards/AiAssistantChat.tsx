@@ -368,6 +368,15 @@ export function AiAssistantChat({
         thinking: cleanThoughtText(streamingThought) || undefined,
         error: !isSuccess,
         errorType: !isSuccess ? errorType : undefined,
+        // Recorded on the message, not only in live state, so the log scrolls
+        // back with the transcript instead of vanishing on the next turn.
+        changes:
+          turnChanges.length > 0
+            ? turnChanges.map((change) => ({
+                path: change.path,
+                ...countDiffLines(change.diff),
+              }))
+            : undefined,
       };
       setChatMessages((prev) => {
         const next = [...prev, agentMsg];
@@ -376,7 +385,7 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, failureDetail, noFileChanges, waitingForUser, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, noFileChanges, waitingForUser, turnChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
   /**
    * Ask Ollama what is actually installed, and believe it.
@@ -1551,6 +1560,9 @@ Click to re-index project.`}
                     )}
 
                     <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
+                    {msg.changes && msg.changes.length > 0 && (
+                      <ChangeLogCard changes={msg.changes} onReview={onReviewFile} />
+                    )}
 
                     {/* Actionable Error Recovery Card */}
                     {msg.error && (
@@ -1764,45 +1776,16 @@ Click to re-index project.`}
           )}
         </>
 
-        {/* What the turn changed, after the fact rather than as a gate.
-            Codex's trade, and the right one: a write inside your own project is
-            not a decision worth making twenty times, but you do want to see it. */}
-        {turnChanges.length > 0 && (
-          <div className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
-              <span className="text-[11px] text-zinc-300">
-                Edited {turnChanges.length} {turnChanges.length === 1 ? "file" : "files"}
-              </span>
-              <span className="flex items-center gap-3 font-mono text-[11px]">
-                <span className="text-emerald-400">
-                  +{turnChanges.reduce((n, c) => n + countDiffLines(c.diff).added, 0)}
-                </span>
-                <span className="text-red-400">
-                  −{turnChanges.reduce((n, c) => n + countDiffLines(c.diff).removed, 0)}
-                </span>
-              </span>
-            </div>
-            {turnChanges.map((change) => {
-              const { added, removed } = countDiffLines(change.diff);
-              return (
-                <button
-                  key={change.path}
-                  type="button"
-                  onClick={() => void onReviewFile?.(change.path)}
-                  title={`Review ${change.path}`}
-                  className="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left hover:bg-zinc-900/70 transition-colors cursor-pointer"
-                >
-                  <span className="text-[11px] font-mono text-zinc-400 truncate">
-                    {change.path}
-                  </span>
-                  <span className="flex items-center gap-3 font-mono text-[11px] shrink-0">
-                    {added > 0 && <span className="text-emerald-400">+{added}</span>}
-                    {removed > 0 && <span className="text-red-400">−{removed}</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+        {/* Live copy, while the turn is still going. Once it ends the same card
+            is on the message, so this one stands down rather than doubling up. */}
+        {status === "running" && turnChanges.length > 0 && (
+          <ChangeLogCard
+            changes={turnChanges.map((change) => ({
+              path: change.path,
+              ...countDiffLines(change.diff),
+            }))}
+            onReview={onReviewFile}
+          />
         )}
 
         <div ref={chatBottomRef} />
@@ -2282,6 +2265,54 @@ interface ThinkingAccordionProps {
   elapsedSeconds?: number;
   /** The run is blocked on the user, so it is not thinking. */
   blockedOn?: string;
+}
+
+/**
+ * "Edited N files  +X −Y", with a row per file and a Review on each.
+ *
+ * The answer to "should every write need approval?" is no — log it instead. On
+ * the message rather than only in live state, so it scrolls back with the
+ * transcript; a log you can only read once is not a log.
+ */
+function ChangeLogCard({
+  changes,
+  onReview,
+}: {
+  changes: { path: string; added: number; removed: number }[];
+  onReview?: (path: string) => Promise<void>;
+}) {
+  if (changes.length === 0) return null;
+  const added = changes.reduce((total, change) => total + change.added, 0);
+  const removed = changes.reduce((total, change) => total + change.removed, 0);
+
+  return (
+    <div className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
+        <span className="text-[11px] text-zinc-300">
+          Edited {changes.length} {changes.length === 1 ? "file" : "files"}
+        </span>
+        <span className="flex items-center gap-3 font-mono text-[11px]">
+          <span className="text-emerald-400">+{added}</span>
+          <span className="text-red-400">−{removed}</span>
+        </span>
+      </div>
+      {changes.map((change) => (
+        <button
+          key={change.path}
+          type="button"
+          onClick={() => void onReview?.(change.path)}
+          title={`Review ${change.path}`}
+          className="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left hover:bg-zinc-900/70 transition-colors cursor-pointer"
+        >
+          <span className="text-[11px] font-mono text-zinc-400 truncate">{change.path}</span>
+          <span className="flex items-center gap-3 font-mono text-[11px] shrink-0">
+            {change.added > 0 && <span className="text-emerald-400">+{change.added}</span>}
+            {change.removed > 0 && <span className="text-red-400">−{change.removed}</span>}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function ThinkingAccordion({

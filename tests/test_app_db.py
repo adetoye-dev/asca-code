@@ -183,6 +183,26 @@ class ChatHistoryTests(AppDbTestCase):
         self.assertEqual(message["images"], ["data:image/png;base64,AAAA"])
         self.assertEqual(message["steps"][0]["name"], "Read File")
 
+    def test_the_change_log_survives_a_reload(self):
+        # The chat shows "Edited N files +X −Y" from the message itself, so a
+        # field that failed to round-trip would mean the log vanished on reload —
+        # which is the whole reason logging was chosen over gating writes.
+        app_db.save_chat("/tmp/a", [
+            {
+                "id": "m1",
+                "role": "assistant",
+                "content": "done",
+                "changes": [
+                    {"path": "src/App.tsx", "added": 5, "removed": 0},
+                    {"path": "src/main.tsx", "added": 4, "removed": 1},
+                ],
+                "timestamp": 5,
+            }
+        ])
+        changes = app_db.load_chat("/tmp/a")[0]["changes"]
+        self.assertEqual([c["path"] for c in changes], ["src/App.tsx", "src/main.tsx"])
+        self.assertEqual(changes[1], {"path": "src/main.tsx", "added": 4, "removed": 1})
+
 
 class UsageLedgerTests(AppDbTestCase):
     def test_summary_aggregates_and_filters(self):

@@ -106,7 +106,14 @@ export interface ChatMessage {
   steps?: AgentStep[];
   error?: boolean;
   errorType?: "offline" | "timeout" | "syntax" | "api" | "general";
-  diffPreview?: string;
+  /**
+   * Files this turn changed, with line counts — the change log.
+   *
+   * Stored on the message so it survives: it answers "what did it just do?" live,
+   * and "what did it do an hour ago?" when you scroll back. Replaces a
+   * `diffPreview` field that nothing ever read or wrote.
+   */
+  changes?: { path: string; added: number; removed: number }[];
 }
 
 export interface StreamChatParams {
