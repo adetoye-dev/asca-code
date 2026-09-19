@@ -258,6 +258,8 @@ export function AiAssistantChat({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const heroContextMenuRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  /** The composer, so a card that needs an answer can be brought into view. */
+  const composerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -385,6 +387,20 @@ export function AiAssistantChat({
    * also clears a saved selection that names a model that is gone, because the
    * agent resolves its model from that.
    */
+  /**
+   * What the run is blocked on, in words, or "" when it is not blocked.
+   *
+   * A blocked run used to look exactly like a busy one — the spinner and the
+   * "Step N" line kept going for minutes while the turn was really waiting on a
+   * person. Watched live: a run sat for roughly six minutes and the only way to
+   * learn why was to read the accessibility tree.
+   */
+  const blockedOn = pendingQuestion
+    ? "your answer"
+    : pendingApproval
+    ? "your approval"
+    : "";
+
   // Answers being collected for a `request_user_input` question, keyed by
   // question id. The runtime takes every answer in one response, so option
   // clicks accumulate and the response goes out once each question has one —
@@ -396,6 +412,14 @@ export function AiAssistantChat({
     // answer the wrong question.
     setQuestionAnswers({});
   }, [pendingQuestion?.id]);
+
+  useEffect(() => {
+    if (!blockedOn) return;
+    // Bring it into view. On a long transcript the card is both the only thing
+    // that needs attention and the easiest thing to miss, and until this existed
+    // nothing moved or changed when the turn stopped to ask.
+    composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [blockedOn]);
 
   const answerQuestion = useCallback(
     (questionId: string, values: string[]) => {
@@ -1653,9 +1677,19 @@ Click to re-index project.`}
                     <span className="font-semibold text-purple-300 font-mono text-[11px]">
                       {selectedModelItem?.model || "ACSA Agent"}
                     </span>
-                    <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono ml-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                      Working ({agentElapsedSeconds}s)
+                    {/* The most prominent label of the three, and it said
+                        "Working" through a six-minute wait for an answer. */}
+                    <span
+                      className={`flex items-center gap-1 text-[10px] font-mono ml-2 ${
+                        blockedOn ? "text-amber-300" : "text-purple-400"
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          blockedOn ? "bg-amber-400 animate-pulse" : "bg-purple-400 animate-pulse"
+                        }`}
+                      />
+                      {blockedOn ? `Waiting for ${blockedOn}` : `Working (${agentElapsedSeconds}s)`}
                     </span>
                   </div>
 
@@ -1667,12 +1701,23 @@ Click to re-index project.`}
                       isLive={true}
                       hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
                       elapsedSeconds={agentElapsedSeconds}
+                      blockedOn={blockedOn}
                     />
 
                     {/* Live Streaming Answer */}
                     {streamingAnswer ? (
                       <div className="mt-2.5 pt-2.5 border-t border-zinc-800/80">
                         <FormattedMarkdown content={streamingAnswer} isStreaming={true} />
+                      </div>
+                    ) : blockedOn ? (
+                      /* Not thinking — stopped. A spinner here is a lie. */
+                      <div className="flex items-center gap-2 text-amber-300 text-xs py-1">
+                        <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-amber-400" />
+                        <span>
+                          {pendingQuestion
+                            ? "The agent asked you a question — answer it below to continue"
+                            : "The agent needs your approval before it continues"}
+                        </span>
                       </div>
                     ) : (
                       !streamingThought && (!agentSteps || agentSteps.length === 0) ? (
@@ -1685,8 +1730,14 @@ Click to re-index project.`}
 
                     {/* Stop Generating Button & Active Step */}
                     <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
-                      <span className="text-[11px] text-zinc-400 truncate max-w-[70%]">
-                        {agentSteps.length > 0
+                      <span
+                        className={`text-[11px] truncate max-w-[70%] ${
+                          blockedOn ? "text-amber-300 font-medium" : "text-zinc-400"
+                        }`}
+                      >
+                        {blockedOn
+                          ? `Waiting for ${blockedOn}`
+                          : agentSteps.length > 0
                           ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
                           : currentAgentPhase || "Initializing..."}
                       </span>
@@ -1759,7 +1810,10 @@ Click to re-index project.`}
 
       {/* ── Input Box & Controls (Only shown when not in empty Center Stage mode) ── */}
       {(!isWide || chatMessages.length > 0 || status === "running") && (
-        <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
+        <div
+          ref={composerRef}
+          className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}
+        >
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
             {/* The agent is blocked until this is answered. */}
             {/* A question, not a permission request. The runtime's own
@@ -1768,7 +1822,7 @@ Click to re-index project.`}
                 read "APPROVAL NEEDED … $ item/tool/requestUserInput", which told
                 the user nothing and could not be answered correctly. */}
             {pendingQuestion && pendingQuestion.questions.length > 0 && (
-              <div className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl">
+              <div className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
                 <div className="flex items-center gap-2 text-purple-300 font-semibold text-[11px] tracking-wider uppercase mb-2">
                   <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-purple-300 shrink-0" />
                   <span>The agent is asking</span>
@@ -1830,7 +1884,7 @@ Click to re-index project.`}
             )}
 
             {pendingApproval && (
-              <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl">
+              <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
                 <div className="flex items-center gap-2 text-amber-400 font-semibold text-[11px] tracking-wider uppercase mb-1.5">
                   <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span>Approval needed</span>
@@ -2226,6 +2280,8 @@ interface ThinkingAccordionProps {
   isLive?: boolean;
   hasSummary?: boolean;
   elapsedSeconds?: number;
+  /** The run is blocked on the user, so it is not thinking. */
+  blockedOn?: string;
 }
 
 function ThinkingAccordion({
@@ -2234,6 +2290,7 @@ function ThinkingAccordion({
   isLive = false,
   hasSummary = false,
   elapsedSeconds = 0,
+  blockedOn = "",
 }: ThinkingAccordionProps) {
   // Auto-collapse if a summary or conclusion has been reached
   const [isOpen, setIsOpen] = useState(() => isLive && !hasSummary);
@@ -2291,9 +2348,20 @@ function ThinkingAccordion({
           />
           {isLive && !hasSummary ? (
             <div className="flex items-center gap-2 min-w-0">
-              <Icon icon={RefreshCw} className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
-              <span className="font-semibold text-purple-300 font-mono text-[11px]">
-                Thinking ({elapsedSeconds}s)…
+              {/* A blocked run is not thinking, and a spinner that keeps turning
+                  is what made a six-minute wait look like hard work. */}
+              <Icon
+                icon={blockedOn ? HelpCircle : RefreshCw}
+                className={`w-3 h-3 shrink-0 ${
+                  blockedOn ? "text-amber-400" : "text-purple-400 animate-spin"
+                }`}
+              />
+              <span
+                className={`font-semibold font-mono text-[11px] ${
+                  blockedOn ? "text-amber-300" : "text-purple-300"
+                }`}
+              >
+                {blockedOn ? `Waiting for ${blockedOn} (${elapsedSeconds}s)` : `Thinking (${elapsedSeconds}s)…`}
               </span>
               {activeStep && (
                 <span className="text-[10px] text-zinc-400 truncate hidden sm:inline">
