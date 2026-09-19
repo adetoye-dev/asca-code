@@ -74,7 +74,7 @@ def collect() -> dict:
     with app_db.connect() as conn:
         counts = {
             table: _count(conn, table)
-            for table in ("providers", "projects", "chat_messages", "usage_events", "secrets", "accounts")
+            for table in ("providers", "projects", "chat_messages", "usage_events", "secrets")
         }
         schema_row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
         schema_version = schema_row[0] if schema_row else None

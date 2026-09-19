@@ -1,4 +1,4 @@
-"""The app's own database: one owner, secrets kept out of the UI, real auth."""
+"""The app's own database: one owner, secrets kept out of the UI."""
 
 import importlib
 import json
@@ -64,7 +64,7 @@ class SchemaTests(AppDbTestCase):
                 for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
         for table in ("settings", "providers", "secrets", "projects", "chat_messages",
-                      "usage_events", "accounts", "auth_sessions"):
+                      "usage_events"):
             self.assertIn(table, names)
 
 
@@ -236,70 +236,6 @@ class UsageLedgerTests(AppDbTestCase):
         self.assertEqual(app_db.usage_summary()["recent"][0]["cost_usd"], 0.0)
 
 
-class AccountTests(AppDbTestCase):
-    def test_password_is_hashed_with_a_salt(self):
-        account = app_db.create_account("Dev@Example.com", "correct horse battery")
-        self.assertEqual(account["email"], "dev@example.com")
-        with app_db.connect() as conn:
-            row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account["id"],)).fetchone()
-        self.assertNotIn("correct horse battery", row["password_hash"])
-        self.assertNotEqual(row["password_hash"], row["password_salt"])
-        self.assertGreaterEqual(row["iterations"], 100_000)
-
-    def test_login_accepts_the_right_password_and_rejects_others(self):
-        app_db.create_account("dev@example.com", "correct horse battery")
-        self.assertIsNotNone(app_db.verify_login("DEV@example.com", "correct horse battery"))
-        self.assertIsNone(app_db.verify_login("dev@example.com", "wrong"))
-        self.assertIsNone(app_db.verify_login("nobody@example.com", "correct horse battery"))
-
-    def test_duplicate_and_weak_credentials_are_refused(self):
-        app_db.create_account("dev@example.com", "correct horse battery")
-        with self.assertRaises(ValueError):
-            app_db.create_account("dev@example.com", "correct horse battery")
-        with self.assertRaises(ValueError):
-            app_db.create_account("other@example.com", "short")
-        with self.assertRaises(ValueError):
-            app_db.create_account("not-an-email", "correct horse battery")
-
-
-class SessionTests(AppDbTestCase):
-    def setUp(self):
-        super().setUp()
-        self.account = app_db.create_account("dev@example.com", "correct horse battery")
-
-    def test_token_is_stored_only_as_a_digest(self):
-        token = app_db.create_session(self.account["id"])
-        with app_db.connect() as conn:
-            stored = conn.execute("SELECT token_hash FROM auth_sessions").fetchone()["token_hash"]
-        self.assertNotEqual(stored, token)
-        self.assertEqual(len(stored), 64)  # sha256 hex
-
-    def test_validate_round_trip_and_revoke(self):
-        token = app_db.create_session(self.account["id"])
-        self.assertEqual(app_db.validate_session(token)["email"], "dev@example.com")
-        app_db.revoke_session(token)
-        self.assertIsNone(app_db.validate_session(token))
-
-    def test_expired_session_is_rejected_and_pruned(self):
-        token = app_db.create_session(self.account["id"], ttl_seconds=-1)
-        self.assertIsNone(app_db.validate_session(token))
-        with app_db.connect() as conn:
-            remaining = conn.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0]
-        self.assertEqual(remaining, 0)
-
-    def test_password_change_invalidates_existing_sessions(self):
-        token = app_db.create_session(self.account["id"])
-        self.assertTrue(
-            app_db.change_password(self.account["id"], "correct horse battery", "a-new-password")
-        )
-        self.assertIsNone(app_db.validate_session(token))
-        self.assertIsNotNone(app_db.verify_login("dev@example.com", "a-new-password"))
-
-    def test_password_change_requires_the_current_password(self):
-        self.assertFalse(app_db.change_password(self.account["id"], "nope", "a-new-password"))
-        self.assertIsNotNone(app_db.verify_login("dev@example.com", "correct horse battery"))
-
-
 class DatabaseCliTests(AppDbTestCase):
     """The bridge and the packaged app talk to the database through this CLI."""
 
@@ -344,20 +280,6 @@ class DatabaseCliTests(AppDbTestCase):
         }))
         _, out = self._run("chat.load", json.dumps({"projectPath": "/tmp/x"}))
         self.assertEqual(out["data"][0]["content"], "hi")
-
-    def test_auth_login_issues_a_session_token(self):
-        self._run("auth.register", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        code, out = self._run("auth.login", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        self.assertEqual(code, 0, out)
-        token = out["data"]["token"]
-        _, me = self._run("auth.me", json.dumps({"token": token}))
-        self.assertEqual(me["data"]["email"], "a@b.com")
-
-    def test_bad_credentials_fail_with_nonzero_exit(self):
-        self._run("auth.register", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        code, out = self._run("auth.login", json.dumps({"email": "a@b.com", "password": "wrong-password"}))
-        self.assertEqual(code, 1)
-        self.assertFalse(out["ok"])
 
     def test_unknown_command_is_reported(self):
         code, out = self._run("nope.nope")

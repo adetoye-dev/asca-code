@@ -72,12 +72,6 @@ export interface UsageSummary {
   }>;
 }
 
-export interface Account {
-  id: string;
-  email: string;
-  displayName: string;
-}
-
 /**
  * The dev bridge exposes this store as REST; a packaged build has no server, so
  * the same calls go to the engine over IPC. Each entry maps one onto the other —
@@ -149,16 +143,6 @@ const ENGINE_ROUTES: Record<string, EngineRoute> = {
       projectPath: query.get("projectRoot") || undefined,
       sinceTs: Number(query.get("sinceTs")) || 0,
     }),
-  },
-  "POST /api/app/auth/register": { command: "auth.register", payload: ({ body }) => body },
-  "POST /api/app/auth/login": { command: "auth.login", payload: ({ body }) => body },
-  "POST /api/app/auth/logout": {
-    command: "auth.logout",
-    payload: ({ body }) => ({ token: body.token }),
-  },
-  "GET /api/app/auth/me": {
-    command: "auth.me",
-    payload: ({ headers }) => ({ token: headers["x-acsa-session"] || "" }),
   },
 };
 
@@ -248,44 +232,12 @@ export const appStore = {
       `/api/app/usage${projectRoot ? `?projectRoot=${encodeURIComponent(projectRoot)}` : ""}`
     ),
 
-  // ── Accounts ──────────────────────────────────────────────────────────────
-  register: (email: string, password: string, displayName?: string) =>
-    request<Account>("/api/app/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, displayName }),
-    }),
-  login: (email: string, password: string) =>
-    request<{ account: Account; token: string }>("/api/app/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    }),
-  logout: (token: string) =>
-    request<{ ok: true }>("/api/app/auth/logout", { method: "POST", body: JSON.stringify({ token }) }),
-  me: (token: string) =>
-    request<Account | null>("/api/app/auth/me", { headers: { "x-acsa-session": token } }),
+  // Accounts and sessions used to live here: register, login, logout, me, and a
+  // session token in sessionStorage. Nothing ever called any of them — there is
+  // no sign-in screen — so the engine commands and tables are gone too rather
+  // than shipping a feature the app does not have. A local-first workbench has
+  // no server to authenticate against; multi-device sync is where this belongs,
+  // and it is in git history if that lands.
 };
-
-// ── Session token ───────────────────────────────────────────────────────────
-// The token is a bearer credential for this local install, so it is kept in
-// sessionStorage rather than localStorage: it does not outlive the window.
-
-const SESSION_TOKEN_KEY = "acsa_session_token";
-
-export function getSessionToken(): string {
-  try {
-    return sessionStorage.getItem(SESSION_TOKEN_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-export function setSessionToken(token: string): void {
-  try {
-    if (token) sessionStorage.setItem(SESSION_TOKEN_KEY, token);
-    else sessionStorage.removeItem(SESSION_TOKEN_KEY);
-  } catch {
-    /* storage disabled */
-  }
-}
 
 export default appStore;

@@ -160,41 +160,6 @@ def _cmd_usage_summary(p: dict) -> Any:
     )
 
 
-def _cmd_auth_register(p: dict) -> Any:
-    return app_db.create_account(
-        str(p.get("email") or ""), str(p.get("password") or ""), p.get("displayName")
-    )
-
-
-def _cmd_auth_login(p: dict) -> Any:
-    account = app_db.verify_login(str(p.get("email") or ""), str(p.get("password") or ""))
-    if not account:
-        raise ValueError("invalid email or password")
-    token = app_db.create_session(account["id"])
-    return {"account": account, "token": token}
-
-
-def _cmd_auth_me(p: dict) -> Any:
-    return app_db.validate_session(str(p.get("token") or ""))
-
-
-def _cmd_auth_logout(p: dict) -> Any:
-    app_db.revoke_session(str(p.get("token") or ""))
-    return True
-
-
-def _cmd_auth_change_password(p: dict) -> Any:
-    return app_db.change_password(
-        str(p.get("accountId") or ""),
-        str(p.get("currentPassword") or ""),
-        str(p.get("newPassword") or ""),
-    )
-
-
-def _cmd_accounts_list(_: dict) -> Any:
-    return app_db.list_accounts()
-
-
 def _cmd_info(_: dict) -> Any:
     return {"dataDir": str(app_db.data_dir()), "dbPath": str(app_db.db_path())}
 
@@ -220,12 +185,6 @@ COMMANDS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "chat.clear": _cmd_chat_clear,
     "usage.record": _cmd_usage_record,
     "usage.summary": _cmd_usage_summary,
-    "auth.register": _cmd_auth_register,
-    "auth.login": _cmd_auth_login,
-    "auth.me": _cmd_auth_me,
-    "auth.logout": _cmd_auth_logout,
-    "auth.changePassword": _cmd_auth_change_password,
-    "accounts.list": _cmd_accounts_list,
 }
 
 

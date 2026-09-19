@@ -128,7 +128,15 @@ export const AGENT_TRANSPORTS = {
   },
 } as const;
 
-export const DEFAULT_AGENT_TRANSPORT: AgentTransport = "exec";
+/**
+ * `app-server` by default, because it is the only transport that can ask.
+ *
+ * `exec` is one-shot: no approval card, no question card, no steering. Those
+ * affordances were built and verified, and on `exec` nobody ever saw them. `exec`
+ * stays as the fallback for a runtime that cannot start the app-server, and is
+ * still selectable on purpose — see `src/hooks/usePipeline.ts`.
+ */
+export const DEFAULT_AGENT_TRANSPORT: AgentTransport = "app-server";
 
 export function isAgentTransport(value: unknown): value is AgentTransport {
   return value === "exec" || value === "app-server";

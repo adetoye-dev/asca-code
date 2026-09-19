@@ -22,33 +22,19 @@ Design notes
   encryption at rest: the standard library has no authenticated cipher and
   hand-rolling one would be worse than the file permissions. OS keychain
   integration is the follow-up, and `docs/PRODUCTION_CHECKLIST.md` says so.
-* **Passwords.** PBKDF2-HMAC-SHA256 with a per-account salt and a high iteration
-  count, compared in constant time. Session tokens are random and stored only as
-  a SHA-256 digest, so a database leak does not yield usable sessions.
 """
 
 from __future__ import annotations
 
 import datetime
-import hashlib
-import hmac
 import json
 import os
-import secrets
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 SCHEMA_VERSION = 1
-
-# PBKDF2 cost. Tuned to stay well under a second on a laptop while making
-# offline guessing expensive.
-PBKDF2_ITERATIONS = 600_000
-PBKDF2_DIGEST = "sha256"
-
-SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
-
 
 # ── Location ────────────────────────────────────────────────────────────────
 
@@ -168,29 +154,6 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events (ts);
 
-        -- Accounts and sessions. Single-user today, but the shape is the one a
-        -- real sign-in needs, so adding it later is not a migration of meaning.
-        CREATE TABLE IF NOT EXISTS accounts (
-            id            TEXT PRIMARY KEY,
-            email         TEXT NOT NULL UNIQUE,
-            display_name  TEXT,
-            password_hash TEXT NOT NULL,
-            password_salt TEXT NOT NULL,
-            iterations    INTEGER NOT NULL,
-            created_at    REAL NOT NULL,
-            last_login_at REAL,
-            disabled      INTEGER NOT NULL DEFAULT 0
-        );
-
-        -- Only the digest of a session token is stored.
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-            token_hash  TEXT PRIMARY KEY,
-            account_id  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            created_at  REAL NOT NULL,
-            expires_at  REAL NOT NULL,
-            last_seen_at REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sessions_account ON auth_sessions (account_id);
         """,
     ),
 ]
@@ -721,153 +684,3 @@ def usage_summary(
             for row in recent
         ],
     }
-
-
-# ── Accounts & sessions ─────────────────────────────────────────────────────
-
-
-def _hash_password(password: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS) -> str:
-    return hashlib.pbkdf2_hmac(PBKDF2_DIGEST, password.encode("utf-8"), salt, iterations).hex()
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _normalise_email(email: str) -> str:
-    return (email or "").strip().lower()
-
-
-def create_account(email: str, password: str, display_name: Optional[str] = None) -> dict[str, Any]:
-    normalised = _normalise_email(email)
-    if "@" not in normalised:
-        raise ValueError("a valid email address is required")
-    if len(password or "") < 8:
-        raise ValueError("password must be at least 8 characters")
-
-    account_id = f"acc_{secrets.token_hex(8)}"
-    salt = secrets.token_bytes(16)
-    now = time.time()
-    with connect() as conn:
-        existing = conn.execute(
-            "SELECT 1 FROM accounts WHERE email = ?", (normalised,)
-        ).fetchone()
-        if existing:
-            raise ValueError("an account with that email already exists")
-        conn.execute(
-            "INSERT INTO accounts"
-            " (id, email, display_name, password_hash, password_salt, iterations, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                account_id,
-                normalised,
-                display_name or normalised.split("@")[0],
-                _hash_password(password, salt),
-                salt.hex(),
-                PBKDF2_ITERATIONS,
-                now,
-            ),
-        )
-    return {"id": account_id, "email": normalised, "displayName": display_name or normalised.split("@")[0]}
-
-
-def verify_login(email: str, password: str) -> Optional[dict[str, Any]]:
-    normalised = _normalise_email(email)
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM accounts WHERE email = ?", (normalised,)
-        ).fetchone()
-    if not row or row["disabled"]:
-        # Spend the same work as a real verification so a missing account is not
-        # distinguishable by timing.
-        _hash_password(password or "", b"", PBKDF2_ITERATIONS)
-        return None
-    expected = row["password_hash"]
-    candidate = _hash_password(password or "", bytes.fromhex(row["password_salt"]), row["iterations"])
-    if not hmac.compare_digest(expected, candidate):
-        return None
-    with connect() as conn:
-        conn.execute("UPDATE accounts SET last_login_at = ? WHERE id = ?", (time.time(), row["id"]))
-    return {"id": row["id"], "email": row["email"], "displayName": row["display_name"]}
-
-
-def change_password(account_id: str, current_password: str, new_password: str) -> bool:
-    if len(new_password or "") < 8:
-        raise ValueError("password must be at least 8 characters")
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        if not row:
-            return False
-        candidate = _hash_password(
-            current_password or "", bytes.fromhex(row["password_salt"]), row["iterations"]
-        )
-        if not hmac.compare_digest(row["password_hash"], candidate):
-            return False
-        salt = secrets.token_bytes(16)
-        conn.execute(
-            "UPDATE accounts SET password_hash = ?, password_salt = ?, iterations = ? WHERE id = ?",
-            (_hash_password(new_password, salt), salt.hex(), PBKDF2_ITERATIONS, account_id),
-        )
-        conn.execute("DELETE FROM auth_sessions WHERE account_id = ?", (account_id,))
-    return True
-
-
-def create_session(account_id: str, ttl_seconds: int = SESSION_TTL_SECONDS) -> str:
-    """Issue a session token. Only its digest is stored; return the raw token once."""
-    token = secrets.token_urlsafe(32)
-    now = time.time()
-    with connect() as conn:
-        conn.execute(
-            "INSERT INTO auth_sessions (token_hash, account_id, created_at, expires_at, last_seen_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (_hash_token(token), account_id, now, now + ttl_seconds, now),
-        )
-    return token
-
-
-def validate_session(token: str) -> Optional[dict[str, Any]]:
-    if not token:
-        return None
-    digest = _hash_token(token)
-    now = time.time()
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT s.account_id, s.expires_at, a.email, a.display_name, a.disabled"
-            " FROM auth_sessions s JOIN accounts a ON a.id = s.account_id"
-            " WHERE s.token_hash = ?",
-            (digest,),
-        ).fetchone()
-        if not row:
-            return None
-        if row["expires_at"] < now or row["disabled"]:
-            conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (digest,))
-            return None
-        conn.execute(
-            "UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?", (now, digest)
-        )
-    return {
-        "accountId": row["account_id"],
-        "email": row["email"],
-        "displayName": row["display_name"],
-    }
-
-
-def revoke_session(token: str) -> None:
-    with connect() as conn:
-        conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (_hash_token(token),))
-
-
-def revoke_all_sessions(account_id: str) -> int:
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM auth_sessions WHERE account_id = ?", (account_id,))
-    return cursor.rowcount
-
-
-def list_accounts() -> list[dict[str, Any]]:
-    """Account directory without credential material."""
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT id, email, display_name, created_at, last_login_at, disabled"
-            " FROM accounts ORDER BY created_at ASC"
-        ).fetchall()
-    return [dict(row) for row in rows]

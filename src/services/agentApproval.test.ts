@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
+  DEFAULT_AGENT_TRANSPORT,
   isAgentApprovalMode,
   isAgentTransport,
   localProviderFor,
@@ -46,6 +47,14 @@ describe("approval modes", () => {
     expect(resolveApprovalMode("ask-me", "app-server")).toBe("ask-me");
     expect(resolveApprovalMode("ask-me", "exec")).toBe(DEFAULT_AGENT_APPROVAL_MODE);
     expect(resolveApprovalMode("full-access", "exec")).toBe("full-access");
+  });
+
+  it("defaults to the transport that can ask at all", () => {
+    // The affordances that make the agent usable — approve a command, answer a
+    // question — exist only on app-server. Defaulting to `exec` meant most
+    // installs never saw any of them.
+    expect(DEFAULT_AGENT_TRANSPORT).toBe("app-server");
+    expect(resolveApprovalMode("ask-me", DEFAULT_AGENT_TRANSPORT)).toBe("ask-me");
   });
 
   it("maps every mode onto the three settings the runtime takes", () => {

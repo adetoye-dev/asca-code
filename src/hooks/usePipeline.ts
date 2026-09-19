@@ -25,6 +25,7 @@ import {
 import {
   AGENT_APPROVAL_MODES,
   DEFAULT_AGENT_APPROVAL_MODE,
+  DEFAULT_AGENT_TRANSPORT,
   localProviderFor,
   localToolCallingNote,
   resolveApprovalMode,
@@ -2019,8 +2020,11 @@ export function usePipeline(): UsePipelineReturn {
       }
 
       if (isTauriAvailable) {
+        // Unset means the default, which is `app-server`: reading it as "not
+        // app-server, therefore exec" would have quietly kept every existing
+        // install on the transport that cannot ask anything.
         const transport: AgentTransport =
-          aiSettings.agentTransport === "app-server" ? "app-server" : "exec";
+          aiSettings.agentTransport === "exec" ? "exec" : DEFAULT_AGENT_TRANSPORT;
         const approvalMode = resolveApprovalMode(
           aiSettings.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
           transport,
@@ -2066,11 +2070,13 @@ export function usePipeline(): UsePipelineReturn {
               })
             : applyCodexEvent(event, agentUpdate);
 
-        const runOnce = (resume?: string) =>
+        const runOnce = (resume?: string, via: AgentTransport = transport) =>
           runAgent({
             prompt: agentPrompt,
-            transport,
-            approvalMode,
+            transport: via,
+            // Re-resolved per transport: `ask-me` needs app-server, and silently
+            // keeping it on a fallback run would auto-deny rather than ask.
+            approvalMode: resolveApprovalMode(aiSettings.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE, via),
             onApproval: (request) => {
               const p = request.params ?? {};
               setPendingApproval({
@@ -2116,7 +2122,28 @@ export function usePipeline(): UsePipelineReturn {
             }),
           });
 
+        let usedTransport: AgentTransport = transport;
         let codexStatus = await runOnce(resumeThreadId);
+
+        // The fallback. `app-server` is the default because it is the only
+        // transport that can ask, but a runtime that cannot start it must not
+        // leave the user with nothing: retry once on `exec`, which cannot ask
+        // anything but does run, and say so rather than swapping transports
+        // behind their back.
+        if (codexStatus === "unavailable" && usedTransport === "app-server") {
+          setActivityLog((prev) => [
+            ...prev,
+            {
+              line_number: prev.length + 1,
+              content:
+                "[agent] this runtime could not start the live session; falling back to one-shot exec (no approvals or questions on this run).",
+              stream: "stderr",
+              is_json: false,
+            },
+          ]);
+          usedTransport = "exec";
+          codexStatus = await runOnce(undefined, "exec");
+        }
 
         // A resumed thread can be gone — a cleared session directory, a stale id.
         // That fails before the model sees anything, so starting over is safe and

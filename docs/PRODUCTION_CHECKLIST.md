@@ -29,11 +29,9 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Account schema + auth primitives | **[done]** | `accounts` / `auth_sessions`; PBKDF2-HMAC-SHA256 (600k iterations, per-account salt, constant-time compare); session tokens stored only as SHA-256 digests; password change revokes sessions. |
-| Local-first default | **[done]** | No account is required to use the app. Sign-in exists as an opt-in surface, not a gate. |
-| Sign-in UI | **[open]** | Endpoints exist (`/api/app/auth/*`); no screen consumes them yet. Decide first whether accounts mean anything for a desktop-local app beyond a profile name. |
-| Session transport | **[partial]** | Token sent as an `x-acsa-session` header and held in `sessionStorage`. Fine on loopback; would need real transport security if a remote backend is ever added. |
-| Roles / teams / sharing | **[open]** | Single-user model only. |
+| No accounts, by design | **[done]** | There is no sign-in, no account and no session. The auth surface that existed — the `accounts` and `auth_sessions` tables, PBKDF2 hashing, session tokens, the `auth.*` engine commands and their client methods — was **removed** rather than left unclaimed. Nothing called any of it: the endpoints shipped with no screen, which is a claim the app could not back. A local-first workbench has nothing to authenticate against. It is in git history, and multi-device sync is what would bring it back. |
+| Usage metrics without accounts | **[open]** | Decided, and the honest answer is that it is not free: there is no way to know DAU, retention or feature use without either an anonymous install id sent to a server of ours, or public signals that already exist (GitHub release download counts, issues). The app currently reports nothing, and its one outbound call is the update check. When this is picked up: it is an endpoint decision, not an accounts decision, and the "nothing leaves the machine" copy has to move with it. |
+| Multi-user | **[open]** | One data directory, one database, one user. Roles, teams and sharing are not modelled and would need a server. |
 
 ## Build, release, updates
 
@@ -51,11 +49,11 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Unit suite | **[done]** | `npm test`: database and accounts, engine CLIs, env handling, indexing and the dependency graph, MCP client, workspace search/replace, project readiness. |
+| Unit suite | **[done]** | `npm test`: the database, engine CLIs, env handling, indexing and the dependency graph, MCP client, workspace search/replace, project readiness. |
 | Real end-to-end agent test | **[partial]** | Two scripted runs exist in `.tauri/src/main.rs`: `a_turn_completes_over_the_real_runtime` and `a_real_approval_is_answered_and_the_turn_continues`. Both are `#[ignore]`d (they need a reachable provider and localhost) and both skip loudly rather than fail when it is unreachable. Run with `cargo test -- --ignored`. What has been verified *live*, in the packaged app, is now considerably more than the approval round-trip: a scaffolded project built end to end; an approval answered and the turn continued; a question asked through `request_user_input` and answered; a change log matching the files on disk; and a resumed thread implementing a design it first proposed. What is still scripted-only is everything that has to hold in CI — that is what these two tests are for, and they remain the honest gap. |
 | Typecheck | **[done]** | `strict: true`, including the Node-side dev-bridge config. |
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
-| Flake budget | **[done]** | The default suite is deterministic and offline: 121 Python tests, 69 Vitest tests and 19 Rust tests, none of which touch the network. The two real-runtime tests are `#[ignore]`d and self-skipping, so they cannot flake the build. |
+| Flake budget | **[done]** | The default suite is deterministic and offline: 112 Python tests, 70 Vitest tests and 19 Rust tests, none of which touch the network. The two real-runtime tests are `#[ignore]`d and self-skipping, so they cannot flake the build. |
 | Frontend tests | **[done]** | Vitest runs in `verify`: services (approval vocabulary, model-registry reconciliation, updater preference) and, via jsdom, components — the update button renders nothing when there is nothing to say, says `Update` rather than a version number, installs only on a click, and offers the restart separately; the About pane says "up to date" only when the check said so and prints the reason when it failed. Component tests opt into jsdom per file with a docblock, so the service tests stay on node. |
 | Generated-class check | **[done]** | `scripts/check_generated_classes.mjs`, run by `npm run build`. It scans the app's own token utilities (`bg-workbench/60`, `bg-modal/95`, …) and fails if the built CSS has no rule for one — which is how thirteen of them shipped silently. Verified by re-introducing the bug: it names the two classes and exits non-zero. Scoped to the design tokens on purpose; checking every class would be all false positives. |
 
@@ -84,7 +82,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Transport | **[partial]** | `exec` is the default; `app-server` is opt-in, and it is the only transport that can ask anything. That makes this a **UI decision, not just a runtime one**: approvals and questions — the two affordances the branded UI would show off — do not exist on the default path. Settle it before designing around them. |
+| Transport | **[done]** | `app-server` is the default now, with `exec` as a fallback and still selectable. It is the only transport that can ask anything, so defaulting to `exec` meant most installs never saw the approval card, the question card or steering — all of which were built and verified and then hidden behind a setting. A runtime that cannot start the live session retries once on `exec` and says so in OUTPUT rather than swapping transports silently, and the approval mode is re-resolved per transport so `ask-me` cannot survive onto a run that would auto-deny. |
 | Local model tool support | **[done]** | `core-engine/responses_adapter.py` translates the Responses API the runtime requires into Ollama's native `/api/chat`, so a local model can actually run tools. Verified end to end, frozen into the engine sidecar, and covered by `tests/test_responses_adapter.py`. |
 | Adapter lifecycle | **[partial]** | Started on demand and reused per provider. Nothing restarts it if it dies mid-run, and it is only reached when the resolved provider is local. |
 | Steering | **[open]** | `turn/steer` is not wired to the UI. |
