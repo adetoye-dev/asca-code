@@ -867,6 +867,35 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
   };
 
+  // The empty-state panel flickered on every keystroke in the chat composer.
+  // Cause: `watermarkComponent` was an inline arrow, and dockview treats it as a
+  // component *type* — so each render produced a new type, React unmounted the
+  // old one and mounted a new one, and the panel rebuilt itself. The prompt text
+  // lives above this component (it is a prop of the assistant, which lives in
+  // this layout), so every character typed re-rendered the whole workbench.
+  //
+  // These handlers are setState calls and nothing else, so their identities are
+  // stable for the life of the layout; the memo then only changes when the setup
+  // card's own data does, which is when the panel should change.
+  const openFilePalette = useCallback(() => {
+    setPaletteMode("file");
+    setIsCommandPaletteOpen(true);
+  }, []);
+  const openCommandPalette = useCallback(() => {
+    setPaletteMode("command");
+    setIsCommandPaletteOpen(true);
+  }, []);
+  const toggleSidebarFromWatermark = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev);
+  }, []);
+  const toggleTerminalFromWatermark = useCallback(() => {
+    setIsBottomPanelOpen((prev) => !prev);
+  }, []);
+  const toggleAiFromWatermark = useCallback(() => {
+    setIsCenterChatOpen(false);
+    setIsRightPanelOpen((prev) => !prev);
+  }, []);
+
   const components = {
     // Asset Preview Tab
     assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean; projectRoot?: string }>) => (
@@ -1127,6 +1156,42 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       setSetupBusyCommand(null);
     },
     [activeProject.path, refreshProjectStatus]
+  );
+
+  // Stable identity, so the empty-state panel is not rebuilt on every render.
+  // `watermarkComponent` was an inline arrow, and dockview treats it as a
+  // component *type*: a new identity per render meant React unmounted the old
+  // one and mounted a new one. The prompt text lives above this layout, so every
+  // keystroke in the chat composer re-rendered the workbench and the panel
+  // flickered. The handlers below are setState calls, so their identities do not
+  // change; this memo only changes when the setup card's own data does.
+  const watermarkComponent = useMemo(
+    () => () => (
+      <DockviewWatermark
+        onOpenFile={openFilePalette}
+        onOpenCommands={openCommandPalette}
+        onToggleSidebar={toggleSidebarFromWatermark}
+        onToggleTerminal={toggleTerminalFromWatermark}
+        onToggleAi={toggleAiFromWatermark}
+        setupSlot={
+          <ProjectSetupCard
+            status={projectStatus}
+            busyCommand={setupBusyCommand}
+            onRun={runSetupCommand}
+          />
+        }
+      />
+    ),
+    [
+      openFilePalette,
+      openCommandPalette,
+      toggleSidebarFromWatermark,
+      toggleTerminalFromWatermark,
+      toggleAiFromWatermark,
+      projectStatus,
+      setupBusyCommand,
+      runSetupCommand,
+    ],
   );
 
   return (
@@ -1443,31 +1508,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <DockviewReact
               components={components}
               defaultTabComponent={DockviewCustomTab}
-              watermarkComponent={() => (
-                <DockviewWatermark
-                  onOpenFile={() => {
-                    setPaletteMode("file");
-                    setIsCommandPaletteOpen(true);
-                  }}
-                  onOpenCommands={() => {
-                    setPaletteMode("command");
-                    setIsCommandPaletteOpen(true);
-                  }}
-                  onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-                  onToggleTerminal={() => setIsBottomPanelOpen((prev) => !prev)}
-                  onToggleAi={() => {
-                    setIsCenterChatOpen(false);
-                    setIsRightPanelOpen((prev) => !prev);
-                  }}
-                  setupSlot={
-                    <ProjectSetupCard
-                      status={projectStatus}
-                      busyCommand={setupBusyCommand}
-                      onRun={runSetupCommand}
-                    />
-                  }
-                />
-              )}
+              watermarkComponent={watermarkComponent}
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
