@@ -79,6 +79,8 @@ async function runAgent(params: {
   transport?: AgentTransport;
   /** The runtime wants an answer before it can continue (app-server only). */
   onApproval?: (request: { id: unknown; method: string; params: any }) => void;
+  /** The runtime says it is blocked on the human (`thread/status/changed`). */
+  onWaitingForUser?: (status: string) => void;
   /** Provider/model the user picked for this message; wins over the saved default. */
   selection?: { providerId: string; model: string };
   /** How much the agent may do unattended. Defaults to "approve for me". */
@@ -158,20 +160,21 @@ async function runAgent(params: {
     `approval_policy = "${approval.approvalPolicy}"`,
     `approvals_reviewer = "${approval.approvalsReviewer}"`,
     `sandbox_mode = "${approval.sandboxMode}"`,
-    // The runtime discovers skills from the *host* (`~/.agents/skills`) as well as
-    // its own home, and those are the user's personal Codex skills — not ours. That
-    // silently imports behaviour we did not choose: a run of "build a small todo
-    // app" twice stopped after a few read-only commands because
-    // `superpowers:brainstorming`, a skill written for interactive sessions where
-    // a human answers, told the agent to present a design and wait. Nothing was
-    // written to disk and the transcript still read like a report.
+    // Host skills (`~/.agents/skills`) are left alone on purpose.
     //
-    // This is the documented knob for it. It is set here because it is the right
-    // configuration, and honest because it is not yet a fix: the flag is still
-    // "under development" upstream and was verified *not* to stop the leak — the
-    // agent cited the skill in its own words with this line in place. The app's own
-    // skills live in `~/.acsa/skills` and are unaffected either way.
-    "features.skip_host_skill_discovery = true",
+    // They were the reason a run of "build a small todo app" stopped after a few
+    // read-only commands: `superpowers:brainstorming` told the agent to present a
+    // design and wait for a human, it did exactly that, and the transcript still
+    // read like a completed report. `features.skip_host_skill_discovery = true`
+    // was tried and *did not* stop it (the flag is still "under development"
+    // upstream), and skipping was the wrong instinct anyway — those skills encode
+    // a way of working that is worth having, and they only look broken because
+    // this app could not play the other half of the conversation.
+    //
+    // So the work is to support the interaction, not to suppress the skill: the
+    // runtime can ask the user (`ServerRequest::ToolRequestUserInput`, and a
+    // thread status of `waitingOnUserInput`), and the app has to answer. See
+    // `onWaitingForUser` below for what is wired up so far and what is not.
     ...(localProvider && !adapterBaseUrl
       ? []
       : [
@@ -281,6 +284,7 @@ async function runAgent(params: {
       onThread: params.onThread,
       onFailure: params.onFailure,
       onApproval: params.onApproval,
+      onWaitingForUser: params.onWaitingForUser,
     });
   }
 
@@ -474,6 +478,14 @@ async function runAgentOnAppServer(params: {
   onFailure?: (detail: string) => void;
   /** A request the runtime needs an answer to before it can continue. */
   onApproval?: (request: { id: unknown; method: string; params: any }) => void;
+  /**
+   * The runtime says it is blocked on the human — `waitingOnUserInput` after a
+   * skill asked a question, `waitingOnApproval` before running something.
+   *
+   * Nothing consumed `thread/status/changed` before this, so an agent that had
+   * stopped to ask looked exactly like one that had finished.
+   */
+  onWaitingForUser?: (status: string) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -514,6 +526,17 @@ async function runAgentOnAppServer(params: {
         if (method === "turn/completed" || method === "turn/failed") {
           turnFinished.value = true;
         }
+
+        // The runtime narrates its own state, including the two that mean it is
+        // blocked on a person.
+        if (method === "thread/status/changed") {
+          const waiting = waitingStatusIn(parsed?.params);
+          if (waiting) {
+            params.onWaitingForUser?.(waiting);
+            return;
+          }
+        }
+
         if (method === "turn/failed") {
           failed = true;
           const detail = String(
@@ -856,6 +879,23 @@ export function fileSignature(nodes: FileNode[]): string {
   return parts.sort().join("\n");
 }
 
+/**
+ * Which "the runtime is blocked on the human" status, if any, this payload
+ * carries — its own name (`waitingOnUserInput` / `waitingOnApproval`) or "".
+ *
+ * Matched by substring rather than by field path on purpose: `thread/status/changed`
+ * carries a struct that moves between releases, and the failure mode of reading it
+ * too cleverly is a paused run that still looks finished. Unknown extra fields are
+ * harmless, a missed status is not.
+ */
+export function waitingStatusIn(payload: unknown): string {
+  const serialised = JSON.stringify(payload ?? {});
+  for (const status of ["waitingOnUserInput", "waitingOnApproval"]) {
+    if (serialised.includes(status)) return status;
+  }
+  return "";
+}
+
 export interface ProjectIndexState {
   indexed: boolean;
   totalSymbols: number;
@@ -898,6 +938,12 @@ export interface UsePipelineReturn {
   indexStatus: ProjectIndexState;
   /** A finished run that left every file's path and size untouched. */
   noFileChanges: boolean;
+  /**
+   * The runtime's own name for a state where it is blocked on the human —
+   * `waitingOnUserInput` after a skill asked a question, `waitingOnApproval`
+   * before running something. Empty when it is not waiting.
+   */
+  waitingForUser: string;
   isIndexing: boolean;
   syncIndex: () => Promise<void>;
 
@@ -1163,6 +1209,9 @@ export function usePipeline(): UsePipelineReturn {
   // them. The chat says so, because otherwise a design-first reply and a
   // completed edit look identical in the transcript.
   const [noFileChanges, setNoFileChanges] = useState(false);
+  // Non-empty when the runtime says it is blocked on the human. Holds the
+  // runtime's own status name (`waitingOnUserInput` / `waitingOnApproval`).
+  const [waitingForUser, setWaitingForUser] = useState("");
   // Code Intelligence & Symbol Graph Indexer state
   const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
     indexed: false,
@@ -1626,6 +1675,7 @@ export function usePipeline(): UsePipelineReturn {
       setPendingApproval(null);
       setFailureDetail("");
       setNoFileChanges(false);
+      setWaitingForUser("");
       setActivityLog([]);
       setCurrentDiff("");
       // The pre-run snapshot. `projectFiles` is the last list we loaded, and
@@ -1746,6 +1796,7 @@ export function usePipeline(): UsePipelineReturn {
                 reason: String(p.reason ?? ""),
               });
             },
+            onWaitingForUser: setWaitingForUser,
             onEvent: onAgentEvent,
             resumeThreadId: resume,
             images: usableImages,
@@ -1899,6 +1950,7 @@ export function usePipeline(): UsePipelineReturn {
     refreshProjectFiles,
     indexStatus,
     noFileChanges,
+    waitingForUser,
     isIndexing,
     syncIndex,
     prompt,

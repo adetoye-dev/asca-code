@@ -42,3 +42,22 @@ describe("the workspace signature", () => {
     expect(fileSignature([file("/p/a.ts", 11)])).not.toBe(before);
   });
 });
+
+describe("reading the runtime's waiting state", () => {
+  // `thread/status/changed` carries a struct whose shape moves between releases,
+  // so this matches by name rather than by field path. Getting it wrong in the
+  // quiet direction is the bad one: a run that stopped to ask would look finished.
+  it("finds the status in whatever shape it arrives in", async () => {
+    const { waitingStatusIn } = await import("./usePipeline");
+    expect(waitingStatusIn({ threadId: "t", status: "waitingOnUserInput" })).toBe("waitingOnUserInput");
+    expect(waitingStatusIn({ status: { type: "waitingOnApproval" } })).toBe("waitingOnApproval");
+    expect(waitingStatusIn({ status: { kind: "waiting", detail: "waitingOnUserInput" } })).toBe("waitingOnUserInput");
+  });
+
+  it("says nothing for the ordinary states", async () => {
+    const { waitingStatusIn } = await import("./usePipeline");
+    for (const payload of [{ status: "active" }, { status: "complete" }, {}, null, undefined]) {
+      expect(waitingStatusIn(payload)).toBe("");
+    }
+  });
+});

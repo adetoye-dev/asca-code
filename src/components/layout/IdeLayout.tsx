@@ -213,6 +213,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     streamingThought,
     failureDetail,
     noFileChanges,
+    waitingForUser,
     pendingApproval,
     respondToApproval,
     agentSteps,
@@ -1575,6 +1576,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               agentSteps={agentSteps}
               failureDetail={failureDetail}
               noFileChanges={noFileChanges}
+              waitingForUser={waitingForUser}
               pendingApproval={pendingApproval}
               respondToApproval={respondToApproval}
             />

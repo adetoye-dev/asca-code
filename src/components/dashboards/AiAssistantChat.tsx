@@ -72,6 +72,8 @@ interface AiAssistantChatProps {
   failureDetail?: string;
   /** A finished run that left every file's path and size untouched. */
   noFileChanges?: boolean;
+  /** The runtime's own name for a state where it is blocked on the human. */
+  waitingForUser?: string;
   /** A request the agent is blocked on, waiting for the user's answer. */
   pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
   respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
@@ -116,6 +118,7 @@ export function AiAssistantChat({
   selectedContext = null,
   failureDetail = "",
   noFileChanges = false,
+  waitingForUser = "",
   pendingApproval = null,
   respondToApproval,
   indexStatus,
@@ -312,8 +315,20 @@ export function AiAssistantChat({
       // that was never written is otherwise indistinguishable from one that was.
       const noChangesNote =
         "\n\n> No files were added, removed or resized in this run.";
+      // The runtime's own state, not a guess from the text: it says
+      // `waitingOnUserInput` when a skill has asked a question and the turn is
+      // holding for an answer. Without this the reply ends the turn looking like
+      // a finished task, and the next thing the user sends starts a new one.
+      const waitingNote =
+        waitingForUser === "waitingOnUserInput"
+          ? "\n\n> **Waiting on you.** The agent asked something and stopped. Answer in the box below to carry on — your reply continues the same thread."
+          : waitingForUser === "waitingOnApproval"
+          ? "\n\n> **Waiting on you.** The agent needs an approval before it continues."
+          : "";
       const finalContent = isSuccess
-        ? (streamingAnswer || "Task completed.") + (noFileChanges ? noChangesNote : "")
+        ? (streamingAnswer || "Task completed.") +
+          (noFileChanges ? noChangesNote : "") +
+          waitingNote
         : failureDetail
         ? `⚠️ **Task Failed:** ${failureDetail}`
         : "The task needs attention. Review Problems or Output for details.";
@@ -341,7 +356,7 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, failureDetail, noFileChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, noFileChanges, waitingForUser, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
   /**
    * Ask Ollama what is actually installed, and believe it.
