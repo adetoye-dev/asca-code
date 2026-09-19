@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalSummary, userInputResponse } from "./usePipeline";
+import { approvalSummary, summarizeItemChanges, userInputResponse } from "./usePipeline";
 
 /**
  * The answer half of `request_user_input`.
@@ -55,5 +55,33 @@ describe("describing an approval", () => {
     expect(summary).toBe("do something it needs your approval for");
     // Never the raw method: that is what made the card unreadable.
     expect(summary).not.toContain("item/");
+  });
+});
+
+/**
+ * A file-change approval names an item and nothing else, so the paths and the
+ * diff have to come from the item the runtime announced first.
+ */
+describe("summarising a pending file change", () => {
+  it("reads paths, kinds and diffs out of the item", () => {
+    const item = {
+      id: "call_1",
+      type: "fileChange",
+      status: "pending",
+      changes: [
+        { path: "/p/src/a.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new" },
+        { path: "/p/src/b.ts", kind: "add", diff: "+hello" },
+      ],
+    };
+    expect(summarizeItemChanges(item)).toEqual([
+      { path: "/p/src/a.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new" },
+      { path: "/p/src/b.ts", kind: "add", diff: "+hello" },
+    ]);
+  });
+
+  it("returns nothing rather than inventing a change", () => {
+    for (const junk of [undefined, null, {}, { changes: null }, { changes: [{}] }, "nope"]) {
+      expect(summarizeItemChanges(junk)).toEqual([]);
+    }
   });
 });

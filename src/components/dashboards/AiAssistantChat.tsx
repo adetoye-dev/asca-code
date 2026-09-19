@@ -45,7 +45,7 @@ import {
   subscribeChatHistory,
 } from "../../services/aiChatPersistence";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import type { AgentQuestion, ProjectIndexState } from "../../hooks/usePipeline";
+import type { AgentQuestion, PendingFileChange, ProjectIndexState } from "../../hooks/usePipeline";
 import { approvalSummary } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
 
@@ -76,7 +76,13 @@ interface AiAssistantChatProps {
   /** The runtime's own name for a state where it is blocked on the human. */
   waitingForUser?: string;
   /** A request the agent is blocked on, waiting for the user's answer. */
-  pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
+  pendingApproval?: {
+    id: unknown;
+    method: string;
+    command: string;
+    reason: string;
+    changes?: PendingFileChange[];
+  } | null;
   respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
   /** A `request_user_input` question, which needs answers rather than a decision. */
   pendingQuestion?: { id: unknown; questions: AgentQuestion[] } | null;
@@ -1794,6 +1800,44 @@ Click to re-index project.`}
                   <span className="text-zinc-500 select-none">$</span>
                   <span>{pendingApproval.command}</span>
                 </div>
+                ) : null}
+                {/* A file-change approval names an item, not a command. Showing
+                    the diff is the difference between approving a change and
+                    approving a mystery — which is what the bare itemId gave. */}
+                {pendingApproval.changes && pendingApproval.changes.length > 0 ? (
+                  <div className="mb-2.5 space-y-1.5">
+                    {pendingApproval.changes.map((change) => (
+                      <div
+                        key={change.path}
+                        className="rounded-xl border border-zinc-800 bg-black/60 overflow-hidden"
+                      >
+                        <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-zinc-800">
+                          <span
+                            className={
+                              change.kind === "add"
+                                ? "text-[10px] font-mono uppercase text-emerald-400"
+                                : change.kind === "delete"
+                                ? "text-[10px] font-mono uppercase text-red-400"
+                                : "text-[10px] font-mono uppercase text-amber-400"
+                            }
+                          >
+                            {change.kind}
+                          </span>
+                          <span
+                            className="text-[11px] font-mono text-zinc-300 truncate"
+                            title={change.path}
+                          >
+                            {change.path}
+                          </span>
+                        </div>
+                        {change.diff ? (
+                          <pre className="max-h-40 overflow-auto px-2.5 py-1.5 text-[10px] leading-relaxed text-zinc-400 whitespace-pre font-mono">
+                            {change.diff}
+                          </pre>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 ) : null}
                 <div className="flex items-center justify-end gap-2">
                   <button

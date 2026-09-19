@@ -78,7 +78,12 @@ async function runAgent(params: {
   /** Which runtime to use. `exec` is the long-standing path. */
   transport?: AgentTransport;
   /** The runtime wants an answer before it can continue (app-server only). */
-  onApproval?: (request: { id: unknown; method: string; params: any }) => void;
+  onApproval?: (request: {
+    id: unknown;
+    method: string;
+    params: any;
+    changes?: PendingFileChange[];
+  }) => void;
   /** The runtime says it is blocked on the human (`thread/status/changed`). */
   onWaitingForUser?: (status: string) => void;
   /** A `request_user_input` question, which needs answers, not a decision. */
@@ -487,7 +492,12 @@ async function runAgentOnAppServer(params: {
   onThread?: (threadId: string) => void;
   onFailure?: (detail: string) => void;
   /** A request the runtime needs an answer to before it can continue. */
-  onApproval?: (request: { id: unknown; method: string; params: any }) => void;
+  onApproval?: (request: {
+    id: unknown;
+    method: string;
+    params: any;
+    changes?: PendingFileChange[];
+  }) => void;
   /**
    * The runtime says it is blocked on the human — `waitingOnUserInput` after a
    * skill asked a question, `waitingOnApproval` before running something.
@@ -512,6 +522,12 @@ async function runAgentOnAppServer(params: {
   const failureBox: { value: string } = { value: "" };
   const unlisten: Array<() => void> = [];
   const startedAt = Date.now();
+
+  // Thread items the runtime has announced, by id. A file-change approval names
+  // only an `itemId`, so the announced item is the only place the paths and the
+  // diff exist. Bounded: a long turn announces a lot of items and only the recent
+  // ones can still be waiting on an answer.
+  const announcedItems = new Map<string, unknown>();
 
   try {
     unlisten.push(
@@ -546,9 +562,29 @@ async function runAgentOnAppServer(params: {
                 : [],
             });
           } else {
-            params.onApproval?.({ id: parsed.id, method, params: parsed.params });
+            const itemId = String(parsed.params?.itemId ?? "");
+            params.onApproval?.({
+              id: parsed.id,
+              method,
+              params: parsed.params,
+              changes: summarizeItemChanges(announcedItems.get(itemId)),
+            });
           }
           return;
+        }
+
+        // Remember the item itself, so an approval that arrives later can say
+        // what it is about to change.
+        if (method === "item/started" || method === "item/completed") {
+          const item = parsed?.params?.item;
+          const itemId = String(item?.id ?? "");
+          if (itemId) {
+            announcedItems.set(itemId, item);
+            if (announcedItems.size > 50) {
+              const oldest = announcedItems.keys().next().value;
+              if (oldest !== undefined) announcedItems.delete(oldest);
+            }
+          }
         }
 
         if (method === "turn/completed" || method === "turn/failed") {
@@ -982,6 +1018,33 @@ export function approvalSummary(method: string): string {
     default:
       return "do something it needs your approval for";
   }
+}
+
+/** One file a pending approval would change, with the runtime's own diff. */
+export type PendingFileChange = { path: string; kind: string; diff: string };
+
+/**
+ * Pull the changed files out of a `fileChange` thread item.
+ *
+ * The approval request itself carries only an `itemId` — no paths, no diff — so
+ * on its own it asks the user to approve something they cannot see. The item is
+ * announced first (`item/started` includes `changes[{path, kind, diff}]`, and
+ * `changes` is required on the item), which is what makes showing it possible.
+ */
+export function summarizeItemChanges(item: unknown): PendingFileChange[] {
+  const changes = (item as { changes?: unknown } | undefined)?.changes;
+  if (!Array.isArray(changes)) return [];
+  return changes
+    .map((change) => {
+      const c = (change ?? {}) as { path?: unknown; kind?: unknown; diff?: unknown };
+      return {
+        path: String(c.path ?? ""),
+        kind: String(c.kind ?? "update"),
+        // Long enough to judge, short enough to render in a card.
+        diff: typeof c.diff === "string" ? c.diff.slice(0, 4000) : "",
+      };
+    })
+    .filter((change) => change.path.length > 0);
 }
 
 export interface ProjectIndexState {
@@ -1689,6 +1752,8 @@ export function usePipeline(): UsePipelineReturn {
     method: string;
     command: string;
     reason: string;
+    /** Files this would change, when the runtime has announced the item. */
+    changes?: PendingFileChange[];
   } | null>(null);
   const pendingApprovalRef = useRef(pendingApproval);
   pendingApprovalRef.current = pendingApproval;
@@ -1924,6 +1989,7 @@ export function usePipeline(): UsePipelineReturn {
                 // where a command belongs.
                 command: String(p.command ?? p.path ?? ""),
                 reason: String(p.reason ?? ""),
+                changes: request.changes ?? [],
               });
             },
             onWaitingForUser: setWaitingForUser,
