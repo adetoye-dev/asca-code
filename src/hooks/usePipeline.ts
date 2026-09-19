@@ -158,6 +158,20 @@ async function runAgent(params: {
     `approval_policy = "${approval.approvalPolicy}"`,
     `approvals_reviewer = "${approval.approvalsReviewer}"`,
     `sandbox_mode = "${approval.sandboxMode}"`,
+    // The runtime discovers skills from the *host* (`~/.agents/skills`) as well as
+    // its own home, and those are the user's personal Codex skills — not ours. That
+    // silently imports behaviour we did not choose: a run of "build a small todo
+    // app" twice stopped after a few read-only commands because
+    // `superpowers:brainstorming`, a skill written for interactive sessions where
+    // a human answers, told the agent to present a design and wait. Nothing was
+    // written to disk and the transcript still read like a report.
+    //
+    // This is the documented knob for it. It is set here because it is the right
+    // configuration, and honest because it is not yet a fix: the flag is still
+    // "under development" upstream and was verified *not* to stop the leak — the
+    // agent cited the skill in its own words with this line in place. The app's own
+    // skills live in `~/.acsa/skills` and are unaffected either way.
+    "features.skip_host_skill_discovery = true",
     ...(localProvider && !adapterBaseUrl
       ? []
       : [
@@ -815,6 +829,33 @@ export interface ProjectMeta {
   name: string;
 }
 
+/**
+ * A cheap "did anything change on disk" signature: every file's path and size.
+ *
+ * Exists because a run can report confident, well-written work and have written
+ * nothing at all — watched happening twice, both times because a skill from the
+ * user's personal Codex config told the agent to stop and present a design. The
+ * transcript read like a report; `git status` was empty.
+ *
+ * It is a signature, not a hash: an edit that keeps the byte count identical
+ * would slip through. That is why the wording it drives says what was measured
+ * rather than asserting "nothing changed".
+ */
+export function fileSignature(nodes: FileNode[]): string {
+  const parts: string[] = [];
+  const walk = (list: FileNode[]) => {
+    for (const node of list) {
+      if (node.is_dir) {
+        walk(node.children ?? []);
+      } else {
+        parts.push(`${node.path}:${node.size_bytes}`);
+      }
+    }
+  };
+  walk(nodes);
+  return parts.sort().join("\n");
+}
+
 export interface ProjectIndexState {
   indexed: boolean;
   totalSymbols: number;
@@ -851,10 +892,12 @@ export interface UsePipelineReturn {
   createFileOrFolder: (parentPath: string, name: string, isDir: boolean) => Promise<void>;
   deleteFile: (path: string) => Promise<void>;
   createProject: (name: string, template: string, parentDir?: string) => Promise<void>;
-  refreshProjectFiles: () => Promise<void>;
+  refreshProjectFiles: () => Promise<FileNode[]>;
 
   // Code Intelligence & Indexer State
   indexStatus: ProjectIndexState;
+  /** A finished run that left every file's path and size untouched. */
+  noFileChanges: boolean;
   isIndexing: boolean;
   syncIndex: () => Promise<void>;
 
@@ -1116,6 +1159,10 @@ export function usePipeline(): UsePipelineReturn {
   // this from the orchestration result; when that was removed nothing filled it
   // in, so every failure fell through to "the task needs attention".
   const [failureDetail, setFailureDetail] = useState("");
+  // True when a finished run left every file's path and size exactly as it found
+  // them. The chat says so, because otherwise a design-first reply and a
+  // completed edit look identical in the transcript.
+  const [noFileChanges, setNoFileChanges] = useState(false);
   // Code Intelligence & Symbol Graph Indexer state
   const [indexStatus, setIndexStatus] = useState<ProjectIndexState>({
     indexed: false,
@@ -1159,10 +1206,10 @@ export function usePipeline(): UsePipelineReturn {
   }, [activeProject.path, syncIndex]);
 
   // ── File Tree Loading ─────────────────────────────────────────────────────
-  const refreshProjectFiles = useCallback(async () => {
+  const refreshProjectFiles = useCallback(async (): Promise<FileNode[]> => {
     if (!activeProject.path) {
       setProjectFiles([]);
-      return;
+      return [];
     }
     if (isTauriAvailable) {
       try {
@@ -1171,12 +1218,14 @@ export function usePipeline(): UsePipelineReturn {
           projectPath: activeProject.path,
         });
         setProjectFiles(nodes);
+        return nodes;
       } catch (err) {
         console.warn("Tauri list_project_files failed:", err);
       }
     } else {
       console.warn(DESKTOP_REQUIRED_MESSAGE);
     }
+    return [];
   }, [isTauriAvailable, activeProject.path]);
 
   /**
@@ -1194,14 +1243,15 @@ export function usePipeline(): UsePipelineReturn {
    * so it is affordable to do on every write rather than trying to guess whether
    * a write was interesting.
    */
-  const refreshWorkspace = useCallback(async () => {
-    await refreshProjectFiles();
+  const refreshWorkspace = useCallback(async (): Promise<FileNode[]> => {
+    const nodes = await refreshProjectFiles();
     try {
       await syncIndex();
     } catch {
       // Keep the previous index. It is stale, which the status bar already says,
       // and a failed re-index must not turn into a failed save or a failed turn.
     }
+    return nodes;
   }, [refreshProjectFiles, syncIndex]);
 
   // Initial load
@@ -1575,8 +1625,13 @@ export function usePipeline(): UsePipelineReturn {
       setStatus("running");
       setPendingApproval(null);
       setFailureDetail("");
+      setNoFileChanges(false);
       setActivityLog([]);
       setCurrentDiff("");
+      // The pre-run snapshot. `projectFiles` is the last list we loaded, and
+      // nothing else refreshes it mid-run, so this is what the workspace looked
+      // like when the agent started.
+      const before = fileSignature(projectFiles);
       setStreamingAnswer("");
       setStreamingThought("");
       setAgentSteps([]);
@@ -1766,7 +1821,8 @@ export function usePipeline(): UsePipelineReturn {
           setStatus(codexStatus);
         }
 
-        await refreshWorkspace();
+        const after = await refreshWorkspace();
+        setNoFileChanges(fileSignature(after) === before);
       } else {
         // Agent runs need the desktop shell: the runtime, the engine and the
         // project live behind Tauri IPC. There is no browser fallback — the dev
@@ -1793,6 +1849,7 @@ export function usePipeline(): UsePipelineReturn {
       isTauriAvailable,
       refreshWorkspace,
       persistAgentThreads,
+      projectFiles,
     ]
   );
 
@@ -1841,6 +1898,7 @@ export function usePipeline(): UsePipelineReturn {
     createProject,
     refreshProjectFiles,
     indexStatus,
+    noFileChanges,
     isIndexing,
     syncIndex,
     prompt,

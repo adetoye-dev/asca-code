@@ -70,6 +70,8 @@ interface AiAssistantChatProps {
   isWide?: boolean;
   selectedContext?: { path: string; code: string } | null;
   failureDetail?: string;
+  /** A finished run that left every file's path and size untouched. */
+  noFileChanges?: boolean;
   /** A request the agent is blocked on, waiting for the user's answer. */
   pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
   respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
@@ -113,6 +115,7 @@ export function AiAssistantChat({
   isWide = false,
   selectedContext = null,
   failureDetail = "",
+  noFileChanges = false,
   pendingApproval = null,
   respondToApproval,
   indexStatus,
@@ -302,8 +305,15 @@ export function AiAssistantChat({
 
       // The agent's own final message is the answer. There is no separate
       // "verification result" object any more — that data source is gone.
+      //
+      // A run that changed no file says so. The wording describes what was
+      // measured (paths and sizes) rather than claiming "nothing happened" — a
+      // run that answered a question legitimately changes nothing, and a design
+      // that was never written is otherwise indistinguishable from one that was.
+      const noChangesNote =
+        "\n\n> No files were added, removed or resized in this run.";
       const finalContent = isSuccess
-        ? streamingAnswer || "Task completed."
+        ? (streamingAnswer || "Task completed.") + (noFileChanges ? noChangesNote : "")
         : failureDetail
         ? `⚠️ **Task Failed:** ${failureDetail}`
         : "The task needs attention. Review Problems or Output for details.";
@@ -331,7 +341,7 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, failureDetail, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, noFileChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
   /**
    * Ask Ollama what is actually installed, and believe it.
