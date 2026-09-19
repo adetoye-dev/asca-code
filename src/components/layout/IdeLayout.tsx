@@ -217,6 +217,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     pendingApproval,
     pendingQuestion,
     respondToQuestion,
+    turnChanges,
+    openDiff,
+    reviewDiff,
+    clearReviewDiff,
     respondToApproval,
     agentSteps,
   } = pipeline;
@@ -1032,6 +1036,30 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setCurrentDiff("");
   }, [activeProject.path, setCurrentDiff]);
 
+  // The change card's "Review". The two sides come from the engine — HEAD versus
+  // the working tree — so the existing viewer shows a real side-by-side instead
+  // of the file's content against an empty left pane.
+  useEffect(() => {
+    const api = dockviewApiRef.current;
+    if (!api || !reviewDiff) return;
+
+    const panelId = "dock_review";
+    const existing = api.getPanel(panelId);
+    if (existing) api.removePanel(existing);
+    api.addPanel({
+      id: panelId,
+      component: "diff",
+      title: reviewDiff.filePath.split(/[\\/]/).pop() || "Diff",
+      params: {
+        filePath: reviewDiff.filePath,
+        originalContent: reviewDiff.originalContent,
+        modifiedContent: reviewDiff.modifiedContent,
+        isGit: true,
+      },
+    });
+    clearReviewDiff();
+  }, [reviewDiff, clearReviewDiff]);
+
   // Open Diff tab when agent generates a diff
   useEffect(() => {
     const api = dockviewApiRef.current;
@@ -1583,6 +1611,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               respondToApproval={respondToApproval}
               pendingQuestion={pendingQuestion}
               respondToQuestion={respondToQuestion}
+              turnChanges={turnChanges}
+              onReviewFile={openDiff}
             />
           </aside>
         )}

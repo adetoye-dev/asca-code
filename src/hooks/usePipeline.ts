@@ -704,6 +704,7 @@ function applyAppServerEvent(
     setAnswer: (text: string) => void;
     logOutput: (line: any) => void;
     markTouched: (paths: string[]) => void;
+    recordChanges?: (changes: PendingFileChange[]) => void;
     fail: (detail: string) => void;
   },
 ): void {
@@ -770,6 +771,10 @@ function applyAppServerEvent(
       : [];
     if (changed.length > 0) {
       update.markTouched(changed);
+      // The item carries the diff too, which is what makes a change summary
+      // possible: turn-scoped, and it counts only what the agent did — unlike a
+      // `git diff`, which would also count the user's own uncommitted edits.
+      update.recordChanges?.(summarizeItemChanges(item));
       update.setSteps((prev) => [
         ...prev,
         {
@@ -833,6 +838,7 @@ function applyCodexEvent(
     appendAnswer: (text: string) => void;
     logOutput: (line: any) => void;
     markTouched: (paths: string[]) => void;
+    recordChanges?: (changes: PendingFileChange[]) => void;
   },
 ): void {
   if (event?.type === "thread.started") {
@@ -1024,6 +1030,24 @@ export function approvalSummary(method: string): string {
 export type PendingFileChange = { path: string; kind: string; diff: string };
 
 /**
+ * Added and removed line counts from a unified diff.
+ *
+ * Counted from the runtime's own diff, so the numbers describe *this turn*
+ * rather than the working tree — a `git diff` would also include the user's own
+ * uncommitted edits to the same file. `+++`/`---` are file headers, not changes.
+ */
+export function countDiffLines(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+/**
  * Pull the changed files out of a `fileChange` thread item.
  *
  * The approval request itself carries only an `itemId` — no paths, no diff — so
@@ -1065,6 +1089,17 @@ export interface UsePipelineReturn {
   setCurrentDiff: (diff: string) => void;
   applyPatchToTab: (path: string, newContent: string) => void;
   touchedPaths: string[];
+  /** What this turn changed, from the runtime's own item diffs. */
+  turnChanges: PendingFileChange[];
+  /** Open a file's two sides in the diff viewer. */
+  openDiff: (filePath: string) => Promise<void>;
+  /** Set when `openDiff` has sides ready; cleared once the viewer has them. */
+  reviewDiff: {
+    filePath: string;
+    originalContent: string;
+    modifiedContent: string;
+  } | null;
+  clearReviewDiff: () => void;
   isProjectModalOpen: boolean;
   setIsProjectModalOpen: (open: boolean) => void;
   isSettingsModalOpen: boolean;
@@ -1352,6 +1387,54 @@ export function usePipeline(): UsePipelineReturn {
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [currentDiff, setCurrentDiff] = useState<string>("");
   const [touchedPaths, setTouchedPaths] = useState<string[]>([]);
+
+  /**
+   * What this turn changed, straight off the runtime's own item diffs.
+   *
+   * Codex answers "what did it just do?" with a summary card instead of asking
+   * before every write, and that is the better trade: a write inside your own
+   * project is not a decision you want to make twenty times, but you do want to
+   * see it afterwards. Turn-scoped on purpose — a `git diff` would also count
+   * your own uncommitted edits.
+   */
+  const [turnChanges, setTurnChanges] = useState<PendingFileChange[]>([]);
+
+  /** Sides of a file to open in the diff viewer, for the card's "Review". */
+  const [reviewDiff, setReviewDiff] = useState<{
+    filePath: string;
+    originalContent: string;
+    modifiedContent: string;
+  } | null>(null);
+
+  const openDiff = useCallback(
+    async (filePath: string) => {
+      try {
+        const { engineCall } = await import("../services/engineBridge");
+        const sides = await engineCall<{ originalContent: string; modifiedContent: string }>(
+          "git",
+          ["diff-file", JSON.stringify({ cwd: activeProject.path, filePath })],
+        );
+        setReviewDiff({
+          filePath,
+          originalContent: sides.originalContent ?? "",
+          modifiedContent: sides.modifiedContent ?? "",
+        });
+      } catch (error) {
+        setActivityLog((prev) => [
+          ...prev,
+          {
+            line_number: prev.length + 1,
+            content: `[agent] could not open a diff for ${filePath}: ${String(error)}`,
+            stream: "stderr",
+            is_json: false,
+          },
+        ]);
+      }
+    },
+    [activeProject.path],
+  );
+
+  const clearReviewDiff = useCallback(() => setReviewDiff(null), []);
   const [streamingAnswer, setStreamingAnswer] = useState<string>("");
   const [streamingThought, setStreamingThought] = useState<string>("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
@@ -1868,6 +1951,7 @@ export function usePipeline(): UsePipelineReturn {
       setFailureDetail("");
       setNoFileChanges(false);
       setWaitingForUser("");
+      setTurnChanges([]);
       setActivityLog([]);
       setCurrentDiff("");
       // The pre-run snapshot. `projectFiles` is the last list we loaded, and
@@ -1961,6 +2045,14 @@ export function usePipeline(): UsePipelineReturn {
           logOutput: (line: any) => setActivityLog((prev) => [...prev, line]),
           markTouched: (paths: string[]) =>
             setTouchedPaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]),
+          recordChanges: (changes: PendingFileChange[]) =>
+            setTurnChanges((prev) => {
+              // One row per file, keeping the latest diff for it: an edit tool
+              // can touch the same file more than once in a turn.
+              const byPath = new Map(prev.map((change) => [change.path, change]));
+              for (const change of changes) byPath.set(change.path, change);
+              return Array.from(byPath.values());
+            }),
         };
         const onAgentEvent = (event: any) =>
           transport === "app-server"
@@ -2132,6 +2224,10 @@ export function usePipeline(): UsePipelineReturn {
     setCurrentDiff,
     applyPatchToTab,
     touchedPaths,
+    turnChanges,
+    openDiff,
+    reviewDiff,
+    clearReviewDiff,
     isProjectModalOpen,
     setIsProjectModalOpen,
     isSettingsModalOpen,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalSummary, summarizeItemChanges, userInputResponse } from "./usePipeline";
+import { approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
 
 /**
  * The answer half of `request_user_input`.
@@ -83,5 +83,30 @@ describe("summarising a pending file change", () => {
     for (const junk of [undefined, null, {}, { changes: null }, { changes: [{}] }, "nope"]) {
       expect(summarizeItemChanges(junk)).toEqual([]);
     }
+  });
+});
+
+/**
+ * The change card's numbers. Counted from the runtime's own diff, so they
+ * describe this turn rather than the working tree — and the `+++`/`---` file
+ * headers are not changes, which is the easy way to be off by two.
+ */
+describe("counting a diff", () => {
+  it("counts real changes and not the file headers", () => {
+    const diff = [
+      "--- a/src/x.ts",
+      "+++ b/src/x.ts",
+      "@@ -1,2 +1,3 @@",
+      " keep",
+      "-gone",
+      "+new",
+      "+extra",
+    ].join("\n");
+    expect(countDiffLines(diff)).toEqual({ added: 2, removed: 1 });
+  });
+
+  it("is zero for nothing at all", () => {
+    expect(countDiffLines("")).toEqual({ added: 0, removed: 0 });
+    expect(countDiffLines("--- a/src/x.ts\n+++ b/src/x.ts")).toEqual({ added: 0, removed: 0 });
   });
 });

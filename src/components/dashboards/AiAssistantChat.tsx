@@ -46,7 +46,7 @@ import {
 } from "../../services/aiChatPersistence";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { AgentQuestion, PendingFileChange, ProjectIndexState } from "../../hooks/usePipeline";
-import { approvalSummary } from "../../hooks/usePipeline";
+import { approvalSummary, countDiffLines } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
 
 interface AiAssistantChatProps {
@@ -87,6 +87,10 @@ interface AiAssistantChatProps {
   /** A `request_user_input` question, which needs answers rather than a decision. */
   pendingQuestion?: { id: unknown; questions: AgentQuestion[] } | null;
   respondToQuestion?: (answers: Record<string, string[]>) => Promise<void>;
+  /** What the last turn changed, from the runtime's own item diffs. */
+  turnChanges?: PendingFileChange[];
+  /** Open a file's two sides in the diff viewer. */
+  onReviewFile?: (path: string) => Promise<void>;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -133,6 +137,8 @@ export function AiAssistantChat({
   respondToApproval,
   pendingQuestion = null,
   respondToQuestion,
+  turnChanges = [],
+  onReviewFile,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
@@ -1706,6 +1712,47 @@ Click to re-index project.`}
             </div>
           )}
         </>
+
+        {/* What the turn changed, after the fact rather than as a gate.
+            Codex's trade, and the right one: a write inside your own project is
+            not a decision worth making twenty times, but you do want to see it. */}
+        {turnChanges.length > 0 && (
+          <div className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
+              <span className="text-[11px] text-zinc-300">
+                Edited {turnChanges.length} {turnChanges.length === 1 ? "file" : "files"}
+              </span>
+              <span className="flex items-center gap-3 font-mono text-[11px]">
+                <span className="text-emerald-400">
+                  +{turnChanges.reduce((n, c) => n + countDiffLines(c.diff).added, 0)}
+                </span>
+                <span className="text-red-400">
+                  −{turnChanges.reduce((n, c) => n + countDiffLines(c.diff).removed, 0)}
+                </span>
+              </span>
+            </div>
+            {turnChanges.map((change) => {
+              const { added, removed } = countDiffLines(change.diff);
+              return (
+                <button
+                  key={change.path}
+                  type="button"
+                  onClick={() => void onReviewFile?.(change.path)}
+                  title={`Review ${change.path}`}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left hover:bg-zinc-900/70 transition-colors cursor-pointer"
+                >
+                  <span className="text-[11px] font-mono text-zinc-400 truncate">
+                    {change.path}
+                  </span>
+                  <span className="flex items-center gap-3 font-mono text-[11px] shrink-0">
+                    {added > 0 && <span className="text-emerald-400">+{added}</span>}
+                    {removed > 0 && <span className="text-red-400">−{removed}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div ref={chatBottomRef} />
       </div>
