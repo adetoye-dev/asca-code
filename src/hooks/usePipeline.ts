@@ -528,13 +528,11 @@ async function runAgentOnAppServer(params: {
         }
 
         // The runtime narrates its own state, including the two that mean it is
-        // blocked on a person.
+        // blocked on a person. Set on *every* status change, not only a waiting
+        // one: an approval that gets answered moves the thread on, and a flag
+        // that is only ever raised leaves a finished run claiming to be waiting.
         if (method === "thread/status/changed") {
-          const waiting = waitingStatusIn(parsed?.params);
-          if (waiting) {
-            params.onWaitingForUser?.(waiting);
-            return;
-          }
+          params.onWaitingForUser?.(waitingStatusIn(parsed?.params));
         }
 
         if (method === "turn/failed") {
@@ -1850,6 +1848,12 @@ export function usePipeline(): UsePipelineReturn {
         // No fallback to our own loop. It narrated tool calls in prose and answered
         // refusals with a guard message, editing nothing — degrading to it silently is
         // worse than failing. If the runtime is missing, say so and how to fix it.
+        // Measured *before* the terminal status is set. The chat builds its
+        // message from `status`, so a flag set afterwards is a flag the message
+        // never sees — which is how the first version of this shipped invisible.
+        const after = await refreshWorkspace();
+        setNoFileChanges(fileSignature(after) === before);
+
         if (codexStatus === "unavailable") {
           setStatus("failed");
           setFailureDetail(
@@ -1872,8 +1876,6 @@ export function usePipeline(): UsePipelineReturn {
           setStatus(codexStatus);
         }
 
-        const after = await refreshWorkspace();
-        setNoFileChanges(fileSignature(after) === before);
       } else {
         // Agent runs need the desktop shell: the runtime, the engine and the
         // project live behind Tauri IPC. There is no browser fallback — the dev
