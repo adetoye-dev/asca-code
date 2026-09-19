@@ -215,6 +215,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     noFileChanges,
     waitingForUser,
     pendingApproval,
+    pendingQuestion,
+    respondToQuestion,
     respondToApproval,
     agentSteps,
   } = pipeline;
@@ -1579,6 +1581,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               waitingForUser={waitingForUser}
               pendingApproval={pendingApproval}
               respondToApproval={respondToApproval}
+              pendingQuestion={pendingQuestion}
+              respondToQuestion={respondToQuestion}
             />
           </aside>
         )}

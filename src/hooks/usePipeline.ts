@@ -81,6 +81,8 @@ async function runAgent(params: {
   onApproval?: (request: { id: unknown; method: string; params: any }) => void;
   /** The runtime says it is blocked on the human (`thread/status/changed`). */
   onWaitingForUser?: (status: string) => void;
+  /** A `request_user_input` question, which needs answers, not a decision. */
+  onQuestion?: (request: { id: unknown; questions: AgentQuestion[] }) => void;
   /** Provider/model the user picked for this message; wins over the saved default. */
   selection?: { providerId: string; model: string };
   /** How much the agent may do unattended. Defaults to "approve for me". */
@@ -175,6 +177,13 @@ async function runAgent(params: {
     // runtime can ask the user (`ServerRequest::ToolRequestUserInput`, and a
     // thread status of `waitingOnUserInput`), and the app has to answer. See
     // `onWaitingForUser` below for what is wired up so far and what is not.
+    //
+    // `request_user_input` is gated to specific modes upstream, and the default
+    // mode is not one of them — so without this the agent can only ask in prose,
+    // which works (the reply resumes the thread) but cannot carry options or
+    // block the turn. Turning it on is the difference between the agent
+    // *describing* a question and the app being able to *ask* it.
+    "features.default_mode_request_user_input = true",
     ...(localProvider && !adapterBaseUrl
       ? []
       : [
@@ -285,6 +294,7 @@ async function runAgent(params: {
       onFailure: params.onFailure,
       onApproval: params.onApproval,
       onWaitingForUser: params.onWaitingForUser,
+      onQuestion: params.onQuestion,
     });
   }
 
@@ -486,6 +496,8 @@ async function runAgentOnAppServer(params: {
    * stopped to ask looked exactly like one that had finished.
    */
   onWaitingForUser?: (status: string) => void;
+  /** A `request_user_input` question, which needs answers, not a decision. */
+  onQuestion?: (request: { id: unknown; questions: AgentQuestion[] }) => void;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -518,8 +530,24 @@ async function runAgentOnAppServer(params: {
         // an approval. It blocks the turn until answered, so it goes straight to
         // the UI rather than into the transcript.
         if (method && parsed?.id !== undefined) {
-          params.log(`[agent] the runtime is asking: ${method}`);
-          params.onApproval?.({ id: parsed.id, method, params: parsed.params });
+          // A question's payload is not a secret, and its shape is exactly what an
+          // answer has to match — so it is the one request worth showing in full
+          // when someone is working out why a turn is holding.
+          const detail =
+            method === "item/tool/requestUserInput"
+              ? ` ${JSON.stringify(parsed.params ?? {}).slice(0, 600)}`
+              : "";
+          params.log(`[agent] the runtime is asking: ${method}${detail}`);
+          if (method === "item/tool/requestUserInput") {
+            params.onQuestion?.({
+              id: parsed.id,
+              questions: Array.isArray(parsed.params?.questions)
+                ? (parsed.params.questions as AgentQuestion[])
+                : [],
+            });
+          } else {
+            params.onApproval?.({ id: parsed.id, method, params: parsed.params });
+          }
           return;
         }
 
@@ -894,6 +922,68 @@ export function waitingStatusIn(payload: unknown): string {
   return "";
 }
 
+/**
+ * One `request_user_input` question, exactly as the runtime sends it
+ * (`ToolRequestUserInputQuestion` in its own schema).
+ */
+export type AgentQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  /** Free text is allowed in addition to the options. */
+  isOther?: boolean;
+  isSecret?: boolean;
+  options?: { label: string; description: string }[] | null;
+};
+
+/**
+ * The answer payload the runtime expects, built from question ids → option
+ * labels (or free text).
+ *
+ * Shape read from the runtime's own schema rather than inferred: the response is
+ * `{"answers": {"<questionId>": {"answers": ["<string>", …]}}}`
+ * (`ToolRequestUserInputResponse` / `ToolRequestUserInputAnswer`, which were
+ * generated with `codex app-server generate-json-schema`). Getting this wrong
+ * leaves the turn holding forever — the same failure as the old
+ * `{decision: "approved"}` on the approval path.
+ */
+export function userInputResponse(answers: Record<string, string[]>): {
+  answers: Record<string, { answers: string[] }>;
+} {
+  return {
+    answers: Object.fromEntries(
+      Object.entries(answers).map(([questionId, values]) => [
+        questionId,
+        { answers: values.filter((value) => value.trim().length > 0) },
+      ]),
+    ),
+  };
+}
+
+/**
+ * What an approval request is actually asking for, in a sentence.
+ *
+ * The runtime sends a method and, for a command, the command; for a file change
+ * it sends only an `itemId` (`FileChangeRequestApprovalParams` has no paths), so
+ * there is nothing to show but a description. Without this the card rendered the
+ * raw method as the "command" — literally `$ item/fileChange/requestApproval` —
+ * which asks the user to approve something they cannot see.
+ */
+export function approvalSummary(method: string): string {
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+      return "run a command";
+    case "item/fileChange/requestApproval":
+      return "change files in this project";
+    case "item/permissions/requestApproval":
+      return "use permissions it does not have yet";
+    case "mcpServer/elicitation/request":
+      return "connect to an MCP server";
+    default:
+      return "do something it needs your approval for";
+  }
+}
+
 export interface ProjectIndexState {
   indexed: boolean;
   totalSymbols: number;
@@ -964,6 +1054,9 @@ export interface UsePipelineReturn {
   failureDetail: string;
   /** A request the agent is blocked on, if it is waiting for one. */
   pendingApproval: { id: unknown; method: string; command: string; reason: string } | null;
+  /** A `request_user_input` question the runtime is holding the turn for. */
+  pendingQuestion: { id: unknown; questions: AgentQuestion[] } | null;
+  respondToQuestion: (answers: Record<string, string[]>) => Promise<void>;
   respondToApproval: (decision: ApprovalDecision) => Promise<void>;
 
   runPipeline: (
@@ -1600,6 +1693,41 @@ export function usePipeline(): UsePipelineReturn {
   const pendingApprovalRef = useRef(pendingApproval);
   pendingApprovalRef.current = pendingApproval;
 
+  // A `request_user_input` question is a different thing from an approval: it
+  // carries its own options and expects answers keyed by question id, so it gets
+  // its own state rather than being squeezed into the approval card. Rendered as
+  // an approval it read "APPROVAL NEEDED … $ item/tool/requestUserInput", which
+  // is what a paused run looked like before this existed.
+  const [pendingQuestion, setPendingQuestion] = useState<{
+    id: unknown;
+    questions: AgentQuestion[];
+  } | null>(null);
+  const pendingQuestionRef = useRef(pendingQuestion);
+  pendingQuestionRef.current = pendingQuestion;
+
+  const respondToQuestion = useCallback(async (answers: Record<string, string[]>) => {
+    const request = pendingQuestionRef.current;
+    if (!request) return;
+    setPendingQuestion(null);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("agent_respond", {
+        requestId: request.id,
+        decision: userInputResponse(answers),
+      });
+    } catch (error) {
+      setActivityLog((prev) => [
+        ...prev,
+        {
+          line_number: prev.length + 1,
+          content: `[agent] could not answer the question: ${String(error)}`,
+          stream: "stderr",
+          is_json: false,
+        },
+      ]);
+    }
+  }, []);
+
   const respondToApproval = useCallback(async (decision: ApprovalDecision) => {
     const request = pendingApprovalRef.current;
     if (!request) return;
@@ -1671,6 +1799,7 @@ export function usePipeline(): UsePipelineReturn {
 
       setStatus("running");
       setPendingApproval(null);
+      setPendingQuestion(null);
       setFailureDetail("");
       setNoFileChanges(false);
       setWaitingForUser("");
@@ -1790,11 +1919,15 @@ export function usePipeline(): UsePipelineReturn {
               setPendingApproval({
                 id: request.id,
                 method: request.method,
-                command: String(p.command ?? p.path ?? request.method),
+                // Empty when there is no command to show. The old fallback was
+                // the method name, which put `$ item/fileChange/requestApproval`
+                // where a command belongs.
+                command: String(p.command ?? p.path ?? ""),
                 reason: String(p.reason ?? ""),
               });
             },
             onWaitingForUser: setWaitingForUser,
+            onQuestion: setPendingQuestion,
             onEvent: onAgentEvent,
             resumeThreadId: resume,
             images: usableImages,
@@ -1973,6 +2106,8 @@ export function usePipeline(): UsePipelineReturn {
     agentSteps,
     failureDetail,
     pendingApproval,
+    pendingQuestion,
+    respondToQuestion,
     respondToApproval,
   };
 }

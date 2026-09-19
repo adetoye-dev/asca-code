@@ -10,7 +10,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Icon } from "../ui/Icon";
-import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users } from "lucide-react";
+import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users, HelpCircle } from "lucide-react";
 import type { PipelineStatus, PipelineOutputLine } from "../../types/telemetry";
 import {
   getConfiguredModelsList,
@@ -45,7 +45,8 @@ import {
   subscribeChatHistory,
 } from "../../services/aiChatPersistence";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import type { ProjectIndexState } from "../../hooks/usePipeline";
+import type { AgentQuestion, ProjectIndexState } from "../../hooks/usePipeline";
+import { approvalSummary } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
 
 interface AiAssistantChatProps {
@@ -77,6 +78,9 @@ interface AiAssistantChatProps {
   /** A request the agent is blocked on, waiting for the user's answer. */
   pendingApproval?: { id: unknown; method: string; command: string; reason: string } | null;
   respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
+  /** A `request_user_input` question, which needs answers rather than a decision. */
+  pendingQuestion?: { id: unknown; questions: AgentQuestion[] } | null;
+  respondToQuestion?: (answers: Record<string, string[]>) => Promise<void>;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -121,6 +125,8 @@ export function AiAssistantChat({
   waitingForUser = "",
   pendingApproval = null,
   respondToApproval,
+  pendingQuestion = null,
+  respondToQuestion,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
@@ -367,6 +373,35 @@ export function AiAssistantChat({
    * also clears a saved selection that names a model that is gone, because the
    * agent resolves its model from that.
    */
+  // Answers being collected for a `request_user_input` question, keyed by
+  // question id. The runtime takes every answer in one response, so option
+  // clicks accumulate and the response goes out once each question has one —
+  // which for the common single-question case means the first click sends.
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    // A new question starts from a clean slate; carrying answers across would
+    // answer the wrong question.
+    setQuestionAnswers({});
+  }, [pendingQuestion?.id]);
+
+  const answerQuestion = useCallback(
+    (questionId: string, values: string[]) => {
+      const next = { ...questionAnswers, [questionId]: values };
+      setQuestionAnswers(next);
+
+      const questions = pendingQuestion?.questions ?? [];
+      const complete =
+        questions.length > 0 &&
+        questions.every((q) => (next[q.id] ?? []).some((value) => value.trim() !== ""));
+      if (complete) {
+        void respondToQuestion?.(next);
+        setQuestionAnswers({});
+      }
+    },
+    [questionAnswers, pendingQuestion, respondToQuestion],
+  );
+
   const refreshLocalModels = useCallback(async () => {
     try {
       const status = await checkOllamaStatus();
@@ -1674,6 +1709,73 @@ Click to re-index project.`}
         <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
             {/* The agent is blocked until this is answered. */}
+            {/* A question, not a permission request. The runtime's own
+                `request_user_input` carries options and free text, and the answer
+                goes back keyed by question id — rendered as an approval card it
+                read "APPROVAL NEEDED … $ item/tool/requestUserInput", which told
+                the user nothing and could not be answered correctly. */}
+            {pendingQuestion && pendingQuestion.questions.length > 0 && (
+              <div className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-purple-300 font-semibold text-[11px] tracking-wider uppercase mb-2">
+                  <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-purple-300 shrink-0" />
+                  <span>The agent is asking</span>
+                </div>
+                {pendingQuestion.questions.map((question) => (
+                  <div key={question.id} className="mb-3 last:mb-1">
+                    <p className="text-xs font-semibold text-zinc-100">{question.header}</p>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 mb-2 leading-relaxed">
+                      {question.question}
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {(question.options ?? []).map((option) => (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => answerQuestion(question.id, [option.label])}
+                          className="text-left px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 hover:border-purple-500/50 text-zinc-200 text-xs transition-colors cursor-pointer"
+                        >
+                          {option.label}
+                          {option.description ? (
+                            <span className="block text-[10px] text-zinc-500 mt-0.5">
+                              {option.description}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                    {question.isOther && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const field = event.currentTarget.elements.namedItem(
+                            "answer",
+                          ) as HTMLInputElement | null;
+                          const value = field?.value.trim() ?? "";
+                          if (!value) return;
+                          if (field) field.value = "";
+                          answerQuestion(question.id, [value]);
+                        }}
+                        className="mt-2 flex items-center gap-2"
+                      >
+                        <input
+                          name="answer"
+                          type={question.isSecret ? "password" : "text"}
+                          placeholder="Or type your own answer…"
+                          className="flex-1 bg-black/50 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500/60"
+                        />
+                        <button
+                          type="submit"
+                          className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          Answer
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {pendingApproval && (
               <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl">
                 <div className="flex items-center gap-2 text-amber-400 font-semibold text-[11px] tracking-wider uppercase mb-1.5">
@@ -1682,13 +1784,17 @@ Click to re-index project.`}
                 </div>
                 <p className="text-xs text-zinc-300 mb-2 leading-relaxed">
                   {pendingApproval.reason ||
-                    "The agent wants to run the following before it continues:"}
+                    `The agent wants to ${approvalSummary(pendingApproval.method)} before it continues.`}
                 </p>
+                {/* Only when there is one. A file-change approval carries no
+                    command and no paths, so there is nothing honest to put here. */}
+                {pendingApproval.command ? (
                 <div className="flex items-center gap-2 p-2 rounded-xl bg-black/80 border border-zinc-800 font-mono text-[11px] text-emerald-400 overflow-x-auto select-all mb-2.5">
                   <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                   <span className="text-zinc-500 select-none">$</span>
                   <span>{pendingApproval.command}</span>
                 </div>
+                ) : null}
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
