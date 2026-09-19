@@ -370,3 +370,30 @@ if (update) {
 4. Launch the `.app` and confirm the engine resolves from `Contents/Resources`.
 5. Notarise and staple, upload the artifact + `.sig`, publish `latest.json`.
 6. Install the *previous* version and confirm it updates to the new one.
+
+### The publish step is manual, and silence here looks exactly like success
+
+`.github/workflows/release.yml` creates the release with `draft: true`, so pushing
+a tag **does not ship anything**. The workflow goes green, the tag exists, the
+assets are attached — and the app still sees the previous version, because
+`/releases/latest/download/latest.json` skips drafts and GitHub serves the older
+one, and because draft assets are not publicly downloadable at all. That was
+`v0.2.1`: a green run, a 112 MB signed bundle that nobody could fetch, and a
+manifest still advertising `0.2.0`.
+
+After every tag push, publish the draft:
+
+```bash
+gh release edit vX.Y.Z --repo adetoye-dev/asca-code --draft=false
+```
+
+Then confirm the manifest that the app actually reads, not just the one in the
+release:
+
+```bash
+curl -sL https://github.com/adetoye-dev/asca-code/releases/latest/download/latest.json | head -3
+```
+
+Expect the new version. `/latest/` sits behind a CDN, so for a minute or two
+after publishing it can still answer with the previous release — re-check before
+concluding anything is broken.
