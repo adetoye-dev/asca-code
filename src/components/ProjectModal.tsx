@@ -123,7 +123,7 @@ export function ProjectModal({
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100">Create New Project on Disk</h2>
-              <p className="text-[11px] text-zinc-400">
+              <p className="text-2xs text-zinc-400">
                 Scaffold a new project in a real physical directory on your machine.
               </p>
             </div>
@@ -221,14 +221,14 @@ export function ProjectModal({
                           {tmpl.files.map((f) => (
                             <span
                               key={f}
-                              className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono"
+                              className="text-3xs px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono"
                             >
                               {f}
                             </span>
                           ))}
                         </div>
                       </div>
-                      <p className="text-[11px] text-zinc-500 mt-0.5 leading-normal">
+                      <p className="text-2xs text-zinc-500 mt-0.5 leading-normal">
                         {tmpl.description}
                       </p>
                     </div>
@@ -242,7 +242,7 @@ export function ProjectModal({
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-950/30 px-3 py-2 text-[11px] leading-relaxed text-red-200"
+              className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-950/30 px-3 py-2 text-2xs leading-relaxed text-red-200"
             >
               <Icon icon={AlertCircle} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" />
               <span className="break-words">{error}</span>

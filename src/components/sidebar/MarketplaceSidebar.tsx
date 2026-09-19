@@ -176,7 +176,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
       {/* Header */}
       <div className="px-3 pt-3 pb-2 shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+          <span className="text-2xs font-bold uppercase tracking-wider text-zinc-400">
             Marketplace
           </span>
           <button
@@ -195,7 +195,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search skills, tools, MCP servers…"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1.5 text-[11px] text-zinc-100 placeholder-zinc-600 outline-none focus:border-purple-500/60"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1.5 text-2xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-purple-500/60"
           />
           <Icon icon={Search} className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500" />
         </div>
@@ -206,7 +206,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               key={tab.id}
               type="button"
               onClick={() => setKind(tab.id)}
-              className={`px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+              className={`px-2 py-1 rounded-md text-3xs font-semibold uppercase tracking-wide transition-colors ${
                 kind === tab.id
                   ? "bg-white/10 text-white"
                   : "text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
@@ -223,7 +223,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               key={d}
               type="button"
               onClick={() => setDomain(d)}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+              className={`px-1.5 py-0.5 rounded text-3xs font-mono transition-colors ${
                 domain === d
                   ? "bg-purple-500/20 text-purple-200 border border-purple-500/40"
                   : "text-zinc-500 hover:text-zinc-200 border border-transparent"
@@ -237,7 +237,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
 
       {message && (
         <div
-          className={`mx-3 mb-2 px-2 py-1.5 rounded-lg text-[10px] border ${
+          className={`mx-3 mb-2 px-2 py-1.5 rounded-lg text-3xs border ${
             message.ok
               ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-200"
               : "bg-amber-950/30 border-amber-500/40 text-amber-200"
@@ -250,7 +250,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
       {/* Items */}
       <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2">
         {items.length === 0 && (
-          <div className="text-[11px] text-zinc-500 text-center py-6">
+          <div className="text-2xs text-zinc-500 text-center py-6">
             No capabilities match your filters.
           </div>
         )}
@@ -295,7 +295,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         {item.name}
                       </span>
                       <span
-                        className={`px-1 rounded text-[9px] font-mono uppercase ${
+                        className={`px-1 rounded text-4xs font-mono uppercase ${
                           item.kind === "mcp"
                             ? "bg-emerald-500/15 text-emerald-300"
                             : "bg-sky-500/15 text-sky-300"
@@ -303,29 +303,29 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                       >
                         {item.kind === "mcp" ? "mcp" : "skill"}
                       </span>
-                      <span className={`px-1 rounded text-[9px] font-mono uppercase ${trustTone}`}>
+                      <span className={`px-1 rounded text-4xs font-mono uppercase ${trustTone}`}>
                         {TRUST_LABEL[item.trust]}
                       </span>
                       {installed && (
-                        <span className="px-1 rounded text-[9px] font-mono bg-emerald-500/15 text-emerald-300">
+                        <span className="px-1 rounded text-4xs font-mono bg-emerald-500/15 text-emerald-300">
                           installed
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">
+                    <p className="text-3xs text-zinc-400 mt-0.5 leading-snug">
                       {item.description}
                     </p>
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      <span className="text-[9px] font-mono text-zinc-500">
+                      <span className="text-4xs font-mono text-zinc-500">
                         {domainLabel(item.domain).toLowerCase()} · {item.author}
                       </span>
                       {item.license && (
-                        <span className="text-[9px] font-mono text-zinc-600">
+                        <span className="text-4xs font-mono text-zinc-600">
                           {item.license}
                         </span>
                       )}
                       {item.requires && (
-                        <span className="text-[9px] font-mono text-amber-400/80">
+                        <span className="text-4xs font-mono text-amber-400/80">
                           needs {item.requires}
                         </span>
                       )}
@@ -341,12 +341,12 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               {expanded && (
                 <div className="px-2.5 pb-2.5 space-y-2 border-t border-zinc-800 pt-2">
                   {item.overview && (
-                    <p className="text-[10px] text-zinc-400 leading-relaxed">{item.overview}</p>
+                    <p className="text-3xs text-zinc-400 leading-relaxed">{item.overview}</p>
                   )}
 
                   {/* Source & credibility */}
                   <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1.5">
-                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                    <div className="flex items-center gap-1.5 text-3xs text-zinc-400">
                       <Icon icon={ShieldCheck} className="w-3 h-3 text-emerald-400 shrink-0" />
                       <span className="font-mono">
                         {item.trust === "built-in"
@@ -357,7 +357,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                       </span>
                     </div>
                     {item.version && (
-                      <div className="text-[9px] font-mono text-zinc-500">
+                      <div className="text-4xs font-mono text-zinc-500">
                         version: {item.version}
                       </div>
                     )}
@@ -369,7 +369,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                             href={link.url}
                             target="_blank"
                             rel="noreferrer noopener"
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-zinc-700 text-[9px] font-mono text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-zinc-700 text-4xs font-mono text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
                           >
                             {link.label}
                             <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
@@ -377,7 +377,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         ))}
                       </div>
                     ) : (
-                      <div className="text-[9px] font-mono text-zinc-600">
+                      <div className="text-4xs font-mono text-zinc-600">
                         No external source — bundled with the app.
                       </div>
                     )}
@@ -385,15 +385,15 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
 
                   {/* What the install actually does */}
                   <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1">
-                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                    <div className="flex items-center gap-1.5 text-3xs text-zinc-400">
                       <Icon icon={FileText} className="w-3 h-3 shrink-0" />
                       <span className="font-mono">What installs</span>
                     </div>
-                    <div className="text-[9px] font-mono text-zinc-500 break-all">
+                    <div className="text-4xs font-mono text-zinc-500 break-all">
                       {target.path}
                     </div>
                     {target.command && (
-                      <div className="text-[9px] font-mono text-zinc-400 break-all">
+                      <div className="text-4xs font-mono text-zinc-400 break-all">
                         runs: <span className="text-zinc-300">{target.command}</span>
                       </div>
                     )}
@@ -402,7 +402,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         {item.permissions.map((permission) => (
                           <li
                             key={permission}
-                            className="flex items-start gap-1 text-[9px] text-zinc-400"
+                            className="flex items-start gap-1 text-4xs text-zinc-400"
                           >
                             <span className="text-zinc-600">•</span>
                             <span className="leading-snug">{permission}</span>
@@ -415,10 +415,10 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                   {/* Skill body preview */}
                   {item.kind === "skill" && item.skillContent && (
                     <details className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                      <summary className="text-[10px] text-zinc-400 cursor-pointer font-mono">
+                      <summary className="text-3xs text-zinc-400 cursor-pointer font-mono">
                         Preview SKILL.md
                       </summary>
-                      <pre className="mt-1.5 max-h-52 overflow-auto text-[9px] leading-snug text-zinc-400 whitespace-pre-wrap font-mono">
+                      <pre className="mt-1.5 max-h-52 overflow-auto text-4xs leading-snug text-zinc-400 whitespace-pre-wrap font-mono">
                         {item.skillContent}
                       </pre>
                     </details>
@@ -427,7 +427,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                   {/* MCP tools */}
                   {item.kind === "mcp" && (
                     <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 space-y-1">
-                      <div className="text-[10px] text-zinc-400 font-mono">
+                      <div className="text-3xs text-zinc-400 font-mono">
                         {tools && tools.length > 0
                           ? `Tools exposed (${tools.length})`
                           : "Tool list"}
@@ -437,14 +437,14 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                           {tools.map((tool) => (
                             <span
                               key={tool}
-                              className="px-1 py-0.5 rounded bg-zinc-800/70 border border-zinc-700 text-[9px] font-mono text-emerald-300"
+                              className="px-1 py-0.5 rounded bg-zinc-800/70 border border-zinc-700 text-4xs font-mono text-emerald-300"
                             >
                               {tool}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        <div className="text-[9px] text-zinc-500 leading-snug">
+                        <div className="text-4xs text-zinc-500 leading-snug">
                           {installed
                             ? "Run “Test” to start the server and list its tools."
                             : "Install, then Test to start the server and list its tools."}
@@ -459,7 +459,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         type="button"
                         disabled={busy}
                         onClick={() => handleInstall(item)}
-                        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-3xs font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
                       >
                         <Icon icon={Download} className="w-3 h-3" />
                         <span>{busy ? "Installing…" : "Install"}</span>
@@ -471,7 +471,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                             type="button"
                             disabled={busy}
                             onClick={() => handleTest(item)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-3xs font-semibold bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
                           >
                             <Icon icon={Plug} className="w-3 h-3" />
                             <span>{busy ? "Testing…" : "Test"}</span>
@@ -481,7 +481,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                           type="button"
                           disabled={busy}
                           onClick={() => handleUninstall(item)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold bg-zinc-800/60 hover:bg-red-900/40 border border-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-3xs font-semibold bg-zinc-800/60 hover:bg-red-900/40 border border-zinc-700 text-zinc-300 transition-colors disabled:opacity-50"
                         >
                           <Icon icon={Trash2} className="w-3 h-3" />
                           <span>Remove</span>
@@ -497,7 +497,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
 
         {/* Where to find more — real, external sources */}
         <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/30 p-2.5 space-y-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          <div className="flex items-center gap-1.5 text-3xs font-semibold uppercase tracking-wider text-zinc-400">
             <Icon icon={Info} className="w-3 h-3 shrink-0" />
             Find more capabilities
           </div>
@@ -509,14 +509,14 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               rel="noreferrer noopener"
               className="block group"
             >
-              <div className="flex items-center gap-1 text-[10px] text-zinc-300 group-hover:text-white">
+              <div className="flex items-center gap-1 text-3xs text-zinc-300 group-hover:text-white">
                 <span className="font-medium">{link.label}</span>
                 <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
               </div>
-              <div className="text-[9px] text-zinc-500 leading-snug">{link.note}</div>
+              <div className="text-4xs text-zinc-500 leading-snug">{link.note}</div>
             </a>
           ))}
-          <div className="text-[9px] text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
+          <div className="text-4xs text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
             This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
             servers (a command plus arguments). Remote/HTTP servers are not supported yet, and
             skills are plain <span className="font-mono text-zinc-400">SKILL.md</span> files you

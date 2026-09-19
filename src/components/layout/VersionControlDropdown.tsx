@@ -228,7 +228,7 @@ export function VersionControlDropdown({
     : "success";
 
   return (
-    <div ref={dropdownRef} className="relative select-none text-[13px] font-sans">
+    <div ref={dropdownRef} className="relative select-none text-body font-sans">
       {/* ── Version Control Pill Button ───────────────────────────────── */}
       <button
         type="button"
@@ -247,7 +247,7 @@ export function VersionControlDropdown({
         <StatusGlyph status={branchStatus} size="xs" pulse={isLoading} />
 
         {(ahead > 0 || behind > 0) && (
-          <span className="flex items-center gap-1 text-[10px] font-mono text-zinc-300">
+          <span className="flex items-center gap-1 text-3xs font-mono text-zinc-300">
             {ahead > 0 && <span className="text-emerald-400 font-semibold">↑{ahead}</span>}
             {behind > 0 && <span className="text-amber-400 font-semibold">↓{behind}</span>}
           </span>
@@ -263,12 +263,12 @@ export function VersionControlDropdown({
 
       {/* ── Dropdown Window (Concentric R_outer = 12px, P = 4px, R_item = 8px) ── */}
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-popover p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1.5 backdrop-blur-xl font-sans">
+        <div className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-popover p-1 text-body text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1.5 backdrop-blur-xl font-sans">
           {/* Header Info */}
           <div className="flex items-center justify-between p-2 pb-1.5 border-b border-hairline">
             <div className="flex items-center gap-1.5">
               <Icon icon={GitBranch} size="sm" className="text-zinc-300" />
-              <span className="font-semibold text-zinc-100 text-[13px] truncate font-mono">{activeBranch}</span>
+              <span className="font-semibold text-zinc-100 text-body truncate font-mono">{activeBranch}</span>
             </div>
             <div className="flex items-center gap-1.5">
               {isLoading ? (
@@ -291,7 +291,7 @@ export function VersionControlDropdown({
               type="button"
               disabled={isLoading}
               onClick={handlePull}
-              className="py-1.5 px-2.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-hairline disabled:opacity-50"
+              className="py-1.5 px-2.5 rounded-lg bg-surface hover:bg-surface-hover text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-hairline disabled:opacity-50"
             >
               <Icon icon={ChevronDown} size="xs" className="text-zinc-300" />
               <span>Pull</span>
@@ -300,7 +300,7 @@ export function VersionControlDropdown({
               type="button"
               disabled={isLoading}
               onClick={handlePush}
-              className="py-1.5 px-2.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-hairline disabled:opacity-50"
+              className="py-1.5 px-2.5 rounded-lg bg-surface hover:bg-surface-hover text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-hairline disabled:opacity-50"
             >
               <Icon icon={ChevronUp} size="xs" className="text-emerald-400" />
               <span>Push</span>
@@ -309,7 +309,7 @@ export function VersionControlDropdown({
 
           {/* Status Message */}
           {actionMsg && (
-            <div className="mx-1 p-2 rounded-[8px] bg-workbench border border-hairline text-xs text-zinc-200 font-mono flex items-start gap-1.5">
+            <div className="mx-1 p-2 rounded-lg bg-workbench border border-hairline text-xs text-zinc-200 font-mono flex items-start gap-1.5">
               <Icon icon={Info} size="xs" className="text-zinc-400 shrink-0 mt-0.5" />
               <span className="break-all">{actionMsg}</span>
             </div>
@@ -321,13 +321,13 @@ export function VersionControlDropdown({
               <button
                 type="button"
                 onClick={() => setIsCreatingBranch(true)}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-[8px] hover:bg-surface-hover text-zinc-200 hover:text-white transition-colors text-[13px]"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-surface-hover text-zinc-200 hover:text-white transition-colors text-body"
               >
                 <Icon icon={Plus} size="xs" className="text-zinc-400" />
                 <span>New Branch...</span>
               </button>
             ) : (
-              <div className="flex items-center gap-1 p-1 bg-surface border border-hairline rounded-[8px]">
+              <div className="flex items-center gap-1 p-1 bg-surface border border-hairline rounded-lg">
                 <input
                   type="text"
                   value={newBranchName}
@@ -345,7 +345,7 @@ export function VersionControlDropdown({
                 <button
                   type="button"
                   onClick={handleCreateBranch}
-                  className="px-2.5 py-1 rounded-[4px] bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-600 font-semibold text-xs transition-colors"
+                  className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-600 font-semibold text-xs transition-colors"
                 >
                   Create
                 </button>
@@ -355,7 +355,7 @@ export function VersionControlDropdown({
 
           {/* Branches List */}
           <div className="pt-1 border-t border-hairline">
-            <div className="px-2.5 py-1 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <div className="px-2.5 py-1 text-2xs font-semibold text-zinc-400 uppercase tracking-wider">
               Branches
             </div>
 
@@ -369,7 +369,7 @@ export function VersionControlDropdown({
                     onClick={() => {
                       if (!isCurrent) handleCheckout(b.name);
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-[8px] cursor-pointer transition-colors text-[13px] text-left ${
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-body text-left ${
                       isCurrent
                         ? "bg-zinc-800/90 text-zinc-100 font-medium"
                         : "hover:bg-surface-hover text-zinc-300 hover:text-zinc-100"

@@ -228,7 +228,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           <Icon icon={Loader2} className="w-9 h-9 text-purple-400 animate-spin" />
           <div>
             <p className="text-xs font-semibold text-zinc-200">Detecting local Ollama installation…</p>
-            <p className="text-[11px] text-zinc-500 mt-1">Inspecting PATH and application directories</p>
+            <p className="text-2xs text-zinc-500 mt-1">Inspecting PATH and application directories</p>
           </div>
         </div>
       );
@@ -245,7 +245,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 ACSA Code will download and configure Ollama directly without requiring root or administrator passwords.
               </p>
               {status && status.totalRamGb > 0 && (
-                <div className="mt-1 text-[11px] text-amber-300/80 font-mono">
+                <div className="mt-1 text-2xs text-amber-300/80 font-mono">
                   Hardware: {status.totalRamGb} GB RAM · recommended model: {status.recommendedModel}
                 </div>
               )}
@@ -266,7 +266,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -314,7 +314,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -352,7 +352,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               Select Local Model to Download
             </label>
             {status && status.totalRamGb > 0 && (
-              <p className="text-[11px] text-zinc-400">
+              <p className="text-2xs text-zinc-400">
                 System RAM: <span className="text-zinc-200 font-mono font-medium">{status.totalRamGb} GB</span> ·
                 Recommended: <span className="text-purple-400 font-mono font-semibold">{status.recommendedModel}</span>
               </p>
@@ -385,7 +385,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -423,7 +423,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                   : "Ollama server is active and verified as your default AI engine."}
               </p>
               {status && status.models && status.models.length > 0 && (
-                <p className="text-[11px] text-zinc-500 mt-1 font-mono truncate max-w-xs mx-auto">
+                <p className="text-2xs text-zinc-500 mt-1 font-mono truncate max-w-xs mx-auto">
                   Available: {status.models.join(", ")}
                 </p>
               )}
@@ -469,7 +469,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
             <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <div className="text-xs text-red-200/90 leading-relaxed">
               <span className="font-semibold text-white">Setup Interrupted</span>
-              <p className="mt-1 font-mono text-[11px] text-red-300/80 break-words">{errorMsg}</p>
+              <p className="mt-1 font-mono text-2xs text-red-300/80 break-words">{errorMsg}</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -506,7 +506,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           </div>
           <div>
             <h2 className="text-xs font-bold text-white tracking-tight">Local AI Engine Setup</h2>
-            <p className="text-[10px] text-zinc-500">Runs on this machine</p>
+            <p className="text-3xs text-zinc-500">Runs on this machine</p>
           </div>
         </div>
         <button
@@ -528,7 +528,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           return (
             <div key={s.id} className="flex items-center">
               <div
-                className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md transition-colors ${
+                className={`flex items-center gap-1 text-3xs font-semibold px-2 py-0.5 rounded-md transition-colors ${
                   done
                     ? "text-emerald-400"
                     : active
@@ -570,7 +570,7 @@ function LogBox({
   logsEndRef: React.RefObject<HTMLDivElement>;
 }) {
   return (
-    <div className="h-28 overflow-y-auto rounded-xl bg-zinc-950 border border-zinc-800/80 p-2.5 font-mono text-[10px] text-zinc-400 space-y-0.5">
+    <div className="h-28 overflow-y-auto rounded-xl bg-zinc-950 border border-zinc-800/80 p-2.5 font-mono text-3xs text-zinc-400 space-y-0.5">
       {logs.map((l, i) => (
         <div key={i} className={`truncate ${l.startsWith("✓") ? "text-emerald-400" : ""}`}>
           {l}
@@ -593,13 +593,13 @@ export function OllamaNotRunningBanner({ onOpenSetup, onDismiss }: OllamaBannerP
       <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-white truncate">No AI model is configured</p>
-        <p className="text-[10px] text-zinc-400 mt-0.5">Add a provider key, or start the local engine</p>
+        <p className="text-3xs text-zinc-400 mt-0.5">Add a provider key, or start the local engine</p>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
           onClick={onOpenSetup}
-          className="text-[10px] font-bold text-purple-400 hover:text-purple-300 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
+          className="text-3xs font-bold text-purple-400 hover:text-purple-300 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
         >
           Set up
         </button>

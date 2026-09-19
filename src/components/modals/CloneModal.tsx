@@ -99,7 +99,7 @@ export function CloneModal({
             </div>
             <div>
               <h3 className="font-bold text-sm text-zinc-100">Clone Repository</h3>
-              <p className="text-[11px] text-zinc-400">Clone a remote Git repository to your local machine</p>
+              <p className="text-2xs text-zinc-400">Clone a remote Git repository to your local machine</p>
             </div>
           </div>
 
@@ -116,7 +116,7 @@ export function CloneModal({
         <div className="space-y-3">
           {/* Repo URL */}
           <div>
-            <label htmlFor="clonemodal-repository-url-1" className="text-[11px] font-semibold text-zinc-300">Repository URL</label>
+            <label htmlFor="clonemodal-repository-url-1" className="text-2xs font-semibold text-zinc-300">Repository URL</label>
             <input id="clonemodal-repository-url-1"
               type="text"
               value={repoUrl}
@@ -128,7 +128,7 @@ export function CloneModal({
 
           {/* Destination Path */}
           <div>
-            <label htmlFor="clonemodal-destination-directory-2" className="text-[11px] font-semibold text-zinc-300">Destination Directory</label>
+            <label htmlFor="clonemodal-destination-directory-2" className="text-2xs font-semibold text-zinc-300">Destination Directory</label>
             <div className="flex items-center gap-2 mt-1">
               <input id="clonemodal-destination-directory-2"
                 type="text"
@@ -152,7 +152,7 @@ export function CloneModal({
         {/* Status Feedback */}
         {statusMsg && (
           <div
-            className={`p-2.5 rounded-xl border flex items-start gap-2 text-[11px] ${
+            className={`p-2.5 rounded-xl border flex items-start gap-2 text-2xs ${
               statusMsg.type === "info"
                 ? "bg-purple-950/40 border-purple-500/40 text-purple-300"
                 : statusMsg.type === "success"

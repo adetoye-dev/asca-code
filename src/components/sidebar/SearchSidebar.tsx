@@ -344,10 +344,10 @@ export function SearchSidebar({
   );
 
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--vscode-sidebar-bg,#18181b)] select-none text-[13px] text-zinc-200 overflow-hidden font-sans">
+    <div className="flex flex-col h-full w-full bg-[var(--vscode-sidebar-bg,#18181b)] select-none text-body text-zinc-200 overflow-hidden font-sans">
       {/* ── Top Sidebar Header (SEARCH) ──────────────────────────────────── */}
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border,#27272a)] shrink-0">
-        <span className="font-semibold tracking-wider text-[11px] uppercase text-zinc-300">
+        <span className="font-semibold tracking-wider text-2xs uppercase text-zinc-300">
           Search
         </span>
       </div>
@@ -397,7 +397,7 @@ export function SearchSidebar({
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                 }`}
               >
-                <span className="font-mono text-[11px] font-bold leading-none select-none">Aa</span>
+                <span className="font-mono text-2xs font-bold leading-none select-none">Aa</span>
               </button>
 
               <button
@@ -423,7 +423,7 @@ export function SearchSidebar({
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                 }`}
               >
-                <span className="font-mono text-[11px] font-bold leading-none select-none">.*</span>
+                <span className="font-mono text-2xs font-bold leading-none select-none">.*</span>
               </button>
             </div>
           </div>
@@ -460,7 +460,7 @@ export function SearchSidebar({
                       : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent"
                   }`}
                 >
-                  <span className="font-mono text-[10px] font-bold leading-none select-none">AB</span>
+                  <span className="font-mono text-3xs font-bold leading-none select-none">AB</span>
                 </button>
 
                 <button
@@ -486,7 +486,7 @@ export function SearchSidebar({
             title="Toggle Search Details (files to include / exclude)"
           >
             <Icon icon={MoreHorizontal} className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-medium">{showDetails ? "Hide filters" : "Toggle filters"}</span>
+            <span className="text-2xs font-medium">{showDetails ? "Hide filters" : "Toggle filters"}</span>
           </button>
         </div>
 
@@ -494,7 +494,7 @@ export function SearchSidebar({
         {showDetails && (
           <div className="flex flex-col gap-2 pt-1 border-t border-zinc-800/80">
             <div>
-              <div className="text-[11px] uppercase font-semibold text-zinc-400 mb-1">
+              <div className="text-2xs uppercase font-semibold text-zinc-400 mb-1">
                 files to include
               </div>
               <input
@@ -507,7 +507,7 @@ export function SearchSidebar({
             </div>
 
             <div>
-              <div className="text-[11px] uppercase font-semibold text-zinc-400 mb-1">
+              <div className="text-2xs uppercase font-semibold text-zinc-400 mb-1">
                 files to exclude
               </div>
               <input
@@ -606,7 +606,7 @@ export function SearchSidebar({
                   <FileIcon fileName={file.fileName} className="w-3.5 h-3.5 shrink-0" />
 
                   {/* File Name & Path */}
-                  <span className="font-sans font-medium text-zinc-100 truncate text-[13px]">
+                  <span className="font-sans font-medium text-zinc-100 truncate text-body">
                     {file.fileName}
                   </span>
                   {file.relativeDir && (
@@ -616,7 +616,7 @@ export function SearchSidebar({
                   )}
 
                   {/* Match Count Pill */}
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 group-hover/file:bg-zinc-700 ml-auto shrink-0">
+                  <span className="text-3xs font-mono px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 group-hover/file:bg-zinc-700 ml-auto shrink-0">
                     {file.matches.length}
                   </span>
 
@@ -676,7 +676,7 @@ export function SearchSidebar({
                         >
                           <div className="flex items-center gap-2 min-w-0 flex-1">
                             {/* Line Number */}
-                            <span className="text-[11px] text-zinc-400 font-mono w-5 text-right shrink-0">
+                            <span className="text-2xs text-zinc-400 font-mono w-5 text-right shrink-0">
                               {match.lineNumber}
                             </span>
 
@@ -726,7 +726,7 @@ export function SearchSidebar({
           /* Empty Search Results */
           <div className="flex flex-col items-center justify-center p-6 text-center text-zinc-400 font-sans">
             <Icon icon={Search} className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
-            <p className="text-[13px] text-zinc-200 font-medium mb-1">No results found</p>
+            <p className="text-body text-zinc-200 font-medium mb-1">No results found</p>
             <p className="text-xs text-zinc-400">
               No occurrences for &quot;{query}&quot;. Review your search term, case sensitivity, or filters.
             </p>
@@ -735,18 +735,18 @@ export function SearchSidebar({
           /* Idle Initial Prompt */
           <div className="flex flex-col items-center justify-center p-6 text-center text-zinc-400 font-sans">
             <Icon icon={Search} className="w-8 h-8 text-zinc-500 mb-2 stroke-[1.5]" />
-            <p className="text-[13px] text-zinc-200 font-medium mb-1">Search Files</p>
+            <p className="text-body text-zinc-200 font-medium mb-1">Search Files</p>
             <p className="text-xs text-zinc-400 max-w-[200px]">
               Type a term above to search across all files in <span className="text-zinc-200 font-mono">{projectName}</span>.
             </p>
             <div className="mt-4 flex flex-col gap-1.5 text-xs text-zinc-300 font-sans bg-zinc-900/80 p-2.5 rounded-md border border-zinc-800 w-full max-w-[210px]">
               <div className="flex justify-between items-center">
                 <span>Find in Files</span>
-                <kbd className="font-mono text-[10px] text-zinc-200 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700/60">⌘⇧F</kbd>
+                <kbd className="font-mono text-3xs text-zinc-200 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700/60">⌘⇧F</kbd>
               </div>
               <div className="flex justify-between items-center">
                 <span>Replace in Files</span>
-                <kbd className="font-mono text-[10px] text-zinc-200 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700/60">⌘⇧H</kbd>
+                <kbd className="font-mono text-3xs text-zinc-200 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700/60">⌘⇧H</kbd>
               </div>
             </div>
           </div>

@@ -199,7 +199,7 @@ export function CommandPalette({
 
                   {cmd.shortcut && (
                     <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                      className={`text-3xs font-mono px-1.5 py-0.5 rounded border ${
                         isSelected
                           ? "border-sky-400/50 bg-sky-700/50 text-sky-100"
                           : "border-zinc-700 bg-zinc-800 text-zinc-400"
@@ -237,7 +237,7 @@ export function CommandPalette({
                     <Icon icon={FileText} className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
                     <span className="font-medium text-xs truncate">{file.name}</span>
                     <span
-                      className={`text-[10px] truncate ${
+                      className={`text-3xs truncate ${
                         isSelected ? "text-sky-200" : "text-zinc-500"
                       }`}
                     >

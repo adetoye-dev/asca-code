@@ -438,7 +438,7 @@ export function SettingsModal({
             <div className="w-6 h-6 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-zinc-300 shadow-sm">
               <Settings className="w-3.5 h-3.5" />
             </div>
-            <div className="flex items-center gap-1.5 text-[13px]">
+            <div className="flex items-center gap-1.5 text-body">
               <span className="font-semibold text-zinc-100">Settings</span>
               {projectName && (
                 <>
@@ -472,7 +472,7 @@ export function SettingsModal({
                   value={navSearch}
                   onChange={(e) => setNavSearch(e.target.value)}
                   placeholder="Search settings..."
-                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 font-sans transition"
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-2.5 py-1.5 text-body text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 font-sans transition"
                 />
                 {navSearch && (
                   <button
@@ -555,14 +555,14 @@ export function SettingsModal({
             </div>
 
             {/* Stage Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-5 text-[13px] text-zinc-200 font-sans">
+            <div className="flex-1 overflow-y-auto p-5 text-body text-zinc-200 font-sans">
               {selectedSection === "providers" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-100">
                       LLM Provider & Engine Configuration
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure local or cloud inference engines for code generation, diff synthesis, and chat.
                     </p>
                   </div>
@@ -585,11 +585,11 @@ export function SettingsModal({
                         <span className="font-semibold text-xs text-zinc-100">
                           Local Ollama
                         </span>
-                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
+                        <span className="text-4xs font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
                           Default
                         </span>
                       </div>
-                      <p className="text-[10px] text-zinc-400 leading-tight">
+                      <p className="text-3xs text-zinc-400 leading-tight">
                         Connects to local daemon (Qwen 2.5 Coder, Llama 3.2, DeepSeek).
                       </p>
                     </button>
@@ -611,7 +611,7 @@ export function SettingsModal({
                           Cloud APIs
                         </span>
                       </div>
-                      <p className="text-[10px] text-zinc-400 leading-tight">
+                      <p className="text-3xs text-zinc-400 leading-tight">
                         GPT-4o, Claude 3.7 Sonnet, Google Gemini, DeepSeek Cloud.
                       </p>
                     </button>
@@ -633,7 +633,7 @@ export function SettingsModal({
                             ? "e.g. qwen2.5-coder-7b-instruct.gguf"
                             : "e.g. gpt-4o, claude-3-7-sonnet"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
@@ -651,7 +651,7 @@ export function SettingsModal({
                             ? "http://127.0.0.1:8080"
                             : "https://api.openai.com/v1"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
@@ -665,7 +665,7 @@ export function SettingsModal({
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                             placeholder="sk-..."
-                            className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                            className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                           />
                           <button
                             type="button"
@@ -688,7 +688,7 @@ export function SettingsModal({
                         type="button"
                         onClick={handleTestConnection}
                         disabled={testStatus === "testing"}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-xs font-medium transition border border-hairline shadow-elevation-1"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-zinc-200 text-xs font-medium transition border border-hairline shadow-elevation-1"
                       >
                         <RefreshCw
                           className={`w-3.5 h-3.5 ${
@@ -722,7 +722,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       UI Theme & Workbench Appearance
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Select your preferred IDE theme. Changes take effect across editor, sidebars, tabs, and status bar immediately.
                     </p>
                   </div>
@@ -775,7 +775,7 @@ export function SettingsModal({
                               style={{ backgroundColor: theme.colors.statusBarBg }}
                               title={`Status Bar: ${theme.colors.statusBarBg}`}
                             />
-                            <span className="text-[10px] font-mono text-zinc-400 ml-auto capitalize">
+                            <span className="text-3xs font-mono text-zinc-400 ml-auto capitalize">
                               {theme.type}
                             </span>
                           </div>
@@ -793,7 +793,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Typography & Font
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure typography for code editors and diff viewers. JetBrains Mono is the bundled default across all surfaces.
                     </p>
                   </div>
@@ -805,7 +805,7 @@ export function SettingsModal({
                         id="settings-font-family"
                         value="JetBrains Mono"
                         disabled
-                        className="w-full rounded-[8px] bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
+                        className="w-full rounded-lg bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
                       >
                         <option value="JetBrains Mono">JetBrains Mono (Bundled Default)</option>
                       </select>
@@ -896,7 +896,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Indentation & Code Style
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure tab size, spaces vs tabs, and auto-formatting behavior.
                     </p>
                   </div>
@@ -907,7 +907,7 @@ export function SettingsModal({
                       <select
                         value={tabSize}
                         onChange={(e) => setTabSize(Number(e.target.value))}
-                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
+                        className="bg-workbench/80 border border-hairline rounded-md px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={2}>2 spaces</option>
                         <option value={4}>4 spaces</option>
@@ -944,7 +944,7 @@ export function SettingsModal({
                 <div className="space-y-4 max-w-2xl">
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-100">Agent</h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Decide up front what the agent may do on its own. This is the
                       approval step — pick one mode and runs stop interrupting you.
                     </p>
@@ -975,12 +975,12 @@ export function SettingsModal({
                             />
                             <span className="text-xs font-medium text-zinc-100">{option.label}</span>
                             {id === DEFAULT_AGENT_TRANSPORT && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
                                 Stable
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                          <p className="text-2xs text-zinc-400 mt-1.5 ml-5 leading-relaxed">
                             {option.description}
                           </p>
                         </button>
@@ -1014,17 +1014,17 @@ export function SettingsModal({
                               {option.label}
                             </span>
                             {mode === DEFAULT_AGENT_APPROVAL_MODE && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
                                 Recommended
                               </span>
                             )}
                             {mode === "ask-me" && agentTransport !== "app-server" && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
                                 Needs app-server · falls back
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                          <p className="text-2xs text-zinc-400 mt-1.5 ml-5 leading-relaxed">
                             {option.description}
                           </p>
                         </button>
@@ -1032,7 +1032,7 @@ export function SettingsModal({
                     })}
                   </div>
 
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  <p className="text-2xs text-zinc-500 leading-relaxed">
                     These map onto the agent runtime&apos;s own sandbox and approval
                     settings. &ldquo;Read only&rdquo; and &ldquo;Approve for me&rdquo;
                     both keep the agent inside your project folder.
@@ -1047,7 +1047,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Integrated Terminal Settings
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Text size for the integrated terminal.
                     </p>
                   </div>
@@ -1058,7 +1058,7 @@ export function SettingsModal({
                       <select
                         value={terminalFontSize}
                         onChange={(e) => setTerminalFontSize(Number(e.target.value))}
-                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
+                        className="bg-workbench/80 border border-hairline rounded-md px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={12}>12px</option>
                         <option value={13}>13px</option>
@@ -1079,7 +1079,7 @@ export function SettingsModal({
                 <div className="space-y-4 max-w-2xl">
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-100">Marketplace</h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Skills, MCP servers and tooling the agent can use.
                     </p>
                   </div>
@@ -1096,7 +1096,7 @@ export function SettingsModal({
                         onClose();
                         onOpenMarketplace?.();
                       }}
-                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition cursor-pointer"
                     >
                       Open the Marketplace
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -1123,7 +1123,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
+                  className="px-4 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-body font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Cancel
                 </button>
@@ -1131,7 +1131,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
+                  className="px-4 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-body font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Apply
                 </button>
@@ -1139,7 +1139,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleOk}
-                  className="px-5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-[13px] font-semibold shadow-sm transition cursor-pointer font-sans"
+                  className="px-5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-body font-semibold shadow-sm transition cursor-pointer font-sans"
                 >
                   OK
                 </button>
@@ -1200,7 +1200,7 @@ function TreeItem({
         }}
         onClick={handleClick}
         style={{ paddingLeft: `${6 + level * 14}px` }}
-        className={`px-2 py-1.5 rounded-[8px] flex items-center justify-between cursor-pointer transition-colors group ${
+        className={`px-2 py-1.5 rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
           isSelected
             ? "bg-purple-950/40 border border-purple-500/40 text-purple-200 font-medium shadow-sm"
             : "hover:bg-white/[0.06] text-zinc-300 hover:text-zinc-100"
@@ -1224,7 +1224,7 @@ function TreeItem({
             <span className="w-3.5 h-3.5" />
           )}
 
-          <span className="truncate text-[13px]">{node.label}</span>
+          <span className="truncate text-body">{node.label}</span>
         </div>
 
         {node.hasExternalBadge && (

@@ -79,7 +79,7 @@ export function UpdateButton() {
         {/* "Update", not the version number. A bare number reads as *the* version
             rather than *a newer one is waiting*, which is how it was reported. The
             version itself is in the panel, where there is room to say it properly. */}
-        <span className="text-[11px] font-semibold">Update</span>
+        <span className="text-2xs font-semibold">Update</span>
       </button>
 
       {open && (
@@ -87,7 +87,7 @@ export function UpdateButton() {
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-xs font-semibold text-zinc-100">Update available</div>
-              <div className="text-[11px] text-zinc-400 font-mono">
+              <div className="text-2xs text-zinc-400 font-mono">
                 {update.currentVersion} → {update.version}
               </div>
             </div>
@@ -102,7 +102,7 @@ export function UpdateButton() {
           </div>
 
           {update.notes && phase === "idle" && (
-            <p className="text-[11px] text-zinc-400 leading-relaxed max-h-24 overflow-y-auto whitespace-pre-wrap">
+            <p className="text-2xs text-zinc-400 leading-relaxed max-h-24 overflow-y-auto whitespace-pre-wrap">
               {update.notes}
             </p>
           )}
@@ -112,26 +112,26 @@ export function UpdateButton() {
               <div className="h-1 rounded-full bg-zinc-800 overflow-hidden">
                 <div className="h-full bg-purple-500 transition-all" style={{ width: `${percent}%` }} />
               </div>
-              <div className="text-[11px] text-zinc-400 font-mono">Downloading… {percent}%</div>
+              <div className="text-2xs text-zinc-400 font-mono">Downloading… {percent}%</div>
             </div>
           )}
 
           {phase === "installing" && (
-            <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <div className="text-2xs text-zinc-400 flex items-center gap-1.5">
               <Icon icon={RefreshCw} className="w-3 h-3 animate-spin" />
               <span>Installing…</span>
             </div>
           )}
 
           {phase === "ready" && (
-            <p className="text-[11px] text-emerald-300 flex items-center gap-1.5">
+            <p className="text-2xs text-emerald-300 flex items-center gap-1.5">
               <Icon icon={Check} className="w-3 h-3" />
               <span>Installed. Restart to finish.</span>
             </p>
           )}
 
           {phase === "failed" && (
-            <p className="text-[11px] text-red-300 flex items-start gap-1.5">
+            <p className="text-2xs text-red-300 flex items-start gap-1.5">
               <Icon icon={AlertCircle} className="w-3 h-3 mt-0.5 shrink-0" />
               <span>{detail || "The update could not be installed."}</span>
             </p>
@@ -143,14 +143,14 @@ export function UpdateButton() {
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="px-2.5 py-1 rounded-lg text-[11px] text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
+                  className="px-2.5 py-1 rounded-lg text-2xs text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
                 >
                   Later
                 </button>
                 <button
                   type="button"
                   onClick={() => void startInstall()}
-                  className="px-3 py-1 rounded-lg text-[11px] font-medium bg-purple-600 hover:bg-purple-500 text-white transition-colors shadow-sm"
+                  className="px-3 py-1 rounded-lg text-2xs font-medium bg-purple-600 hover:bg-purple-500 text-white transition-colors shadow-sm"
                 >
                   Download &amp; install
                 </button>
@@ -160,7 +160,7 @@ export function UpdateButton() {
               <button
                 type="button"
                 onClick={() => void restartApp()}
-                className="px-3 py-1 rounded-lg text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
+                className="px-3 py-1 rounded-lg text-2xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
               >
                 Restart now
               </button>

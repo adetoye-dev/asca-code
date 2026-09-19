@@ -95,7 +95,7 @@ export function BottomPanel({
       />
 
       {/* Panel Tab Header */}
-      <div className="flex items-center justify-between px-3 h-8 bg-[var(--vscode-titlebar-bg)] border-b border-[var(--vscode-border)] text-zinc-400 shrink-0 text-[11px] font-sans">
+      <div className="flex items-center justify-between px-3 h-8 bg-[var(--vscode-titlebar-bg)] border-b border-[var(--vscode-border)] text-zinc-400 shrink-0 text-2xs font-sans">
         {/* Left Tabs */}
         <div className="flex items-center gap-1 h-full">
           <button
@@ -139,7 +139,7 @@ export function BottomPanel({
             <Icon icon={AlertTriangle} className="w-3.5 h-3.5 text-amber-400" />
             <span>PROBLEMS</span>
             {errorLines.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold font-mono">
+              <span className="px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 text-3xs font-bold font-mono">
                 {errorLines.length}
               </span>
             )}
@@ -172,7 +172,7 @@ export function BottomPanel({
           {activeTab === "output" && (
             <div className="flex items-center gap-1.5 mr-1">
               {status === "running" && (
-                <span className="flex items-center gap-1 text-zinc-200 font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60">
+                <span className="flex items-center gap-1 text-zinc-200 font-mono text-3xs px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700/60">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   <span>Streaming...</span>
                 </span>

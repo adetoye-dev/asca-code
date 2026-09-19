@@ -22,7 +22,29 @@ export default {
   theme: {
     extend: {
       colors: {
+        /**
+         * The palette the component tree actually uses, routed through variables.
+         *
+         * `text-zinc-400` and `border-purple-500/60` are the app's real colours —
+         * ~1700 of them — while the semantic tokens above were an aspirational set
+         * nothing read (`--text-muted` is `#717188`; the UI renders `#a1a1aa`).
+         * Pointing these at variables makes repointing the app a one-file change,
+         * and going through `token()` keeps the `/opacity` form working: a bare
+         * `var()` makes Tailwind drop the rule silently, which is the bug that
+         * helper was written for.
+         *
+         * The class names stay `zinc`/`purple` deliberately. Renaming ~1700 call
+         * sites to semantic roles belongs with a decided palette — the roles a new
+         * identity needs are not knowable yet — and the leverage is identical.
+         */
+        ...(() => {
+          const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+          const scale = (prefix) =>
+            Object.fromEntries(shades.map((s) => [s, token(`--${prefix}-${s}`)]));
+          return { zinc: scale("neutral"), purple: scale("violet") };
+        })(),
         background: "#09090b",
+        /** @deprecated use the semantic tokens; kept until the surfaces move. */
         surface: "#18181b",
         border: "#27272a",
         canvas: token("--surface-canvas"),
@@ -58,6 +80,23 @@ export default {
         muted: "var(--text-muted)",
         accent: "var(--text-accent)",
         "primary-icon": "var(--text-primary-icon)",
+      },
+      /**
+       * The dense type scale this UI actually uses.
+       *
+       * There were 402 arbitrary font sizes: `text-[11px]` ×186, `text-[10px]` ×149,
+       * `text-[13px]` ×37, `text-[9px]` ×28. Tailwind's own scale starts at
+       * `text-xs` (12px), so every size below it was written by hand and none of
+       * them were related to each other. These are the same pixel values under
+       * names — deliberately size-only, with no line-height, because an arbitrary
+       * `text-[11px]` sets no line-height either and matching that is what keeps
+       * this a rename rather than a restyle.
+       */
+      fontSize: {
+        "4xs": "9px",
+        "3xs": "10px",
+        "2xs": "11px",
+        body: "13px",
       },
       /**
        * One ordinal scale for everything that stacks.

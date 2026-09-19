@@ -749,7 +749,7 @@ export function MonacoEditorContainer({
               ? "Review this file for bugs, errors and refactor opportunities"
               : "This file type is not reviewable"
           }
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-2xs font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
         >
           {isReviewing ? (
             <span className="w-3 h-3 rounded-full border border-zinc-300 border-t-transparent animate-spin" />
@@ -760,7 +760,7 @@ export function MonacoEditorContainer({
         </button>
         {!isReviewing && reviewModel && (
           <span
-            className="px-1.5 py-1 rounded-md text-[10px] font-mono bg-zinc-800/85 border border-zinc-700/70 text-zinc-400"
+            className="px-1.5 py-1 rounded-md text-3xs font-mono bg-zinc-800/85 border border-zinc-700/70 text-zinc-400"
             title={`Review ran on ${reviewModel}`}
           >
             {reviewModel.split("/").pop()}
@@ -775,7 +775,7 @@ export function MonacoEditorContainer({
               revealFinding(reviewIssues[index]?.line, index);
               setFindingCursor((cursor) => cursor + 1);
             }}
-            className="px-1.5 py-1 rounded-md text-[11px] font-mono bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 backdrop-blur-sm transition-colors"
+            className="px-1.5 py-1 rounded-md text-2xs font-mono bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 backdrop-blur-sm transition-colors"
           >
             {reviewIssues.length} ↓
           </button>
@@ -785,7 +785,7 @@ export function MonacoEditorContainer({
             type="button"
             onClick={clearReview}
             title="Clear all review findings"
-            className="px-2 py-1 rounded-md text-[11px] bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
+            className="px-2 py-1 rounded-md text-2xs bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
           >
             Clear
           </button>
@@ -795,7 +795,7 @@ export function MonacoEditorContainer({
       {/* ── Review status (errors / notes) ───────────────────────── */}
       {(reviewError || reviewNote) && (
         <div
-          className={`absolute top-11 right-3 z-editor max-w-[320px] px-2.5 py-1.5 rounded-md text-[11px] leading-snug backdrop-blur-sm border ${
+          className={`absolute top-11 right-3 z-editor max-w-[320px] px-2.5 py-1.5 rounded-md text-2xs leading-snug backdrop-blur-sm border ${
             reviewError
               ? "bg-red-500/10 border-red-500/30 text-red-300"
               : "bg-amber-500/10 border-amber-500/30 text-amber-300"
@@ -827,7 +827,7 @@ export function MonacoEditorContainer({
                 title={expanded ? "Collapse" : "Expand"}
               >
                 <span
-                  className={`text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${
+                  className={`text-4xs font-mono px-1 py-0.5 rounded shrink-0 ${
                     issue.severity === "error"
                       ? "bg-red-500/25 text-red-300"
                       : issue.severity === "warning"
@@ -837,8 +837,8 @@ export function MonacoEditorContainer({
                 >
                   {issue.severity}
                 </span>
-                <span className="text-[10px] text-zinc-500 font-mono shrink-0">L{issue.line}</span>
-                <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-zinc-200">
+                <span className="text-3xs text-zinc-500 font-mono shrink-0">L{issue.line}</span>
+                <span className="flex-1 min-w-0 truncate text-2xs font-medium text-zinc-200">
                   {issue.title}
                 </span>
                 <Icon
@@ -868,12 +868,12 @@ export function MonacoEditorContainer({
               {expanded && (
                 <div className="px-2.5 pb-2 space-y-1.5 border-t border-white/[0.06] pt-1.5">
                   {issue.detail && (
-                    <p className="text-[11px] text-zinc-400 leading-snug whitespace-pre-wrap m-0">
+                    <p className="text-2xs text-zinc-400 leading-snug whitespace-pre-wrap m-0">
                       {issue.detail}
                     </p>
                   )}
                   {issue.suggestion && (
-                    <p className="text-[11px] text-emerald-300/90 leading-snug whitespace-pre-wrap m-0">
+                    <p className="text-2xs text-emerald-300/90 leading-snug whitespace-pre-wrap m-0">
                       Fix: {issue.suggestion}
                     </p>
                   )}
@@ -882,7 +882,7 @@ export function MonacoEditorContainer({
                       type="button"
                       disabled={fixingIndex !== null}
                       onClick={() => handleFixIssue(issue, index)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-3xs font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
                     >
                       <Icon icon={Sparkles} size="xs" />
                       {fixingIndex === index ? "Fixing…" : "Fix with AI"}
@@ -890,7 +890,7 @@ export function MonacoEditorContainer({
                     <button
                       type="button"
                       onClick={() => dismissFinding(index)}
-                      className="px-2 py-0.5 rounded text-[10px] bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
+                      className="px-2 py-0.5 rounded text-3xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
                     >
                       Dismiss
                     </button>
@@ -916,12 +916,12 @@ export function MonacoEditorContainer({
             <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
               <span>✨</span>
               <span>ACSA Inline Edit</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-mono">
+              <span className="px-1.5 py-0.5 rounded text-3xs bg-purple-500/20 text-purple-300 font-mono">
                 {resolveEditorAiConfig(settingsRef.current).model || "Active AI"}
               </span>
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500 font-mono">Cmd+K</span>
+              <span className="text-3xs text-zinc-500 font-mono">Cmd+K</span>
               <button
                 type="button"
                 onClick={closeInlinePrompt}
@@ -971,7 +971,7 @@ export function MonacoEditorContainer({
             </button>
           </div>
           {inlineError && (
-            <div className="mt-1.5 flex items-start gap-1.5 px-1 text-[11px] text-amber-300">
+            <div className="mt-1.5 flex items-start gap-1.5 px-1 text-2xs text-amber-300">
               <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
               <span className="leading-snug">{inlineError}</span>
             </div>

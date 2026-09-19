@@ -46,7 +46,7 @@ export function AboutPane() {
     <div className="space-y-4 max-w-2xl">
       <div>
         <h3 className="text-sm font-semibold text-zinc-100">About</h3>
-        <p className="text-[11px] text-zinc-400 mt-0.5">Version and how updates are delivered.</p>
+        <p className="text-2xs text-zinc-400 mt-0.5">Version and how updates are delivered.</p>
       </div>
 
       <div className="bg-surface border border-hairline rounded-panel p-4 space-y-3">
@@ -70,7 +70,7 @@ export function AboutPane() {
               association, and it is the more reliable one for screen readers. */}
           <label htmlFor="acsa-check-updates" className="cursor-pointer">
             <span className="text-xs text-zinc-200 block">Check for updates on launch</span>
-            <span className="text-[11px] text-zinc-500 block mt-0.5 leading-relaxed">
+            <span className="text-2xs text-zinc-500 block mt-0.5 leading-relaxed">
               One request to the release page. It reveals your version and IP to whoever hosts it, and
               nothing else — no usage, no identifiers. An update is never installed without you asking.
             </span>
@@ -82,7 +82,7 @@ export function AboutPane() {
             type="button"
             onClick={() => void check()}
             disabled={state.kind === "checking"}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition disabled:opacity-60 cursor-pointer"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition disabled:opacity-60 cursor-pointer"
           >
             <Icon
               icon={RefreshCw}
@@ -92,19 +92,19 @@ export function AboutPane() {
           </button>
 
           {state.kind === "current" && (
-            <span className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <span className="text-2xs text-zinc-400 flex items-center gap-1.5">
               <Icon icon={Check} className="w-3 h-3 text-emerald-400" />
               You are up to date.
             </span>
           )}
           {state.kind === "available" && found && (
-            <span className="text-[11px] text-purple-300 flex items-center gap-1.5">
+            <span className="text-2xs text-purple-300 flex items-center gap-1.5">
               <Icon icon={ArrowDownToLine} className="w-3 h-3" />
               {found.version} is available — the button is in the titlebar.
             </span>
           )}
           {state.kind === "failed" && (
-            <span className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <span className="text-2xs text-zinc-400 flex items-center gap-1.5">
               <Icon icon={AlertCircle} className="w-3 h-3 text-amber-400" />
               {state.detail ?? "No release page is reachable yet."}
             </span>

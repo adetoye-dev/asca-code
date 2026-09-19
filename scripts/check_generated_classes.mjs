@@ -22,7 +22,11 @@ import { join, extname } from "node:path";
 
 const TOKENS =
   "canvas|workbench|panel|overlay|modal|elevated|surface-[a-z-]+|border-hairline|border-accent|border-focus" +
-  "|primary-action|hairline|accent|primary|secondary|muted|subtle|strong|focus";
+  "|primary-action|hairline|accent|primary|secondary|muted|subtle|strong|focus" +
+  // The app's greys and violets go through `token()` too, so their `/opacity`
+  // forms are var-based and can be dropped the same way. `border-zinc-800/80`
+  // alone is used 38 times.
+  "|zinc-\\d{2,3}|purple-\\d{2,3}";
 const PREFIXES = "bg|text|border|ring|from|to|via|divide|outline|fill|stroke|accent|caret|decoration|placeholder";
 /** Only the opacity form is fragile; a bare `bg-workbench` always resolves. */
 const PATTERN = new RegExp(`\\b(?:${PREFIXES})-(?:${TOKENS})\\/\\d+\\b`, "g");

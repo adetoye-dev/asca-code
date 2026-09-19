@@ -208,22 +208,22 @@ export function SourceControlSidebar({
 
   const getStatusBadge = (file: ChangedGitFile) => {
     if (file.indexStatus === "A" || file.workTreeStatus === "?") {
-      return <span className="text-[10px] font-bold text-emerald-400 font-mono">U</span>;
+      return <span className="text-3xs font-bold text-emerald-400 font-mono">U</span>;
     }
     if (file.indexStatus === "D" || file.workTreeStatus === "D") {
-      return <span className="text-[10px] font-bold text-red-400 font-mono">D</span>;
+      return <span className="text-3xs font-bold text-red-400 font-mono">D</span>;
     }
-    return <span className="text-[10px] font-bold text-amber-400 font-mono">M</span>;
+    return <span className="text-3xs font-bold text-amber-400 font-mono">M</span>;
   };
 
   const totalChanges = stagedFiles.length + unstagedFiles.length;
 
   return (
-    <div className="flex flex-col h-full w-full bg-workbench select-none text-[13px] text-zinc-300 font-sans">
+    <div className="flex flex-col h-full w-full bg-workbench select-none text-body text-zinc-300 font-sans">
       {/* Header */}
       <div className="p-3 border-b border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-zinc-300 text-[11px]">
+          <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-zinc-300 text-2xs">
             <Icon icon={GitPullRequest} className="w-4 h-4 text-primary-icon" />
             <span>Source Control</span>
           </div>
@@ -246,7 +246,7 @@ export function SourceControlSidebar({
           </div>
 
           {(ahead > 0 || behind > 0) && (
-            <div className="flex items-center gap-2 font-mono text-[10px]">
+            <div className="flex items-center gap-2 font-mono text-3xs">
               {ahead > 0 && (
                 <span className="flex items-center gap-0.5 text-emerald-400 font-semibold">
                   <Icon icon={ChevronUp} className="w-3 h-3" />
@@ -277,7 +277,7 @@ export function SourceControlSidebar({
               handleCommit();
             }
           }}
-          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/20 resize-none font-sans"
+          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-body text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/20 resize-none font-sans"
         />
 
         {statusMsg && (
@@ -297,7 +297,7 @@ export function SourceControlSidebar({
           type="button"
           disabled={isCommitting || !commitMessage.trim()}
           onClick={handleCommit}
-          className={`w-full py-2 px-3 rounded-xl font-semibold text-[13px] text-white shadow-sm flex items-center justify-center gap-1.5 transition-all font-sans ${
+          className={`w-full py-2 px-3 rounded-xl font-semibold text-body text-white shadow-sm flex items-center justify-center gap-1.5 transition-all font-sans ${
             isCommitting || !commitMessage.trim()
               ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
               : "bg-primary-action hover:bg-primary-action/90 shadow-sm cursor-pointer"
@@ -338,7 +338,7 @@ export function SourceControlSidebar({
                     }
                   }}
                   onClick={() => setIsStagedOpen((prev) => !prev)}
-                  className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-emerald-400 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
+                  className="flex items-center justify-between px-2 py-1 text-2xs font-semibold text-emerald-400 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
                 >
                   <div className="flex items-center gap-1.5">
                     {isStagedOpen ? (
@@ -358,7 +358,7 @@ export function SourceControlSidebar({
                     >
                       <Icon icon={Minus} className="w-3 h-3" />
                     </button>
-                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
+                    <span className="font-mono text-3xs px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
                       {stagedFiles.length}
                     </span>
                   </div>
@@ -383,7 +383,7 @@ export function SourceControlSidebar({
                       >
                         <div className="flex items-center gap-2 min-w-0 truncate">
                           <FileIcon fileName={file.path} className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-zinc-100 group-hover:text-white truncate font-medium text-[13px] font-sans">
+                          <span className="text-zinc-100 group-hover:text-white truncate font-medium text-body font-sans">
                             {file.path.split("/").pop()}
                           </span>
                           <span className="text-xs text-zinc-400 truncate ml-1 font-sans">
@@ -422,7 +422,7 @@ export function SourceControlSidebar({
                   }
                 }}
                 onClick={() => setIsUnstagedOpen((prev) => !prev)}
-                className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
+                className="flex items-center justify-between px-2 py-1 text-2xs font-semibold text-zinc-300 hover:bg-zinc-800/60 rounded cursor-pointer group uppercase tracking-wider"
               >
                 <div className="flex items-center gap-1.5">
                   {isUnstagedOpen ? (
@@ -442,7 +442,7 @@ export function SourceControlSidebar({
                   >
                     <Icon icon={Plus} className="w-3 h-3" />
                   </button>
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
+                  <span className="font-mono text-3xs px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
                     {unstagedFiles.length}
                   </span>
                 </div>
@@ -467,7 +467,7 @@ export function SourceControlSidebar({
                     >
                       <div className="flex items-center gap-2 min-w-0 truncate">
                         <FileIcon fileName={file.path} className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-zinc-100 group-hover:text-white truncate font-medium text-[13px] font-sans">
+                        <span className="text-zinc-100 group-hover:text-white truncate font-medium text-body font-sans">
                           {file.path.split("/").pop()}
                         </span>
                         <span className="text-xs text-zinc-400 truncate ml-1 font-sans">

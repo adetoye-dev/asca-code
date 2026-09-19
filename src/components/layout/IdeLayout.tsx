@@ -1202,7 +1202,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pr-1">
             <IdeBrandLogo className="w-5 h-5 shrink-0" />
-            <span className="font-semibold tracking-tight text-zinc-100 text-[13px] flex items-center gap-1 font-sans">
+            <span className="font-semibold tracking-tight text-zinc-100 text-body flex items-center gap-1 font-sans">
               ACSA <span className="text-zinc-400 font-medium">Code</span>
             </span>
           </div>
@@ -1241,7 +1241,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               {activeProject ? `${activeProject.name} — Search files (Cmd+P)` : "Search files (Cmd+P)"}
             </span>
           </div>
-          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
+          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-3xs font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
             ⌘P
           </kbd>
         </button>
@@ -1533,7 +1533,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                 <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
                   <div className="flex items-center gap-2">
                     <Icon icon={FULL_PAGE_ICONS[fullPage]} className="w-4 h-4 text-zinc-300" />
-                    <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">
+                    <span className="text-body font-semibold text-zinc-100 tracking-tight">
                       {FULL_PAGE_TITLES[fullPage]}
                     </span>
                   </div>

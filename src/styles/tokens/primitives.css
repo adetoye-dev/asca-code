@@ -9,6 +9,45 @@
  */
 
 :root {
+  /* ── The palette the UI actually renders ──
+   *
+   * These are Tailwind's `zinc` and `purple` values, written down once. The
+   * component tree uses those class names — `text-zinc-400`, `border-purple-500/60`
+   * — and Tailwind resolves them through these variables (see `tailwind.config.js`,
+   * where they go through the same `token()` helper as the semantic layer so the
+   * `/opacity` form still resolves).
+   *
+   * Why it matters: the semantic tokens above were an *aspirational* palette —
+   * `--text-muted` is `#717188`, while the UI renders `text-zinc-400`, which is
+   * `#a1a1aa`. Nothing was reading them, so the app had ~1700 colour literals and
+   * the theme engine changed variables no screen consumed. Repointing these is
+   * now a one-file change, which is what makes the identity work cheap instead of
+   * another sweep.
+   */
+  --neutral-50:  #fafafa;
+  --neutral-100: #f4f4f5;
+  --neutral-200: #e4e4e7;
+  --neutral-300: #d4d4d8;
+  --neutral-400: #a1a1aa;
+  --neutral-500: #71717a;
+  --neutral-600: #52525b;
+  --neutral-700: #3f3f46;
+  --neutral-800: #27272a;
+  --neutral-900: #18181b;
+  --neutral-950: #09090b;
+
+  --violet-50:  #faf5ff;
+  --violet-100: #f3e8ff;
+  --violet-200: #e9d5ff;
+  --violet-300: #d8b4fe;
+  --violet-400: #c084fc;
+  --violet-500: #a855f7;
+  --violet-600: #9333ea;
+  --violet-700: #7e22ce;
+  --violet-800: #6b21a8;
+  --violet-900: #581c87;
+  --violet-950: #3b0764;
+
   /* ── Apple Obsidian Dark Slate Palette ── */
   --obsidian-950: #09090b; /* Deepest canvas floor */
   --obsidian-900: #0f0f12; /* Workbench ground */

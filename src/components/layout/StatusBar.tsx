@@ -44,7 +44,7 @@ export function StatusBar({
         {isIndexing ? (
           <div className="flex items-center space-x-1.5 text-accent animate-pulse" title="AST Code Indexing in progress...">
             <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin text-accent" />
-            <span className="font-mono text-[11px]">Indexing AST...</span>
+            <span className="font-mono text-2xs">Indexing AST...</span>
           </div>
         ) : indexStatus?.indexed ? (
           <button
@@ -58,7 +58,7 @@ export function StatusBar({
 Click to re-index project.`}
           >
             <Icon icon={Database} className="w-3.5 h-3.5 text-muted group-hover:scale-110 transition-transform" />
-            <span className="group-hover:underline font-mono text-[11px]">{indexStatus.profile?.indexed_files ?? 0} files synced</span>
+            <span className="group-hover:underline font-mono text-2xs">{indexStatus.profile?.indexed_files ?? 0} files synced</span>
           </button>
         ) : (
           <button
@@ -68,7 +68,7 @@ Click to re-index project.`}
             title="Click to build AST symbol index for instant code intelligence"
           >
             <Icon icon={Database} className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Index Project</span>
+            <span className="text-2xs">Index Project</span>
           </button>
         )}
       </div>

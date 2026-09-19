@@ -236,9 +236,9 @@ export function StatusChip({ status, label, size = "sm", className = "", pulse, 
   const displayLabel = label ?? meta.label;
 
   const sizeClasses = {
-    xs: "px-1.5 py-0.5 text-[10px] gap-1 rounded-md",
+    xs: "px-1.5 py-0.5 text-3xs gap-1 rounded-md",
     sm: "px-2 py-0.5 text-xs gap-1.5 rounded-lg",
-    md: "px-2.5 py-1 text-[13px] gap-2 rounded-lg",
+    md: "px-2.5 py-1 text-body gap-2 rounded-lg",
   }[size];
 
   return (

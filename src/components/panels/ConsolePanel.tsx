@@ -48,7 +48,7 @@ export function ConsolePanel({ activityLog }: ConsolePanelProps) {
                     : "text-zinc-300"
                 }`}
               >
-                <span className="text-zinc-500 select-none w-8 text-right shrink-0 font-mono text-[11px]">
+                <span className="text-zinc-500 select-none w-8 text-right shrink-0 font-mono text-2xs">
                   {line.line_number || idx + 1}
                 </span>
                 <span className="break-all whitespace-pre-wrap flex-1">{line.content}</span>

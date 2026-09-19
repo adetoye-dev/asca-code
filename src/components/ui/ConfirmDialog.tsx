@@ -75,7 +75,7 @@ export function ConfirmDialog({
             </div>
             {detail && (
               <div
-                className="mt-2.5 px-2.5 py-1.5 bg-black/40 border border-white/5 rounded-lg text-[11px] font-mono text-zinc-300 truncate max-w-full select-all"
+                className="mt-2.5 px-2.5 py-1.5 bg-black/40 border border-white/5 rounded-lg text-2xs font-mono text-zinc-300 truncate max-w-full select-all"
                 title={detail}
               >
                 {detail}

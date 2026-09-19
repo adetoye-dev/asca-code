@@ -256,8 +256,8 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
             <Icon icon={ImageIcon} className="w-3.5 h-3.5" />
           </div>
           <span className="font-semibold text-xs text-zinc-100 truncate" title={filePath}>{fileName}</span>
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700/60 uppercase shrink-0">{ext}</span>
-          <div className="hidden sm:flex items-center gap-2.5 text-[11px] font-mono text-zinc-400 pl-1 border-l border-zinc-800">
+          <span className="px-1.5 py-0.5 rounded text-3xs font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700/60 uppercase shrink-0">{ext}</span>
+          <div className="hidden sm:flex items-center gap-2.5 text-2xs font-mono text-zinc-400 pl-1 border-l border-zinc-800">
             {metadata.width > 0 && <span className="text-zinc-300">{metadata.width} × {metadata.height} px</span>}
             {metadata.size > 0 && <span className="text-zinc-500">{formatSize(metadata.size)}</span>}
           </div>
@@ -269,7 +269,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
               <button type="button" onClick={handleZoomOut} disabled={zoom <= 0.15} className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-30 cursor-pointer" title="Zoom Out">
                 <Icon icon={ZoomOut} className="w-3.5 h-3.5" />
               </button>
-              <button type="button" onClick={handleResetZoom} className="px-2 py-0.5 text-[11px] font-mono font-medium text-zinc-300 hover:text-white hover:bg-zinc-800/80 rounded cursor-pointer">
+              <button type="button" onClick={handleResetZoom} className="px-2 py-0.5 text-2xs font-mono font-medium text-zinc-300 hover:text-white hover:bg-zinc-800/80 rounded cursor-pointer">
                 {Math.round(zoom * 100)}%
               </button>
               <button type="button" onClick={handleZoomIn} disabled={zoom >= 10} className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-30 cursor-pointer" title="Zoom In">
@@ -280,7 +280,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
               </button>
               {isSmallIcon && (
                 <button type="button" onClick={handleToggleActualSize}
-                  className={`px-1.5 py-0.5 text-[10px] font-mono rounded ml-0.5 transition-colors cursor-pointer ${isActualSize ? "bg-zinc-800 text-zinc-100 border border-zinc-600 shadow-sm" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"}`}
+                  className={`px-1.5 py-0.5 text-3xs font-mono rounded ml-0.5 transition-colors cursor-pointer ${isActualSize ? "bg-zinc-800 text-zinc-100 border border-zinc-600 shadow-sm" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"}`}
                   title="Toggle 1:1 pixel size">1:1</button>
               )}
             </div>
@@ -289,9 +289,9 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
           {!showRaw && (
             <div className="flex items-center rounded-lg bg-zinc-900 border border-zinc-800 p-0.5">
               <button type="button" onClick={() => setCanvasBg((p) => p === "dark-grid" ? "light-grid" : p === "light-grid" ? "obsidian" : p === "obsidian" ? "white" : "dark-grid")}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] text-zinc-300 hover:text-white rounded hover:bg-zinc-800 transition-colors cursor-pointer" title="Toggle Background">
+                className="flex items-center gap-1 px-2 py-1 text-2xs text-zinc-300 hover:text-white rounded hover:bg-zinc-800 transition-colors cursor-pointer" title="Toggle Background">
                 <Icon icon={Grid} className="w-3.5 h-3.5 text-zinc-400" />
-                <span className="capitalize text-[10px]">{canvasBg === "dark-grid" ? "Dark" : canvasBg === "light-grid" ? "Light" : canvasBg === "obsidian" ? "Obsidian" : "White"}</span>
+                <span className="capitalize text-3xs">{canvasBg === "dark-grid" ? "Dark" : canvasBg === "light-grid" ? "Light" : canvasBg === "obsidian" ? "Obsidian" : "White"}</span>
               </button>
             </div>
           )}
@@ -344,7 +344,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
             </div>
             <h4 className="text-sm font-bold text-zinc-100">Unable to Render Asset</h4>
             <p className="text-xs text-zinc-400 leading-relaxed">{errorMessage || "The asset could not be displayed."}</p>
-            <p className="text-[11px] font-mono text-zinc-500 break-all">{filePath}</p>
+            <p className="text-2xs font-mono text-zinc-500 break-all">{filePath}</p>
             {isSvg && rawSvg && (
               <button type="button" onClick={() => setShowRaw(true)} className="mt-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-xs font-medium text-zinc-200 rounded-lg border border-zinc-700 cursor-pointer">
                 View Raw SVG Source
@@ -354,7 +354,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
 
         ) : showRaw && isSvg ? (
           <div className="w-full h-full p-4 overflow-auto font-mono text-xs text-zinc-300 bg-zinc-950 flex flex-col">
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800 text-zinc-500 text-[11px]">
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800 text-zinc-500 text-2xs">
               <span>SVG Source</span><span>{rawSvg.length} chars</span>
             </div>
             <pre className="flex-1 whitespace-pre-wrap select-text leading-relaxed text-zinc-200">{rawSvg}</pre>
@@ -389,7 +389,7 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
         )}
 
         {!showRaw && !hasError && (
-          <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-zinc-900/80 backdrop-blur-md border border-zinc-800/80 text-[10px] font-mono text-zinc-400 flex items-center gap-2 pointer-events-none">
+          <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-zinc-900/80 backdrop-blur-md border border-zinc-800/80 text-3xs font-mono text-zinc-400 flex items-center gap-2 pointer-events-none">
             <span>Scroll: Zoom</span><span className="text-zinc-600">·</span>
             <span>Drag: Pan</span><span className="text-zinc-600">·</span>
             <span>{Math.round(zoom * 100)}%</span>

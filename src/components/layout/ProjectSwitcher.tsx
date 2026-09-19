@@ -198,7 +198,7 @@ export function ProjectSwitcher({
       role="presentation"
       ref={dropdownRef}
       onKeyDown={handleDropdownKeyDown}
-      className="relative select-none text-[13px] font-sans"
+      className="relative select-none text-body font-sans"
     >
       {/* ── Project Switcher Pill Button ──────────────────────────────── */}
       <button
@@ -217,7 +217,7 @@ export function ProjectSwitcher({
         </div>
 
         {/* Project Name */}
-        <span className="font-semibold text-[13px] tracking-tight max-w-[clamp(90px,18vw,240px)] truncate text-zinc-100">
+        <span className="font-semibold text-body tracking-tight max-w-[clamp(90px,18vw,240px)] truncate text-zinc-100">
           {activeProject.name}
         </span>
 
@@ -235,7 +235,7 @@ export function ProjectSwitcher({
         <div
           role="menu"
           tabIndex={0}
-          className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-popover p-1 text-[13px] text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-xl font-sans focus:outline-none"
+          className="absolute left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-overlay border border-hairline rounded-dropdown shadow-elevation-3 z-popover p-1 text-body text-zinc-200 animate-in fade-in zoom-in-95 duration-100 space-y-1 backdrop-blur-xl font-sans focus:outline-none"
         >
           {/* Top Actions: New, Open, Clone */}
           <div className="space-y-0.5 pb-1 border-b border-hairline">
@@ -248,14 +248,14 @@ export function ProjectSwitcher({
                 onNewProject();
               }}
               onMouseEnter={() => setFocusedIndex(0)}
-              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-left transition-colors ${
                 focusedIndex === 0
                   ? "bg-surface-hover text-white ring-1 ring-white/10"
                   : "text-zinc-200 hover:bg-surface-hover hover:text-white"
               }`}
             >
               <Icon icon={Plus} size="sm" className="text-zinc-400" />
-              <span className="font-medium text-[13px]">New Project...</span>
+              <span className="font-medium text-body">New Project...</span>
             </button>
 
             {/* Open Folder (Index 1) */}
@@ -267,7 +267,7 @@ export function ProjectSwitcher({
                 onOpenFolder();
               }}
               onMouseEnter={() => setFocusedIndex(1)}
-              className={`w-full flex items-center justify-between px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+              className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-left transition-colors ${
                 focusedIndex === 1
                   ? "bg-surface-hover text-white ring-1 ring-white/10"
                   : "text-zinc-200 hover:bg-surface-hover hover:text-white"
@@ -275,9 +275,9 @@ export function ProjectSwitcher({
             >
               <div className="flex items-center gap-2.5">
                 <Icon icon={Folder} size="sm" className="text-zinc-400" />
-                <span className="font-medium text-[13px]">Open...</span>
+                <span className="font-medium text-body">Open...</span>
               </div>
-              <kbd className="text-[10px] font-mono text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded border border-hairline">
+              <kbd className="text-3xs font-mono text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded border border-hairline">
                 ⌘O
               </kbd>
             </button>
@@ -291,20 +291,20 @@ export function ProjectSwitcher({
                 onCloneRepo();
               }}
               onMouseEnter={() => setFocusedIndex(2)}
-              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-[8px] text-left transition-colors ${
+              className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-left transition-colors ${
                 focusedIndex === 2
                   ? "bg-surface-hover text-white ring-1 ring-white/10"
                   : "text-zinc-200 hover:bg-surface-hover hover:text-white"
               }`}
             >
               <Icon icon={GitFork} size="sm" className="text-zinc-400" />
-              <span className="font-medium text-[13px]">Clone Repository...</span>
+              <span className="font-medium text-body">Clone Repository...</span>
             </button>
           </div>
 
           {/* Section: Open Projects */}
           <div className="pt-1">
-            <div className="px-3 py-1 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <div className="px-3 py-1 text-2xs font-semibold text-zinc-400 uppercase tracking-wider">
               Open Projects
             </div>
 
@@ -326,7 +326,7 @@ export function ProjectSwitcher({
                       setIsOpen(false);
                     }}
                     onMouseEnter={() => setFocusedIndex(itemIndex)}
-                    className={`w-full flex items-start gap-2.5 p-2 rounded-[8px] cursor-pointer transition-all ${
+                    className={`w-full flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-all ${
                       isActive && isFocused
                         ? "bg-zinc-800/90 border border-zinc-600 text-white ring-1 ring-white/10 shadow-sm"
                         : isActive
@@ -347,7 +347,7 @@ export function ProjectSwitcher({
 
                     <div className="flex-1 min-w-0 text-left">
                       <div className="flex items-center justify-between">
-                        <span className="font-medium text-[13px] text-zinc-100 truncate">
+                        <span className="font-medium text-body text-zinc-100 truncate">
                           {p.name}
                         </span>
                         {isActive && <Icon icon={Check} size="xs" className="text-zinc-200 shrink-0" />}

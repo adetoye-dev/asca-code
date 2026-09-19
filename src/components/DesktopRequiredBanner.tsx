@@ -18,7 +18,7 @@ export function DesktopRequiredBanner() {
   if (dismissed) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-950/70 border-b border-amber-800/60 text-[11px] text-amber-200 shrink-0 font-sans">
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-950/70 border-b border-amber-800/60 text-2xs text-amber-200 shrink-0 font-sans">
       <Icon icon={AlertTriangle} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
       <span className="truncate">
         Browser preview — no backend, so files, the terminal, the agent and your settings

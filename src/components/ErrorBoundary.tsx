@@ -94,7 +94,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <p className="text-zinc-300 mb-1.5 font-medium">
                   An error occurred while rendering this interface. The workbench protected your workspace from crashing.
                 </p>
-                <div className="p-3 rounded bg-red-950/40 border border-red-800/40 text-red-300 font-mono text-[11px] break-words">
+                <div className="p-3 rounded bg-red-950/40 border border-red-800/40 text-red-300 font-mono text-2xs break-words">
                   {this.state.error?.message || String(this.state.error)}
                 </div>
               </div>
@@ -115,7 +115,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 </button>
 
                 {this.state.showDetails && (
-                  <div className="mt-2 p-3 rounded bg-workbench border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
+                  <div className="mt-2 p-3 rounded bg-workbench border border-zinc-800 font-mono text-3xs text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
                     {this.state.error?.stack || "No stack trace available"}
                     {this.state.errorInfo?.componentStack && (
                       <div className="mt-2 text-zinc-500 border-t border-zinc-800 pt-2">

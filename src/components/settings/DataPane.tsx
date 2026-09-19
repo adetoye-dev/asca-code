@@ -57,7 +57,7 @@ function PaneButton({
       onClick={onClick}
       disabled={busy}
       aria-busy={busy}
-      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-[8px] text-xs font-medium transition disabled:opacity-60 cursor-pointer ${
+      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-60 cursor-pointer ${
         primary
           ? "bg-purple-600 hover:bg-purple-500 text-white"
           : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
@@ -92,14 +92,14 @@ export function DataPane() {
     if (!current || current.kind === "idle" || current.kind === "busy") return null;
     if (current.kind === "failed") {
       return (
-        <span className="text-[11px] text-amber-300 flex items-start gap-1.5 break-all">
+        <span className="text-2xs text-amber-300 flex items-start gap-1.5 break-all">
           <Icon icon={AlertCircle} className="w-3 h-3 mt-0.5 shrink-0 text-amber-400" />
           {current.detail}
         </span>
       );
     }
     return (
-      <span className="text-[11px] text-zinc-400 flex items-start gap-1.5 break-all">
+      <span className="text-2xs text-zinc-400 flex items-start gap-1.5 break-all">
         <Icon icon={Check} className="w-3 h-3 mt-0.5 shrink-0 text-emerald-400" />
         <span>
           {current.path ? <span className="text-zinc-300">{basename(current.path)}</span> : null}
@@ -113,7 +113,7 @@ export function DataPane() {
     <div className="space-y-4 max-w-2xl">
       <div>
         <h3 className="text-sm font-semibold text-zinc-100">Data &amp; backups</h3>
-        <p className="text-[11px] text-zinc-400 mt-0.5">
+        <p className="text-2xs text-zinc-400 mt-0.5">
           Your projects, chats and settings live in one database on this machine. Nothing is uploaded
           anywhere.
         </p>
@@ -129,12 +129,12 @@ export function DataPane() {
             onClick={() => void run("reveal", revealDataFolder)}
           />
         </div>
-        <div className="text-[11px] font-mono text-zinc-500 truncate" title={folder?.dataDir ?? ""}>
+        <div className="text-2xs font-mono text-zinc-500 truncate" title={folder?.dataDir ?? ""}>
           {folder?.dataDir ?? "Locating…"}
         </div>
         {feedback("reveal")}
         <div className="pt-1 border-t border-hairline">
-          <p className="text-[11px] text-zinc-500 leading-relaxed">
+          <p className="text-2xs text-zinc-500 leading-relaxed">
             If the app is misbehaving, a support bundle is the file to send us: versions, paths, row
             counts and the last crashes — never your API keys or chat history.
           </p>
@@ -152,7 +152,7 @@ export function DataPane() {
 
       <div className="bg-surface border border-hairline rounded-panel p-4 space-y-3">
         <span className="text-xs font-medium text-zinc-200">Backup &amp; restore</span>
-        <p className="text-[11px] text-zinc-500 leading-relaxed">
+        <p className="text-2xs text-zinc-500 leading-relaxed">
           A backup is the whole database — projects, chats, settings and your model configuration.
           API keys are <span className="text-zinc-300">left out</span> so the file is safe to store
           anywhere; add them again on the new machine.
