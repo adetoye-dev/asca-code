@@ -52,10 +52,10 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Unit suite | **[done]** | `npm test`: database and accounts, engine CLIs, env handling, indexing and the dependency graph, MCP client, workspace search/replace, project readiness. |
-| Real end-to-end agent test | **[partial]** | Two scripted runs exist in `.tauri/src/main.rs`: `a_turn_completes_over_the_real_runtime` and `a_real_approval_is_answered_and_the_turn_continues`. Both are `#[ignore]`d (they need a reachable provider and localhost) and both skip loudly rather than fail when it is unreachable. Run with `cargo test -- --ignored`. The approval round-trip was verified live in the packaged app: request → card → Approve → turn finished. |
+| Real end-to-end agent test | **[partial]** | Two scripted runs exist in `.tauri/src/main.rs`: `a_turn_completes_over_the_real_runtime` and `a_real_approval_is_answered_and_the_turn_continues`. Both are `#[ignore]`d (they need a reachable provider and localhost) and both skip loudly rather than fail when it is unreachable. Run with `cargo test -- --ignored`. What has been verified *live*, in the packaged app, is now considerably more than the approval round-trip: a scaffolded project built end to end; an approval answered and the turn continued; a question asked through `request_user_input` and answered; a change log matching the files on disk; and a resumed thread implementing a design it first proposed. What is still scripted-only is everything that has to hold in CI — that is what these two tests are for, and they remain the honest gap. |
 | Typecheck | **[done]** | `strict: true`, including the Node-side dev-bridge config. |
 | Honest failure reporting | **[done]** | Broken edits, unparseable verifier output and crashed linters all report failure rather than success. |
-| Flake budget | **[done]** | The default suite is deterministic and offline: 121 Python tests, 51 Vitest tests and 14 Rust tests, none of which touch the network. The two real-runtime tests are `#[ignore]`d and self-skipping, so they cannot flake the build. |
+| Flake budget | **[done]** | The default suite is deterministic and offline: 121 Python tests, 69 Vitest tests and 19 Rust tests, none of which touch the network. The two real-runtime tests are `#[ignore]`d and self-skipping, so they cannot flake the build. |
 | Frontend tests | **[done]** | Vitest runs in `verify`: services (approval vocabulary, model-registry reconciliation, updater preference) and, via jsdom, components — the update button renders nothing when there is nothing to say, says `Update` rather than a version number, installs only on a click, and offers the restart separately; the About pane says "up to date" only when the check said so and prints the reason when it failed. Component tests opt into jsdom per file with a docblock, so the service tests stay on node. |
 | Generated-class check | **[done]** | `scripts/check_generated_classes.mjs`, run by `npm run build`. It scans the app's own token utilities (`bg-workbench/60`, `bg-modal/95`, …) and fails if the built CSS has no rule for one — which is how thirteen of them shipped silently. Verified by re-introducing the bug: it names the two classes and exits non-zero. Scoped to the design tokens on purpose; checking every class would be all false positives. |
 
@@ -84,17 +84,36 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Transport | **[partial]** | `exec` is the default; `app-server` is opt-in and is the only transport that can ask for approval. Choosing one as the default is still an open decision. |
+| Transport | **[partial]** | `exec` is the default; `app-server` is opt-in, and it is the only transport that can ask anything. That makes this a **UI decision, not just a runtime one**: approvals and questions — the two affordances the branded UI would show off — do not exist on the default path. Settle it before designing around them. |
 | Local model tool support | **[done]** | `core-engine/responses_adapter.py` translates the Responses API the runtime requires into Ollama's native `/api/chat`, so a local model can actually run tools. Verified end to end, frozen into the engine sidecar, and covered by `tests/test_responses_adapter.py`. |
 | Adapter lifecycle | **[partial]** | Started on demand and reused per provider. Nothing restarts it if it dies mid-run, and it is only reached when the resolved provider is local. |
 | Steering | **[open]** | `turn/steer` is not wired to the UI. |
-| Approval affordance | **[partial]** | The card renders in the composer, so on a long transcript it can start below the fold. |
+| Approval affordance | **[partial]** | The card renders in the composer, so on a long transcript it can start below the fold. Live experience, not theory: a run sat blocked for roughly six minutes and the only way to find out why was to read the accessibility tree — it was not visibly doing anything. Two card kinds now share that slot (approval and question), so it has got worse rather than better. It needs to be unmissable and reflected in the run's status. |
+| Host skills | **[done]** | `~/.agents/skills` is *not* skipped. It was being fought, and that was the wrong instinct: `superpowers:brainstorming` told the agent to present a design and wait for a human, the agent did exactly that, and the app had no way to notice — two runs of the same prompt wrote nothing while the transcript read like a report. `features.skip_host_skill_discovery` was tried and does not work (the flag is still "under development" upstream). The app now plays the other half of the conversation instead. |
+| Asking the user | **[done]** | `ServerRequest::ToolRequestUserInput` is answered, not squeezed into the approval card. Verified live end to end: the agent asked two questions with options, the card collected the answers, and it implemented exactly what was chosen. The response shape is read from the runtime's own schema (`codex app-server generate-json-schema`), not inferred. |
+| Blocked-on-human states | **[done]** | `thread/status/changed` was not consumed at all, so `waitingOnUserInput` and `waitingOnApproval` were invisible and a paused run looked finished. Now a waiting turn says so and says where to answer; the flag clears when the wait is over. |
+| Change log | **[done]** | After a turn that changed files the chat shows "Edited N files +X −Y" with a row per file, and a row opens that file two-sided in the diff viewer. The counts come from the runtime's own item diffs, so they describe *this turn* where a `git diff` would also count the user's own uncommitted edits. This is the deliberate answer to "should every write need approval?": log it, do not gate it. Verified live: a two-file edit reported +9 −0 and the files were a 5-line comment and a 4-line one. |
+| Undo a turn | **[open]** | The change log has no undo. Reverting only a turn's changes needs a snapshot taken before the turn; the only primitive here is `git checkout -- <file>`, which would also discard the user's own uncommitted edits to the same file. Not worth shipping without the snapshot. |
+| Change log in the transcript | **[partial]** | It is live-only, so it answers "what did it just do?" and not "what did it do an hour ago?". A log that scrolls back needs it persisted as a transcript entry. |
+| Workspace index refresh | **[done]** | The tree refreshed after a write and the symbol index did not, so Code Map and symbol search kept describing the project as it was before the run — the status bar read "3 files synced" before a turn that created two `.tsx` files and still read 3 afterwards. Create, delete and agent turns now refresh both. Re-indexing is a full walk but a cheap one (0.28s for 123 files, 0.39s for 172 through the frozen engine), so it is done rather than guessed at. |
 
 ## Suggested order
 
-1. **Windows and Linux release jobs** — the config exists (`nsis`, `deb`/`rpm`) but nothing signs or publishes them.
-2. **OS keychain** for credentials, so "encryption at rest" stops being an open row.
-3. **Render tests for the surfaces the revamp will touch.** Several components are covered;
-   the model picker, the layout and the z-index scale are not.
-4. **The manual half of the accessibility audit** — the automated half is in `verify`.
-5. **Final brand artwork** — the icon and runtime mark are a clean hand-authored stand-in.
+Current plan, in order:
+
+1. **Ship the agent-flow work as `0.2.2`** before any branding. Five commits sit unpushed (host
+   skills, asking the user, blocked states, the change log, and two honesty fixes found by running
+   it). Release them separately so a branding regression is not tangled up with a behaviour change.
+   Remember the draft-publish step — a green release run with `draft: true` ships nothing.
+2. **Make a blocked run unmissable.** Both card kinds render in the composer; a run that stopped to
+   ask is easy to miss and easy to mistake for a hung one. This is a prerequisite, not polish: the
+   branded UI will lean on those cards.
+3. **Persist the change log into the transcript** so it can be read back, not just seen once.
+4. **Decide two things the UI cannot be designed around:** whether the default transport becomes
+   `app-server` (approvals and questions only exist there), and whether accounts exist at all —
+   auth endpoints ship today with nothing consuming them.
+5. **Branding and UI**, with the manual accessibility pass inside it rather than after it: focus
+   traps, screen-reader labelling, contrast, and the model picker / layout / z-index surfaces that
+   have no render tests yet.
+
+After that: OS keychain, then Windows and Linux release jobs, then Dependabot and `npm audit`.
