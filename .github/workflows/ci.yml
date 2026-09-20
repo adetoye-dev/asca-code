@@ -2,10 +2,14 @@ name: CI
 
 on:
   # Named branches rather than `**`: every push used to start a full build,
-  # including on throwaway branches, and macOS minutes are the scarce resource.
+  # including on throwaway branches.
+  #
+  # `main` is here as well as `dev` so a merge is verified before it lands, and
+  # `workflow_dispatch` is here so the slow jobs can be asked for on purpose.
   push:
     branches: [dev, main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -87,6 +91,14 @@ jobs:
     name: Desktop bundle
     runs-on: macos-latest
     needs: [verify]
+    # Deliberately not on every push to `dev`. It is the slowest job here (the
+    # Rust app built from scratch, ~8 minutes) and it duplicated what release.yml
+    # already does on a tag — so a push to the working branch paid for the same
+    # build twice, and `cancel-in-progress` then threw the earlier run away
+    # whenever two pushes landed close together, which is exactly when a "did the
+    # bundle break?" answer is worth having. Pull requests and `main` still cover
+    # it, and `gh workflow run ci.yml --ref dev` asks for it directly.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     env:
       # Inherited by `tauri build`'s beforeBuildCommand (`npm run build`).
       NODE_OPTIONS: --max-old-space-size=4096
