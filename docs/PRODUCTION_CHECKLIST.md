@@ -104,9 +104,12 @@ persisted the change log into the transcript; took both decisions (`app-server` 
 `exec` as a fallback, accounts removed rather than left dormant); then the identity — indigo,
 tagline, the Apex mark — and the accessibility pass, measured rather than eyeballed.
 
-That leaves a stack of unpushed commits on `dev` (`git log --oneline origin/dev..HEAD`). The
-decision to make is whether they ship as `0.2.3` now or ride with the next piece of work; nothing
-below depends on it.
+`0.2.3` then carried the two workbench fixes that came out of the audit: panels read live state
+(an open editor used to keep rendering the file as it was when its tab opened, and its Save handler
+could write that stale buffer back over the new one), and a keystroke stopped re-registering the
+dockview layout. `0.2.4` carries the rest of that audit: the composer's text and the host's telemetry
+moved out of the workbench's state, the transcript and the editor sit behind memo boundaries, and the
+macOS bundle job stopped running on every push to `dev`.
 
 **Left in this phase — the surfaces.** The model picker, the layout, and the z-index scale have no
 render tests, and every screen still carries the pre-identity spacing and hierarchy: the palette and
