@@ -533,7 +533,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                     ? "text-emerald-400"
                     : active
                     ? "text-white bg-zinc-800"
-                    : "text-zinc-600"
+                    : "text-zinc-500"
                 }`}
               >
                 {done && <Icon icon={CheckCircle2} className="w-2.5 h-2.5" />}
@@ -606,7 +606,7 @@ export function OllamaNotRunningBanner({ onOpenSetup, onDismiss }: OllamaBannerP
         <button
           type="button"
           onClick={onDismiss}
-          className="text-zinc-600 hover:text-zinc-400 transition-colors p-1"
+          className="text-zinc-500 hover:text-zinc-400 transition-colors p-1"
           title="Dismiss"
         >
           <Icon icon={X} className="w-3 h-3" />

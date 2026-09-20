@@ -152,7 +152,13 @@
 
   input:focus-visible, textarea:focus-visible, select:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 1px var(--border-focus);
+    /*
+     * The accent, not `--border-focus`. That token is `rgba(255,255,255,0.25)`,
+     * which flattens to #525254 over the app's surfaces — 2.27:1 to 2.55:1, below
+     * the 3:1 that WCAG 1.4.11 asks of a focus indicator. `--accent-400` measures
+     * 5.94:1 at worst, and it is the brand colour, so it reads as deliberate.
+     */
+    box-shadow: 0 0 0 2px var(--accent-400);
   }
 
   /*
@@ -170,7 +176,7 @@
     outline: none;
     box-shadow:
       0 0 0 1px var(--workbench-bg, #18181b),
-      0 0 0 3px var(--border-focus);
+      0 0 0 3px var(--accent-400);
     border-radius: 4px;
   }
 

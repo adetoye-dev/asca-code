@@ -490,7 +490,7 @@ export function PerformanceDashboard({
             <span>
               <strong className="text-zinc-300 font-semibold">HOST:</strong> ACSA Local Engine ({hostPlatform} {hostArchitecture})
             </span>
-            <span className="hidden sm:inline text-zinc-600">|</span>
+            <span className="hidden sm:inline text-zinc-500">|</span>
             <span>
               <strong className="text-zinc-300 font-semibold">RUNTIME:</strong> Node {nodeVersion} · Vite {viteVersion} · Python {pythonVersion}
             </span>

@@ -5,9 +5,10 @@
  * into a real physical folder on disk.
  */
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X, AlertCircle } from "lucide-react";
 import { Icon } from "./ui/Icon";
+import { useDialogA11y } from "../hooks/useDialogA11y";
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -78,6 +79,11 @@ export function ProjectModal({
   const [selectedTemplate, setSelectedTemplate] = useState("nextjs");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Tab stays in the dialog, Escape closes it, focus returns to whatever opened
+  // it. None of that existed: Escape did nothing and Tab walked out behind it.
+  useDialogA11y(dialogRef, onClose, isOpen);
 
   if (!isOpen) return null;
 
@@ -113,7 +119,13 @@ export function ProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 select-none">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create a new project"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 select-none"
+    >
       <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
@@ -131,6 +143,8 @@ export function ProjectModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
+            title="Close"
             className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg"
           >
             <Icon icon={X} className="w-4 h-4" />

@@ -195,7 +195,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search skills, tools, MCP servers…"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1.5 text-2xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-purple-500/60"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1.5 text-2xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-purple-500/60"
           />
           <Icon icon={Search} className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500" />
         </div>
@@ -320,7 +320,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         {domainLabel(item.domain).toLowerCase()} · {item.author}
                       </span>
                       {item.license && (
-                        <span className="text-4xs font-mono text-zinc-600">
+                        <span className="text-4xs font-mono text-zinc-500">
                           {item.license}
                         </span>
                       )}
@@ -377,7 +377,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         ))}
                       </div>
                     ) : (
-                      <div className="text-4xs font-mono text-zinc-600">
+                      <div className="text-4xs font-mono text-zinc-500">
                         No external source — bundled with the app.
                       </div>
                     )}
@@ -404,7 +404,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                             key={permission}
                             className="flex items-start gap-1 text-4xs text-zinc-400"
                           >
-                            <span className="text-zinc-600">•</span>
+                            <span className="text-zinc-500">•</span>
                             <span className="leading-snug">{permission}</span>
                           </li>
                         ))}

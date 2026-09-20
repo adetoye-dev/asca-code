@@ -74,7 +74,7 @@ export const ProjectSetupCard: React.FC<ProjectSetupCardProps> = ({ status, busy
           );
         })}
       </div>
-      <p className="text-3xs text-zinc-600 mt-2">
+      <p className="text-3xs text-zinc-500 mt-2">
         Runs in the terminal below so you can watch the output.
       </p>
     </div>

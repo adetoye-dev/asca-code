@@ -390,8 +390,8 @@ export function AssetPreview(props: IDockviewPanelProps<AssetPreviewParams>) {
 
         {!showRaw && !hasError && (
           <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-zinc-900/80 backdrop-blur-md border border-zinc-800/80 text-3xs font-mono text-zinc-400 flex items-center gap-2 pointer-events-none">
-            <span>Scroll: Zoom</span><span className="text-zinc-600">·</span>
-            <span>Drag: Pan</span><span className="text-zinc-600">·</span>
+            <span>Scroll: Zoom</span><span className="text-zinc-500">·</span>
+            <span>Drag: Pan</span><span className="text-zinc-500">·</span>
             <span>{Math.round(zoom * 100)}%</span>
             {isActualSize && <span className="text-zinc-200 font-bold ml-1">(1:1)</span>}
           </div>

@@ -20,6 +20,7 @@ import { PRESET_ACCENTS, PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 import { AboutPane } from "./settings/AboutPane";
 import { DataPane } from "./settings/DataPane";
+import { useDialogA11y } from "../hooks/useDialogA11y";
 import { aiFetch } from "../services/aiClient";
 import {
   AGENT_APPROVAL_MODES,
@@ -273,21 +274,9 @@ export function SettingsModal({
    * not.)
    */
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose?.();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const first = dialogRef.current?.querySelector<HTMLElement>(
-      'input, select, textarea, button, [tabindex]:not([tabindex="-1"])',
-    );
-    first?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isOpen, onClose]);
+  // Escape, focus-in and — what this was missing — the Tab trap, which is shared
+  // with every other dialog rather than re-derived here.
+  useDialogA11y(dialogRef, () => onClose?.(), isOpen);
 
   const navigateTo = (sectionId: string) => {
     setSelectedSection(sectionId);
@@ -446,7 +435,7 @@ export function SettingsModal({
               <span className="font-semibold text-zinc-100">Settings</span>
               {projectName && (
                 <>
-                  <span className="text-zinc-600">/</span>
+                  <span className="text-zinc-500">/</span>
                   <span className="text-xs font-mono text-zinc-400">{projectName}</span>
                 </>
               )}
@@ -513,7 +502,7 @@ export function SettingsModal({
               <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-sans">
                 {breadcrumb.map((crumb, idx) => (
                   <React.Fragment key={crumb}>
-                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-zinc-600" />}
+                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />}
                     <span
                       className={
                         idx === breadcrumb.length - 1
@@ -895,7 +884,7 @@ export function SettingsModal({
                           type="checkbox"
                           checked={enableLigatures}
                           onChange={(e) => setEnableLigatures(e.target.checked)}
-                          className="rounded border-hairline text-purple-500 focus:ring-0"
+                          className="rounded border-hairline text-purple-400 focus:ring-0"
                         />
                         <span>Enable font ligatures (==, !=, =&gt;)</span>
                       </label>
@@ -971,7 +960,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={insertSpaces}
                         onChange={(e) => setInsertSpaces(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-400 focus:ring-0"
                       />
                     </div>
 
@@ -982,7 +971,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={wordWrap}
                         onChange={(e) => setWordWrap(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-400 focus:ring-0"
                       />
                     </div>
                   </div>

@@ -63,3 +63,52 @@ describe("the new-project dialog", () => {
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The dialog's keyboard contract. There was no focus trap anywhere in the app:
+ * a dialog that looks modal but lets Tab walk out into the page behind it is
+ * worse than no dialog styling, because the user cannot see where they are.
+ */
+describe("the new-project dialog, from the keyboard", () => {
+  it("closes on Escape", async () => {
+    const onClose = vi.fn();
+    render(<ProjectModal isOpen onClose={onClose} onCreateProject={vi.fn()} />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("keeps Tab inside the dialog", async () => {
+    render(<ProjectModal isOpen onClose={vi.fn()} onCreateProject={vi.fn()} />);
+    const dialog = await screen.findByRole("dialog");
+
+    // Enabled only: a disabled control is not a tab stop, and `last.focus()` on
+    // one silently does nothing — which is what made this assertion fail first.
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ),
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    expect(first).toBeTruthy();
+    expect(last).not.toBe(first);
+
+    // Forward from the end wraps to the start…
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+
+    // …and backwards from the start wraps to the end.
+    first.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("is announced as a modal dialog, not an anonymous box", async () => {
+    render(<ProjectModal isOpen onClose={vi.fn()} onCreateProject={vi.fn()} />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.getAttribute("aria-label")).toBeTruthy();
+  });
+});

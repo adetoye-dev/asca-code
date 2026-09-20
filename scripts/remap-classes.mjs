@@ -1,5 +1,10 @@
 /**
- * Move the hand-written sizes onto the scale.
+ * Repo-wide class remaps, in one place so they can be reviewed and gated.
+ *
+ * Group 1 moves the hand-written sizes onto the scale.
+ * Group 2 fixes contrast: "muted" grey was 3.67:1 on the app's lightest surface,
+ * and the dense type scale is 9-11px, which needs the full 4.5 rather than the
+ * 3.0 large text is allowed.
  *
  * The UI had 402 arbitrary font sizes and a scattering of arbitrary radii. They
  * are not wrong, they are just unrelated: `text-[11px]` and `text-[10px]` and
@@ -16,7 +21,7 @@
  *
  * Idempotent: running it twice does nothing the second time.
  *
- *   node scripts/consolidate-scales.mjs [--check]
+ *   node scripts/remap-classes.mjs [--check]
  */
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -35,7 +40,16 @@ const REPLACEMENTS = [
   [/\brounded-\[8px\]/g, "rounded-lg"],
   [/\brounded-\[6px\]/g, "rounded-md"],
   [/\brounded-\[4px\]/g, "rounded"],
-  [/\brounded-\[2px\]/g, "rounded-sm"],
+  [ /\brounded-\[2px\]/g, "rounded-sm" ],
+
+  // ── Contrast ────────────────────────────────────────────────────────────────
+  // Measured with `scripts/check_contrast.mjs`, not guessed. `text-zinc-600` is
+  // 2.29:1 on a card and `text-zinc-500` was 3.67:1, against the 4.5 that text
+  // this small needs. 600 is too dark to be text at all on these surfaces, so its
+  // uses move up one step, which now passes.
+  [ /\btext-zinc-600\b/g, "text-zinc-500" ],
+  [ /\bplaceholder-zinc-600\b/g, "placeholder-zinc-500" ],
+  [ /\btext-purple-500\b/g, "text-purple-400" ],
 ];
 
 const walk = (dir) =>
@@ -74,6 +88,6 @@ const total = [...totals.values()].reduce((sum, n) => sum + n, 0);
 console.log(`${check ? "would change" : "changed"} ${total} classes in ${changedFiles} files`);
 
 if (check && total > 0) {
-  console.error("consolidate-scales: arbitrary sizes remain — run without --check");
+  console.error("remap-classes: classes that should have been remapped remain — run without --check");
   process.exit(1);
 }

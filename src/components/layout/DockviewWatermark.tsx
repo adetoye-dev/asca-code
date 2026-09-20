@@ -91,7 +91,7 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
       <div className="text-xs font-semibold tracking-wider uppercase text-zinc-400 mb-1">
         ACSA Code
       </div>
-      <div className="text-2xs text-zinc-600 mb-6 font-mono">
+      <div className="text-2xs text-zinc-500 mb-6 font-mono">
         Local-first agentic engineering workbench
       </div>
 

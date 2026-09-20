@@ -29,7 +29,13 @@
   --neutral-200: #e4e4e7;
   --neutral-300: #d4d4d8;
   --neutral-400: #a1a1aa;
-  --neutral-500: #71717a;
+  /*
+   * Lightened from Tailwind's #71717a. Measured with `scripts/check_contrast.mjs`:
+   * that value is 3.67:1 on a card, and the dense type scale is 9–11px, which
+   * needs 4.5:1. #8a8a8f reaches 5.16:1 on the lightest surface the app paints
+   * text on, so `text-zinc-500` — the app's muted text, used 165 times — passes.
+   */
+  --neutral-500: #8a8a8f;
   --neutral-600: #52525b;
   --neutral-700: #3f3f46;
   --neutral-800: #27272a;

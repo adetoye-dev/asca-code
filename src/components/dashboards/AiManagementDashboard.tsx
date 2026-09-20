@@ -917,7 +917,7 @@ export function AiManagementDashboard({
                               onChange={(e) => setCustomModelTag(e.target.value)}
                               placeholder="e.g. llama3.2:1b, starcoder2:3b, deepseek-r1:14b..."
                               disabled={!!pullingModelTag}
-                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
                             />
                             <button
                               type="submit"
@@ -1002,7 +1002,7 @@ export function AiManagementDashboard({
                               value={customCloudModel}
                               onChange={(e) => setCustomCloudModel(e.target.value)}
                               placeholder="Or enter custom model ID (e.g. gpt-5, claude-3-7-sonnet-2026, deepseek-v3)..."
-                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                             />
                             <button
                               type="submit"
@@ -1039,7 +1039,7 @@ export function AiManagementDashboard({
                             value={apiKeyInput}
                             onChange={(e) => setApiKeyInput(e.target.value)}
                             placeholder="sk-••••••••••••••••••••••••"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                           />
                           <button
                             type="button"
@@ -1093,7 +1093,7 @@ export function AiManagementDashboard({
                   value={baseUrlInput}
                   onChange={(e) => setBaseUrlInput(e.target.value)}
                   placeholder="https://api..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                 />
               </div>
 

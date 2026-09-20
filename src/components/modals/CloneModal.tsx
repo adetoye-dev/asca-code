@@ -8,9 +8,10 @@
  * 4. Automatic workspace opening on completion.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle2, AlertCircle, GitFork, RefreshCw, Folder, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 import { gitFetch } from "../../services/gitClient";
 
 interface CloneModalProps {
@@ -30,6 +31,11 @@ export function CloneModal({
   const [targetDir, setTargetDir] = useState("");
   const [isCloning, setIsCloning] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: "info" | "success" | "error"; text: string } | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Tab stays in, Escape closes, focus comes back. This dialog had none of the
+  // three, so the only way out of it was the mouse.
+  useDialogA11y(dialogRef, onClose, isOpen);
 
   if (!isOpen) return null;
 
@@ -89,7 +95,13 @@ export function CloneModal({
   };
 
   return (
-    <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clone a repository"
+      className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100"
+    >
       <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 p-5 space-y-4 text-xs text-zinc-200">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
@@ -106,6 +118,8 @@ export function CloneModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
+            title="Close"
             className="p-1 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"
           >
             <Icon icon={X} className="w-4 h-4" />

@@ -1370,7 +1370,7 @@ Click to re-index project.`}
                         className={`flex items-center justify-center w-8 h-8 rounded-xl transition-all shadow-sm ${
                           prompt.trim()
                             ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20"
-                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                         }`}
                         title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
                       >
@@ -1851,7 +1851,7 @@ Click to re-index project.`}
                           name="answer"
                           type={question.isSecret ? "password" : "text"}
                           placeholder="Or type your own answer…"
-                          className="flex-1 bg-black/50 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500/60"
+                          className="flex-1 bg-black/50 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
                         />
                         <button
                           type="submit"
@@ -2111,7 +2111,7 @@ Click to re-index project.`}
                       className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all shadow-sm shrink-0 ${
                         prompt.trim() || attachedImages.length > 0
                           ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 cursor-pointer"
-                          : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                          : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                       }`}
                       title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
                     >

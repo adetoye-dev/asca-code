@@ -64,7 +64,7 @@ export function AboutPane() {
               setAuto(event.target.checked);
               setAutoCheck(event.target.checked);
             }}
-            className="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-purple-500 focus:ring-purple-500/40 cursor-pointer"
+            className="mt-0.5 rounded border-zinc-600 bg-zinc-800 text-purple-400 focus:ring-purple-500/40 cursor-pointer"
           />
           {/* `htmlFor` rather than nesting: the lint rule wants an explicit
               association, and it is the more reliable one for screen readers. */}

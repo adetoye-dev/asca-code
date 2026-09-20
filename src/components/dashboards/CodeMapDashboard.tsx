@@ -390,7 +390,7 @@ export function CodeMapDashboard({
                     {(graph ? describeFileRole(selectedEntry, graph, entrypoints) : []).map(
                       (line) => (
                         <li key={line} className="flex items-start gap-1.5 text-2xs text-zinc-300">
-                          <span className="text-zinc-600 mt-[1px]">•</span>
+                          <span className="text-zinc-500 mt-[1px]">•</span>
                           <span className="leading-snug">{line}</span>
                         </li>
                       )
@@ -449,7 +449,7 @@ export function CodeMapDashboard({
                           <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                             {dep}
                           </span>
-                          <span className="text-3xs text-zinc-600 font-mono shrink-0">
+                          <span className="text-3xs text-zinc-500 font-mono shrink-0">
                             {dirname(dep) || "."}
                           </span>
                         </button>
@@ -844,7 +844,7 @@ export function CodeMapDashboard({
                       <span className="text-2xs text-zinc-400 font-mono truncate flex-1">
                         {f.path}
                       </span>
-                      <span className="text-3xs text-zinc-600 font-mono shrink-0">
+                      <span className="text-3xs text-zinc-500 font-mono shrink-0">
                         {f.symbolCount}
                       </span>
                     </button>
