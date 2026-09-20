@@ -49,7 +49,11 @@ import { CommandPalette, CommandItem } from "../modals/CommandPalette";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
-import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
+import {
+  applyAccent,
+  applyGlobalWorkbenchTheme,
+  DEFAULT_ACCENT,
+} from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
 import { DESKTOP_REQUIRED_MESSAGE } from "../../services/engineBridge";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
@@ -292,6 +296,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [themeId, setThemeId] = useState<string>(
     () => (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_theme") || "github-dark" : "github-dark")
   );
+  // Orthogonal to the theme: one theme ships, but the accent is the brand
+  // decision, and seeing it in the real workbench beats reading hex codes.
+  const [accentId, setAccentId] = useState<string>(
+    () =>
+      (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_accent") : null) ||
+      DEFAULT_ACCENT,
+  );
   // Must name a section that exists in SETTINGS_TREE. It said "agents", which
   // matches nothing, so opening Settings landed on an empty pane — the whole
   // dialog looked broken until you happened to click a nav item.
@@ -361,6 +372,16 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       // Ignore localStorage write failures
     }
   }, [themeId]);
+
+  // Applied the same way the theme is: effect, persisted, so a relaunch keeps it.
+  useEffect(() => {
+    applyAccent(accentId);
+    try {
+      localStorage.setItem("acsa_ide_accent", accentId);
+    } catch {
+      // Ignore localStorage write failures
+    }
+  }, [accentId]);
 
   const refreshBranch = useCallback(async () => {
     try {
@@ -1699,6 +1720,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onSave={setAiSettings}
             themeId={themeId}
             onApplyTheme={setThemeId}
+            accentId={accentId}
+            onApplyAccent={setAccentId}
             initialTab={settingsModalTab}
             projectName={activeProject?.name || "Practice"}
             onOpenMarketplace={openMarketplaceTab}

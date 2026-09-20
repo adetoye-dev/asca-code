@@ -51,6 +51,76 @@ export const PRESET_THEMES: Record<string, IdeTheme> = {
 };
 
 /**
+ * Candidate accents — the brand decision, made reactable.
+ *
+ * Every accent surface in the app is the `purple-*` scale (257 uses), and those
+ * classes now resolve through `--violet-*`. Swapping the ramp here therefore
+ * retints the whole workbench, which is the point: the decision is a taste call
+ * and taste needs looking at, not a list of hex codes.
+ *
+ * All three come from the mark's own gradient (`#38bdf8` → `#a855f7`) or sit
+ * between its ends. Deliberately *not* on the table: amber, emerald, magenta and
+ * grey, because the status taxonomy already spends those — `--status-pending` is
+ * amber, `--status-success` emerald, `--status-action` magenta. A brand accent
+ * that collides with "needs attention" is a bug, not a style.
+ */
+export interface AccentOption {
+  id: string;
+  name: string;
+  /** One line for the picker, so the choice is not solely visual. */
+  blurb: string;
+  /** The `--violet-*` ramp this accent installs. */
+  ramp: Record<string, string>;
+}
+
+export const PRESET_ACCENTS: Record<string, AccentOption> = {
+  violet: {
+    id: "violet",
+    name: "Violet",
+    blurb: "What ships today: the mark's right-hand end. Warm, but it is the same family as the progress status.",
+    ramp: {
+      "50": "#faf5ff", "100": "#f3e8ff", "200": "#e9d5ff", "300": "#d8b4fe",
+      "400": "#c084fc", "500": "#a855f7", "600": "#9333ea", "700": "#7e22ce",
+      "800": "#6b21a8", "900": "#581c87", "950": "#3b0764",
+    },
+  },
+  sky: {
+    id: "sky",
+    name: "Sky",
+    blurb: "The mark's left-hand end. Reads as instrumentation rather than magic, and no status colour is close to it.",
+    ramp: {
+      "50": "#f0f9ff", "100": "#e0f2fe", "200": "#bae6fd", "300": "#7dd3fc",
+      "400": "#38bdf8", "500": "#0ea5e9", "600": "#0284c7", "700": "#0369a1",
+      "800": "#075985", "900": "#0c4a6e", "950": "#082f49",
+    },
+  },
+  indigo: {
+    id: "indigo",
+    name: "Indigo",
+    blurb: "Between the two ends. The calmest of the three, and the furthest from looking like an AI product.",
+    ramp: {
+      "50": "#eef2ff", "100": "#e0e7ff", "200": "#c7d2fe", "300": "#a5b4fc",
+      "400": "#818cf8", "500": "#6366f1", "600": "#4f46e5", "700": "#4338ca",
+      "800": "#3730a3", "900": "#312e81", "950": "#1e1b4b",
+    },
+  },
+};
+
+export const DEFAULT_ACCENT = "violet";
+
+/** Install an accent ramp. Inline on `:root`, so it beats the stylesheet copy. */
+export function applyAccent(accentId: string): AccentOption {
+  const accent = PRESET_ACCENTS[accentId] ?? PRESET_ACCENTS[DEFAULT_ACCENT];
+  if (typeof document !== "undefined") {
+    const root = document.documentElement;
+    for (const [shade, value] of Object.entries(accent.ramp)) {
+      root.style.setProperty(`--violet-${shade}`, value);
+    }
+  }
+  return accent;
+}
+
+/**
  * Injects CSS variables into document.documentElement so the entire workbench DOM
  * (ActivityBar, Sidebars, Tabs, Bottom Panel, Status Bar) transforms instantly.
  */

@@ -16,7 +16,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
-import { PRESET_THEMES } from "../services/themeManager";
+import { PRESET_ACCENTS, PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
 import { AboutPane } from "./settings/AboutPane";
 import { DataPane } from "./settings/DataPane";
@@ -62,6 +62,8 @@ export interface SettingsModalProps {
   onSave: (newSettings: AISettings) => void;
   themeId?: string;
   onApplyTheme?: (themeId: string) => void;
+  accentId?: string;
+  onApplyAccent?: (accentId: string) => void;
   initialTab?: string;
   projectName?: string;
   /** Open the real Marketplace panel (Skills, MCP servers, tooling). */
@@ -143,6 +145,8 @@ export function SettingsModal({
   onSave,
   themeId = "github-dark",
   onApplyTheme,
+  accentId = "violet",
+  onApplyAccent,
   initialTab = "providers",
   projectName = "Practice",
   onOpenMarketplace,
@@ -779,6 +783,52 @@ export function SettingsModal({
                               {theme.type}
                             </span>
                           </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Accent, which is a separate decision from the theme: one
+                      theme ships, and the accent is the brand. Showing the
+                      candidates here in the real workbench is the point — a
+                      taste call needs looking at, not a list of hex codes. */}
+                  <div className="pt-1">
+                    <h3 className="text-sm font-semibold text-zinc-100">Accent</h3>
+                    <p className="text-2xs text-zinc-400 mt-0.5">
+                      The mark's two ends, and a point between them. Applied live; kept for the next launch.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    {Object.values(PRESET_ACCENTS).map((accent) => {
+                      const isCurrent = accentId === accent.id;
+                      return (
+                        <button
+                          key={accent.id}
+                          type="button"
+                          aria-pressed={isCurrent}
+                          onClick={() => onApplyAccent && onApplyAccent(accent.id)}
+                          className={`p-3 rounded-card border cursor-pointer transition text-left ${
+                            isCurrent
+                              ? "bg-purple-950/40 border-purple-500/50 ring-1 ring-purple-500/40 shadow-sm"
+                              : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-semibold text-xs text-zinc-100">{accent.name}</span>
+                            {isCurrent && (
+                              <span className="w-4 h-4 rounded-full bg-purple-600 flex items-center justify-center text-white">
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="h-5 rounded border border-white/10 mb-2"
+                            style={{
+                              background: `linear-gradient(90deg, ${accent.ramp["400"]}, ${accent.ramp["600"]})`,
+                            }}
+                          />
+                          <p className="text-3xs text-zinc-400 leading-relaxed">{accent.blurb}</p>
                         </button>
                       );
                     })}
