@@ -16,7 +16,6 @@ import {
   DockviewReact,
   DockviewReadyEvent,
   DockviewApi,
-  IDockviewPanelProps,
   IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
@@ -25,11 +24,13 @@ import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
 
-import { AssetPreview } from "../editor/AssetPreview";
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { DockviewWatermark } from "./DockviewWatermark";
 import { ProjectSetupCard } from "./ProjectSetupCard";
+import { WORKBENCH_PANELS } from "./WorkbenchPanels";
+import { WorkbenchProvider, type WorkbenchLive } from "./WorkbenchContext";
+import { SurfaceFallback } from "../ui/SurfaceFallback";
 import {
   fetchProjectStatus,
   runInProjectTerminal,
@@ -55,7 +56,6 @@ import {
   DEFAULT_ACCENT,
 } from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
-import { DESKTOP_REQUIRED_MESSAGE } from "../../services/engineBridge";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
@@ -67,13 +67,8 @@ const SPECIAL_PANELS = ["dock_diff", "diff_"];
 /* ── Lazily-loaded heavy surfaces ─────────────────────────────────────────
    Monaco (~1.5 MB) and the terminal/graph stacks dominate the bundle but are
    not needed to paint the workbench. Splitting them keeps first paint cheap;
-   each defers until the surface is actually opened. */
-const MonacoEditorContainer = lazy(() =>
-  import("../editor/MonacoEditorContainer").then((m) => ({ default: m.MonacoEditorContainer }))
-);
-const MonacoDiffContainer = lazy(() =>
-  import("../editor/MonacoDiffContainer").then((m) => ({ default: m.MonacoDiffContainer }))
-);
+   each defers until the surface is actually opened. The dockview panels that
+   pull in Monaco live in WorkbenchPanels.tsx and split it there. */
 const BottomPanel = lazy(() =>
   import("../panels/BottomPanel").then((m) => ({ default: m.BottomPanel }))
 );
@@ -85,13 +80,6 @@ const AiManagementDashboard = lazy(() =>
 );
 const CodeMapDashboard = lazy(() =>
   import("../dashboards/CodeMapDashboard").then((m) => ({ default: m.CodeMapDashboard }))
-);
-
-/** Fallback shown while a lazily-loaded surface chunk arrives. */
-const SurfaceFallback = ({ label }: { label: string }) => (
-  <div className="h-full w-full flex items-center justify-center text-zinc-500 text-xs bg-[var(--vscode-editor-bg)]">
-    Loading {label}…
-  </div>
 );
 
 /** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
@@ -917,86 +905,51 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setIsRightPanelOpen((prev) => !prev);
   }, []);
 
-  const components = {
-    // Asset Preview Tab
-    assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean; projectRoot?: string }>) => (
-      <AssetPreview {...props} />
-    ),
-    // Monaco Code Editor Tab
-    editor: (props: IDockviewPanelProps<{ filePath: string }>) => {
-      const tab = openTabs.find((t) => t.path === props.params.filePath);
-      if (!tab) {
-        return (
-          <div className="h-full w-full flex items-center justify-center text-zinc-500 text-xs bg-[var(--vscode-editor-bg)]">
-            File closed
-          </div>
-        );
-      }
-      return (
-        <Suspense fallback={<SurfaceFallback label="editor" />}>
-          <MonacoEditorContainer
-            path={tab.path}
-            content={tab.content}
-            onChange={(newVal) => updateTabContent(tab.path, newVal)}
-            onSave={saveFile}
-            aiSettings={aiSettings}
-            themeId={themeId}
-            targetLine={targetEditorLine?.path === tab.path ? targetEditorLine.line : undefined}
-            targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
-            revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
-            onSelectionChange={setSelectedCode}
-            projectRoot={activeProject.path}
-          />
-        </Suspense>
-      );
-    },
+  // The live state that dockview panel components read.
+  //
+  // Dockview keeps the component function it was given when a panel is created,
+  // so a panel can only ever see current workbench state through context — see
+  // WorkbenchContext.tsx. Memoised on its contents so an unrelated re-render
+  // (typing in the chat composer, say) does not re-render every open panel.
+  const live: WorkbenchLive = useMemo(
+    () => ({
+      openTabs,
+      updateTabContent,
+      saveFile,
+      aiSettings,
+      themeId,
+      targetEditorLine,
+      onSelectionChange: setSelectedCode,
+      projectRoot: activeProject.path,
+      isTauriAvailable,
+      currentDiff,
+      setCurrentDiff,
+      applyPatchToTab,
+      refreshProjectFiles,
+      refreshBranch,
+    }),
+    [
+      openTabs,
+      updateTabContent,
+      saveFile,
+      aiSettings,
+      themeId,
+      targetEditorLine,
+      setSelectedCode,
+      activeProject.path,
+      isTauriAvailable,
+      currentDiff,
+      setCurrentDiff,
+      applyPatchToTab,
+      refreshProjectFiles,
+      refreshBranch,
+    ]
+  );
 
-    // Monaco Diff Viewer Tab
-    diff: (props: IDockviewPanelProps<{ filePath?: string; originalContent?: string; modifiedContent?: string; isGit?: boolean }>) => {
-      const isGit = props.params?.isGit;
-      const original = isGit ? (props.params?.originalContent ?? "") : "";
-      const modified = isGit ? (props.params?.modifiedContent ?? "") : currentDiff;
-      const path = isGit ? (props.params?.filePath ?? "git.diff") : "patch.diff";
-
-      return (
-        <Suspense fallback={<SurfaceFallback label="diff viewer" />}>
-        <MonacoDiffContainer
-          originalContent={original}
-          modifiedContent={modified}
-          filePath={path}
-          onAccept={async () => {
-            if (path && path !== "patch.diff" && path !== "git.diff") {
-              try {
-                if (isTauriAvailable) {
-                  const { invoke } = await import("@tauri-apps/api/core");
-                  await invoke("write_file_content", {
-                    filePath: path,
-                    content: modified,
-                    projectRoot: activeProject.path,
-                  });
-                } else {
-                  throw new Error(DESKTOP_REQUIRED_MESSAGE);
-                }
-                applyPatchToTab(path, modified);
-              } catch (err) {
-                console.error("Failed to write accepted patch to disk:", err);
-              }
-            }
-            props.api.close();
-            setCurrentDiff("");
-            refreshProjectFiles();
-            refreshBranch();
-          }}
-          onReject={() => {
-            props.api.close();
-            setCurrentDiff("");
-          }}
-        />
-        </Suspense>
-      );
-    },
-
-  };
+  // `components` used to be rebuilt here on every render, with an inline arrow
+  // per panel type. Dockview treats each new arrow as a new component *type*, so
+  // every render re-registered the factory — which re-runs updateOptions and a
+  // full layout pass on each keystroke. WORKBENCH_PANELS is a module constant.
 
   // ── Initialize Default Dockview Layout ────────────────────────────────────
   const onReady = useCallback((event: DockviewReadyEvent) => {
@@ -1526,13 +1479,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           {/* Dockview Editors & Diff Surface */}
           <div className="flex-1 w-full overflow-hidden relative">
             <TabChromeContext.Provider value={tabChrome}>
+            {/* Panels read current state through this: dockview froze the
+                component it was handed at panel creation, so a closure would
+                never see a file change. See WorkbenchContext.tsx. */}
+            <WorkbenchProvider value={live}>
             <DockviewReact
-              components={components}
+              components={WORKBENCH_PANELS}
               defaultTabComponent={DockviewCustomTab}
               watermarkComponent={watermarkComponent}
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
+            </WorkbenchProvider>
             </TabChromeContext.Provider>
 
             {/* Full-Canvas AI Assistant — a true overlay with no dockview tab

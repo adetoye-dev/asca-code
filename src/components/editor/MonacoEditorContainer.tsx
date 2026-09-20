@@ -8,7 +8,7 @@
  * 4. Cmd+S / Ctrl+S keyboard shortcuts to save to physical disk.
  */
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
@@ -47,7 +47,14 @@ interface MonacoEditorContainerProps {
   projectRoot?: string;
 }
 
-export function MonacoEditorContainer({
+/**
+ * Memoised because this is the file an editor tab re-renders around: the whole
+ * workbench re-renders on a keystroke (the workbench context changes), and
+ * without this every *other* open editor would re-render its ~1000 lines of
+ * chrome too. Its props are primitives plus stable callbacks, so the comparison
+ * is cheap and only the tab that actually changed gets through.
+ */
+export const MonacoEditorContainer = memo(function MonacoEditorContainer({
   path,
   content,
   onChange,
@@ -1031,6 +1038,6 @@ export function MonacoEditorContainer({
       />
     </div>
   );
-}
+});
 
 export default MonacoEditorContainer;

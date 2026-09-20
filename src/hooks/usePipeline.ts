@@ -1377,6 +1377,19 @@ export function usePipeline(): UsePipelineReturn {
 
   // Editor tabs state
   const [openTabs, setOpenTabs] = useState<OpenFileTab[]>([]);
+  /**
+   * The tabs as of the last committed render.
+   *
+   * `saveFile` is handed to the editor panels and to Monaco itself. Reading the
+   * tabs through this ref instead of closing over them is what keeps its
+   * identity stable: rebuilt on every keystroke it would defeat the memo around
+   * the editor, and an editor panel that captured an old copy once wrote that
+   * old buffer back to disk.
+   */
+  const openTabsRef = useRef<OpenFileTab[]>(openTabs);
+  useEffect(() => {
+    openTabsRef.current = openTabs;
+  }, [openTabs]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [activeCenterView, setActiveCenterView] = useState<"editor" | "diff">("editor");
 
@@ -1689,7 +1702,7 @@ export function usePipeline(): UsePipelineReturn {
 
   const saveFile = useCallback(
     async (path: string) => {
-      const tab = openTabs.find((t) => t.path === path);
+      const tab = openTabsRef.current.find((t) => t.path === path);
       if (!tab) return;
 
       if (isTauriAvailable) {
@@ -1717,7 +1730,7 @@ export function usePipeline(): UsePipelineReturn {
         )
       );
     },
-    [isTauriAvailable, openTabs, activeProject.path]
+    [isTauriAvailable, activeProject.path]
   );
 
   const createFileOrFolder = useCallback(
