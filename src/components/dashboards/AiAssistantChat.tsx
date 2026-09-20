@@ -8,10 +8,11 @@
  *    streamed into the transcript step by step.
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { Icon } from "../ui/Icon";
 import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users, HelpCircle } from "lucide-react";
 import type { PipelineStatus, PipelineOutputLine } from "../../types/telemetry";
+import { isFollowingBottom } from "../../services/scrollAnchor";
 import {
   getConfiguredModelsList,
   ensureProvidersHydrated,
@@ -258,6 +259,8 @@ export function AiAssistantChat({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const heroContextMenuRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  /** The transcript's scroll container, so appends can tell whether to follow. */
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
   /** The composer, so a card that needs an answer can be brought into view. */
   const composerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -618,10 +621,15 @@ export function AiAssistantChat({
     return () => window.removeEventListener("acsa:ai-workflow", handleWorkflowRequest);
   }, [selectedContext, setPrompt]);
 
-  // Scroll chat bottom on new messages, logs, or streaming updates
+  // Follow the tail on new messages, logs and streaming updates — but only while
+  // the reader is already at the bottom. Scrolling up to read something used to
+  // be undone by the next token. Streaming lands many times a second and a smooth
+  // scroll restarted that often never settles, so those are instant.
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps]);
+    if (!isFollowingBottom(transcriptScrollRef.current)) return;
+    const streaming = isStreaming || status === "running";
+    chatBottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, status]);
 
   // ── Handle Send ─────────────────────────────────────────────────────────
   const handleSend = async (textToSend = prompt) => {
@@ -1196,7 +1204,7 @@ Click to re-index project.`}
       </div>
 
       {/* ── Main Scroll Area ────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-4 font-sans">
+      <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto p-4 font-sans">
         {/* ── 1. Chat Mode Content ──────────────────────────────────────── */}
         <>
           {/* Empty State / Welcome Screen */}
@@ -2506,7 +2514,20 @@ function ThinkingAccordion({
 }
 
 /* ── Formatted Markdown & Code Block Renderer ─────────────────────────── */
-function FormattedMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+/**
+ * Memoised on purpose. The composer's text lives above the whole workbench, so
+ * every keystroke re-renders this component for every message in the transcript;
+ * without the memo each one re-parsed its markdown and rebuilt its code blocks.
+ * Same on the streaming path, where the growing message used to re-render every
+ * code block it already had on each token.
+ */
+const FormattedMarkdown = memo(function FormattedMarkdown({
+  content,
+  isStreaming,
+}: {
+  content: string;
+  isStreaming?: boolean;
+}) {
   if (!content && isStreaming) {
     return (
       <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
@@ -2537,9 +2558,9 @@ function FormattedMarkdown({ content, isStreaming }: { content: string; isStream
       )}
     </div>
   );
-}
+});
 
-function FormattedParagraph({ text }: { text: string }) {
+const FormattedParagraph = memo(function FormattedParagraph({ text }: { text: string }) {
   const lines = text.split("\n");
 
   return (
@@ -2596,7 +2617,7 @@ function FormattedParagraph({ text }: { text: string }) {
       })}
     </div>
   );
-}
+});
 
 function renderInlineStyles(text: string) {
   // Support inline `code` and **bold**
@@ -2628,7 +2649,7 @@ function renderInlineStyles(text: string) {
   );
 }
 
-function CodeBlock({ language, code }: { language: string; code: string }) {
+const CodeBlock = memo(function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -2657,6 +2678,6 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       </pre>
     </div>
   );
-}
+});
 
 export default AiAssistantChat;
