@@ -119,6 +119,14 @@ interface FileTreeProps {
   touchedPaths?: string[];
 }
 
+/**
+ * A stable empty list. `touchedPaths = []` in the parameter list would hand back a
+ * new array every render, and a new array is enough to make a memoised child below
+ * fail its comparison forever — the trap that silently cost the chat transcript
+ * its memo.
+ */
+const NO_TOUCHED_PATHS: string[] = [];
+
 export function FileTree({
   files,
   activeFilePath,
@@ -129,7 +137,7 @@ export function FileTree({
   onOpenFolder,
   projectName,
   projectPath,
-  touchedPaths = [],
+  touchedPaths = NO_TOUCHED_PATHS,
 }: FileTreeProps) {
   // Default: ALL directories COLLAPSED (Set is empty)
   // Restores user-expanded directories from localStorage if available
