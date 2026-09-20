@@ -47,7 +47,12 @@ target/
 .tauri/target/
 .tauri/gen/
 gen/
-Cargo.lock
+# Cargo.lock is deliberately tracked. This is an application, not a library, and
+# without it CI resolves the Rust graph from scratch on every run. That is how
+# the desktop bundle broke with nobody touching a dependency: tauri-plugin-updater
+# 2.12.0 landed upstream, the unpinned crate requirement picked it up, and Tauri
+# then refused to build against the 2.11.0 npm package. The npm side has always
+# been pinned by package-lock.json; this is the same guarantee for the crate side.
 **/*.rs.bk
 
 # ── Python Runtime & Tooling ─────────────────────────────────────────────────
