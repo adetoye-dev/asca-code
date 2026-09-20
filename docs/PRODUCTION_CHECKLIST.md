@@ -99,19 +99,21 @@ Anything marked open is a real gap for shipping to someone else's machine.
 
 Current plan, in order:
 
-1. **Ship the agent-flow work as `0.2.2`** before any branding. Five commits sit unpushed (host
-   skills, asking the user, blocked states, the change log, and two honesty fixes found by running
-   it). Release them separately so a branding regression is not tangled up with a behaviour change.
-   Remember the draft-publish step — a green release run with `draft: true` ships nothing.
-2. **Make a blocked run unmissable.** Both card kinds render in the composer; a run that stopped to
-   ask is easy to miss and easy to mistake for a hung one. This is a prerequisite, not polish: the
-   branded UI will lean on those cards.
-3. **Persist the change log into the transcript** so it can be read back, not just seen once.
-4. **Decide two things the UI cannot be designed around:** whether the default transport becomes
-   `app-server` (approvals and questions only exist there), and whether accounts exist at all —
-   auth endpoints ship today with nothing consuming them.
-5. **Branding and UI**, with the manual accessibility pass inside it rather than after it: focus
-   traps, screen-reader labelling, contrast, and the model picker / layout / z-index surfaces that
-   have no render tests yet.
+**Done, in this order:** shipped the agent-flow work as `0.2.2`; made a blocked run unmissable;
+persisted the change log into the transcript; took both decisions (`app-server` is the default with
+`exec` as a fallback, accounts removed rather than left dormant); then the identity — indigo,
+tagline, the Apex mark — and the accessibility pass, measured rather than eyeballed.
 
-After that: OS keychain, then Windows and Linux release jobs, then Dependabot and `npm audit`.
+That leaves a stack of unpushed commits on `dev` (`git log --oneline origin/dev..HEAD`). The
+decision to make is whether they ship as `0.2.3` now or ride with the next piece of work; nothing
+below depends on it.
+
+**Left in this phase — the surfaces.** The model picker, the layout, and the z-index scale have no
+render tests, and every screen still carries the pre-identity spacing and hierarchy: the palette and
+type scale are single-sourced now, so a change lands everywhere, but nobody has decided what the
+*hierarchy* should be. Two smaller things ride along: the 21 inline hexes, and the old semantic token
+layer (`--obsidian-*`, `--text-*`), which nothing reads and which should either be deleted or
+repointed at the real palette.
+
+Then, in order: OS keychain; Windows and Linux release jobs; Dependabot and `npm audit`; and the
+screen-reader pass, which needs a human listening.
