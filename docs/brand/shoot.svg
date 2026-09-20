@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ACSA Code">
+  <title>ACSA Code — Shoot</title>
+  <desc>Direction: growth. The reference's leaf, kept as a single shape in the counter — the one place inside an A that is empty at every size.</desc>
+  <defs>
+    <linearGradient gradientUnits="userSpaceOnUse" x1="0" y1="1024" x2="1024" y2="0" id="shoot-mark">
+      <stop offset="0" stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#shoot-mark)" stroke-width="132" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M512 150 L256 720"/>
+    <path d="M512 150 L768 720"/>
+    <path d="M330 586 L694 586"/>
+  </g>
+  <path fill="url(#shoot-mark)" d="M512 300 C 466 372, 464 476, 512 556 C 560 476, 558 372, 512 300 Z"/>
+</svg>
