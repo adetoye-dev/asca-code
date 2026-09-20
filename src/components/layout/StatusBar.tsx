@@ -1,13 +1,12 @@
 import { GitBranch, Activity, FileCode, Cpu, HardDrive, Database, RefreshCw } from "lucide-react";
 import { Icon } from "../ui/Icon";
-import type { SystemMetrics } from "../../types/telemetry";
 import type { ProjectIndexState } from "../../hooks/usePipeline";
+import { useSystemMetrics } from "../../hooks/useSystemMetrics";
 
 export interface StatusBarProps {
   gitBranch: string;
   encoding?: string;
   cursorPosition?: string;
-  metrics?: SystemMetrics | null;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -17,11 +16,13 @@ export function StatusBar({
   gitBranch,
   encoding = "UTF-8",
   cursorPosition = "Ln 1, Col 1",
-  metrics,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
 }: StatusBarProps) {
+  // Fetched here rather than handed down: see hooks/useSystemMetrics.ts for why a
+  // host metric should not re-render the workbench three times a second.
+  const metrics = useSystemMetrics();
   const formatMetric = (value?: number) => value === undefined ? "--" : `${Math.round(value)}%`;
 
   return (

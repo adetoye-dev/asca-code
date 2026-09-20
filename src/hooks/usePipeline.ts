@@ -13,10 +13,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { FileNode } from "../components/FileTree";
 import type { OpenFileTab } from "../types/workbench";
 import type { AISettings } from "../components/SettingsModal";
-import type { PipelineOutputLine, SystemMetrics, PipelineStatus } from "../types/telemetry";
+import type { PipelineOutputLine, PipelineStatus } from "../types/telemetry";
 import { DESKTOP_REQUIRED_MESSAGE } from "../services/engineBridge";
 import type { AgentStep } from "../services/aiChatService";
-import { systemMetricsService } from "../services/systemMetricsService";
 import {
   getActiveSelectedModel,
   isModelVisionCapable,
@@ -1135,13 +1134,10 @@ export interface UsePipelineReturn {
   syncIndex: () => Promise<void>;
 
   // Pipeline State & Execution
-  prompt: string;
-  setPrompt: (p: string) => void;
   sliders?: { budget_vs_scale: string; speed_vs_precision: string; simplicity_vs_futureproof: string };
   setSliders?: (s: any) => void;
   status: PipelineStatus;
   activityLog: PipelineOutputLine[];
-  systemMetrics: SystemMetrics | null;
   activeCenterView: "editor" | "diff";
   setActiveCenterView: (v: "editor" | "diff") => void;
 
@@ -1394,11 +1390,9 @@ export function usePipeline(): UsePipelineReturn {
   const [activeCenterView, setActiveCenterView] = useState<"editor" | "diff">("editor");
 
   // Pipeline & AI state
-  const [prompt, setPrompt] = useState<string>("");
   const [sliders, setSliders] = useState<any>(DEFAULT_SLIDERS);
   const [status, setStatus] = useState<PipelineStatus>("idle");
   const [activityLog, setActivityLog] = useState<PipelineOutputLine[]>([]);
-  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
   const [currentDiff, setCurrentDiff] = useState<string>("");
   const [touchedPaths, setTouchedPaths] = useState<string[]>([]);
 
@@ -1816,13 +1810,6 @@ export function usePipeline(): UsePipelineReturn {
     [isTauriAvailable]
   );
 
-  // ── Poll System Metrics via Central Service ──────────────────────────────
-  useEffect(() => {
-    return systemMetricsService.subscribe((metrics) => {
-      setSystemMetrics(metrics);
-    });
-  }, []);
-
   // ── Run Pipeline (100% Real Subprocess Execution) ─────────────────────────
   const pipelineAbortRef = useRef<AbortController | null>(null);
 
@@ -1941,7 +1928,9 @@ export function usePipeline(): UsePipelineReturn {
       conversationHistory?: Array<{ role: string; content: string }>,
       images?: string[]
     ) => {
-      const activePrompt = customPrompt ?? prompt;
+      // The composer owns its own text now (services/chatDraft.ts); every caller
+      // that wants to run something passes it in.
+      const activePrompt = customPrompt ?? "";
       if (!activePrompt.trim()) return;
       if (!activeProject.path) {
         setStatus("failed");
@@ -2227,7 +2216,6 @@ export function usePipeline(): UsePipelineReturn {
       pipelineAbortRef.current = null;
     },
     [
-      prompt,
       activeProject.path,
       aiSettings,
       isTauriAvailable,
@@ -2290,13 +2278,10 @@ export function usePipeline(): UsePipelineReturn {
     waitingForUser,
     isIndexing,
     syncIndex,
-    prompt,
-    setPrompt,
     sliders,
     setSliders,
     status,
     activityLog,
-    systemMetrics,
     activeCenterView,
     setActiveCenterView,
     runPipeline,

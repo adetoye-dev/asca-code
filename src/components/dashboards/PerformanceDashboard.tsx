@@ -29,7 +29,6 @@ import { fetchStorageMetrics, fetchRunningProcesses, runSafeCleanup } from "../.
 import type { SystemMetrics, StorageMetrics, RunningProcessItem } from "../../types/workbench";
 
 interface PerformanceDashboardProps {
-  systemMetrics: SystemMetrics | null;
   onRefreshMetrics?: () => void;
   /** The open project. Storage and cleanup are scoped to it, not to the app. */
   projectRoot?: string;
@@ -295,13 +294,12 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
 
 // ── 5. Main Component ────────────────────────────────────────────────────────
 export function PerformanceDashboard({
-  systemMetrics,
   onRefreshMetrics,
   projectRoot = "",
 }: PerformanceDashboardProps) {
-  const [metrics, setMetrics] = useState<SystemMetrics | null>(
-    () => systemMetricsService.getMetrics() || systemMetrics
-  );
+  // Seeded from the service synchronously, then kept live by it: this page and
+  // the status bar read the same store rather than receiving copies from above.
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(() => systemMetricsService.getMetrics());
 
   useEffect(() => {
     return systemMetricsService.subscribe((latest) => {
@@ -435,7 +433,7 @@ export function PerformanceDashboard({
     }
   };
 
-  const activeMetrics = metrics || systemMetrics;
+  const activeMetrics = metrics;
   const cpuPercent = activeMetrics ? Math.round(activeMetrics.cpu_usage_percent) : 15;
   const memUsedGb = activeMetrics
     ? (activeMetrics.memory_used_mb / 1024).toFixed(1)

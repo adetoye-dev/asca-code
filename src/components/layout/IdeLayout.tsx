@@ -56,6 +56,7 @@ import {
   DEFAULT_ACCENT,
 } from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
+import { chatDraft } from "../../services/chatDraft";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
@@ -192,11 +193,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     indexStatus,
     isIndexing,
     syncIndex,
-    prompt,
-    setPrompt,
     status,
     activityLog,
-    systemMetrics,
     runPipeline,
     cancelPipeline,
     clearLog,
@@ -714,7 +712,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       title: "Agent: Execute & Verify Task",
       category: "Agent",
       icon: Bot,
-      action: () => runPipeline(),
+      // "Whatever is in the composer": the chat owns that text now, so it is read
+      // from its store rather than plumbed through the pipeline as state.
+      action: () => runPipeline(chatDraft.get()),
     },
     {
       id: "view.explorer",
@@ -823,8 +823,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // Rendered as an overlay above the editor grid (see the center-stage render
   // below), so it is a normal React child and always receives fresh props.
   const centerChatProps = {
-    prompt,
-    setPrompt,
     status,
     activityLog,
     projectRoot: activeProject.path,
@@ -1529,7 +1527,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                   <Suspense fallback={<SurfaceFallback label={FULL_PAGE_TITLES[fullPage]} />}>
                   {fullPage === "monitor" && (
                     <PerformanceDashboard
-                      systemMetrics={systemMetrics}
                       projectRoot={activeProject.path}
                       onRefreshMetrics={() => {
                         refreshBranch();
@@ -1594,8 +1591,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         {isRightPanelOpen && (
           <aside className="w-[clamp(300px,30vw,520px)] max-w-[48%] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-raised shadow-2xl">
             <AiAssistantChat
-              prompt={prompt}
-              setPrompt={setPrompt}
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
@@ -1641,7 +1636,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
       <StatusBar
         gitBranch={gitBranch}
-        metrics={systemMetrics}
         indexStatus={indexStatus}
         isIndexing={isIndexing}
         onSyncIndex={syncIndex}

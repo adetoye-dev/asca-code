@@ -39,6 +39,7 @@ import {
   type ChatMessage,
   type AgentStep,
 } from "../../services/aiChatService";
+import { chatDraft, useChatDraft } from "../../services/chatDraft";
 import {
   loadChatHistory,
   saveChatHistory,
@@ -51,8 +52,6 @@ import { approvalSummary, countDiffLines } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
 
 interface AiAssistantChatProps {
-  prompt: string;
-  setPrompt: (p: string) => void;
   status: PipelineStatus;
   activityLog: PipelineOutputLine[];
   onRunPipeline: (
@@ -103,6 +102,17 @@ interface AiAssistantChatProps {
 
 export type WorkflowMode = "agent" | "chat" | "plan";
 
+/**
+ * Stable empties for the optional list props.
+ *
+ * `agentSteps = []` in a parameter list runs on every render and hands back a new
+ * array each time, which is enough to make any memoised child below fail its
+ * comparison forever. These are the same value every render, so the comparison
+ * holds.
+ */
+const NO_STEPS: AgentStep[] = [];
+const NO_CHANGES: PendingFileChange[] = [];
+
 export function cleanThoughtText(raw?: string): string {
   if (!raw) return "";
   return raw
@@ -118,9 +128,374 @@ export function cleanThoughtText(raw?: string): string {
     .trim();
 }
 
+interface ChatTranscriptProps {
+  chatMessages: ChatMessage[];
+  isWide: boolean;
+  status: PipelineStatus;
+  streamingAnswer: string;
+  streamingThought: string;
+  agentSteps: AgentStep[];
+  agentElapsedSeconds: number;
+  currentAgentPhase: string;
+  blockedOn: string;
+  turnChanges: PendingFileChange[];
+  pendingQuestion: AiAssistantChatProps["pendingQuestion"];
+  /** The model that produced the turn, named on the message it produced. */
+  selectedModelItem: ConfiguredModelItem | null;
+  onReviewFile?: (path: string) => Promise<void>;
+  onCancelPipeline: () => void;
+  bottomRef: React.RefObject<HTMLDivElement>;
+}
+
+/**
+ * The conversation, memoised.
+ *
+ * The composer's text is state in the component above, so every character typed
+ * re-rendered this — all of it: every message, its markdown, its code blocks,
+ * its thinking accordion — because a keystroke and the transcript happened to
+ * live in the same component. The transcript's inputs are unchanged by typing, so
+ * with this boundary a keystroke costs the composer and nothing else.
+ *
+ * Props are all primitives, stable callbacks, or state that only moves when the
+ * conversation does (`chatMessages` is replaced on a new message, not mutated),
+ * which is what lets the comparison hold.
+ */
+const ChatTranscript = memo(function ChatTranscript({
+  chatMessages,
+  isWide,
+  status,
+  streamingAnswer,
+  streamingThought,
+  agentSteps,
+  agentElapsedSeconds,
+  currentAgentPhase,
+  blockedOn,
+  turnChanges,
+  pendingQuestion,
+  selectedModelItem,
+  onReviewFile,
+  onCancelPipeline,
+  bottomRef,
+}: ChatTranscriptProps) {
+  return (
+    <>
+    {(chatMessages.length > 0 || status === "running") && (
+      <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 py-2" : "space-y-4"}>
+        {chatMessages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex flex-col ${
+              msg.role === "user" ? "items-end" : "items-start"
+            }`}
+          >
+            {/* Role Header with Model, Provider, Timestamp */}
+            <div className={`flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                {msg.role === "user" ? (
+                  <>
+                    <span className="font-semibold text-zinc-300">You</span>
+                    <Icon icon={User} className="w-3 h-3 text-zinc-400 shrink-0" />
+                    {msg.timestamp && (
+                      <span className="text-4xs font-mono text-zinc-500 ml-1">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {msg.provider ? (
+                      <ProviderLogo providerId={msg.provider} className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    )}
+                    <span className="font-semibold text-purple-300 font-mono text-2xs truncate">
+                      {msg.model || "AI Assistant"}
+                    </span>
+                    {msg.timestamp && (
+                      <span className="text-4xs font-mono text-zinc-500 ml-1">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Message Bubble */}
+            <div
+              className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
+                msg.role === "user"
+                  ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 rounded-tr-sm shadow-sm"
+                  : msg.error
+                  ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
+                  : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
+              }`}
+            >
+              {/* User Attached Images */}
+              {msg.images && msg.images.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {msg.images.map((img, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="cursor-pointer rounded-lg border border-zinc-700 hover:opacity-90 transition-opacity"
+                      title="Open attachment in a new window"
+                      onClick={() => window.open(img, "_blank")}
+                    >
+                      <img
+                        src={img}
+                        alt="Attachment"
+                        className="max-h-48 max-w-xs rounded-lg object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Collapsible Model Thinking & Agent Steps (auto-collapsed when summary exists) */}
+              {((msg.steps && msg.steps.length > 0) || Boolean(msg.thinking)) && (
+                <ThinkingAccordion
+                  steps={msg.steps}
+                  thinking={msg.thinking}
+                  isLive={false}
+                  hasSummary={Boolean(msg.content && msg.content.trim())}
+                />
+              )}
+
+              <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
+              {msg.changes && msg.changes.length > 0 && (
+                <ChangeLogCard changes={msg.changes} onReview={onReviewFile} />
+              )}
+
+              {/* Actionable Error Recovery Card */}
+              {msg.error && (
+                <div className="mt-3 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700/60 text-xs space-y-2.5 shadow-xl">
+                  {msg.errorType === "timeout" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-amber-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Generation Timed Out</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        The local model <strong>{msg.model || "qwen2.5-coder"}</strong> took longer than expected to process the request. Local 7B models can be slow under heavy context. Consider switching to a faster local model (e.g. <code>qwen2.5-coder:1.5b</code> or <code>3b</code>) or shortening the prompt.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Switch Model / Provider
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "offline" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-red-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>Provider Unreachable or Offline</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        Unable to connect to <strong>{msg.provider || selectedModelItem?.providerId || "the AI provider"}</strong>. If you are using local models, ensure the Ollama background daemon is running.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Configure Provider / Model
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent("acsa:open-ollama-wizard"));
+                          }}
+                          className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
+                        >
+                          Start Ollama Wizard
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "api" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-red-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>Provider API / Model Error</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                          `The AI provider returned an error while processing your request with ${msg.model || "the selected model"}.`}
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Configure Model / API Key
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "syntax" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Stopped Before Finishing</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        The agent hit a syntax or lint problem it could not resolve and stopped. Open the <strong>Output</strong> tab to see exactly which check complained, then reply with a correction.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Task Execution Notice</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                          "The task encountered an issue during execution. Check the output tab or console for details."}
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
+                        >
+                          Check AI Settings
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            {/* Bottom Message Actions (Copy button positioned under message) */}
+            {msg.content && (
+              <div className={`mt-1 flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} px-1`}>
+                <CopyMessageButton text={msg.content} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* Active Running Agent Assistant Turn */}
+        {status === "running" && (
+          <div className="flex flex-col items-start">
+            <div className="flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 justify-start">
+              {selectedModelItem?.providerId ? (
+                <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              )}
+              <span className="font-semibold text-purple-300 font-mono text-2xs">
+                {selectedModelItem?.model || "ACSA Agent"}
+              </span>
+              {/* The most prominent label of the three, and it said
+                  "Working" through a six-minute wait for an answer. */}
+              <span
+                className={`flex items-center gap-1 text-3xs font-mono ml-2 ${
+                  blockedOn ? "text-amber-300" : "text-purple-400"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    blockedOn ? "bg-amber-400 animate-pulse" : "bg-purple-400 animate-pulse"
+                  }`}
+                />
+                {blockedOn ? `Waiting for ${blockedOn}` : `Working (${agentElapsedSeconds}s)`}
+              </span>
+            </div>
+
+            <div className="max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed bg-zinc-900/90 border border-purple-500/30 text-zinc-100 rounded-tl-sm w-full shadow-lg">
+              {/* Live Thinking Accordion (auto-collapses when summary arrives) */}
+              <ThinkingAccordion
+                steps={agentSteps}
+                thinking={streamingThought}
+                isLive={true}
+                hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
+                elapsedSeconds={agentElapsedSeconds}
+                blockedOn={blockedOn}
+              />
+
+              {/* Live Streaming Answer */}
+              {streamingAnswer ? (
+                <div className="mt-2.5 pt-2.5 border-t border-zinc-800/80">
+                  <FormattedMarkdown content={streamingAnswer} isStreaming={true} />
+                </div>
+              ) : blockedOn ? (
+                /* Not thinking — stopped. A spinner here is a lie. */
+                <div className="flex items-center gap-2 text-amber-300 text-xs py-1">
+                  <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    {pendingQuestion
+                      ? "The agent asked you a question — answer it below to continue"
+                      : "The agent needs your approval before it continues"}
+                  </span>
+                </div>
+              ) : (
+                !streamingThought && (!agentSteps || agentSteps.length === 0) ? (
+                  <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
+                    <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
+                    <span>Thinking through solution...</span>
+                  </div>
+                ) : null
+              )}
+
+              {/* Stop Generating Button & Active Step */}
+              <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
+                <span
+                  className={`text-2xs truncate max-w-[70%] ${
+                    blockedOn ? "text-amber-300 font-medium" : "text-zinc-400"
+                  }`}
+                >
+                  {blockedOn
+                    ? `Waiting for ${blockedOn}`
+                    : agentSteps.length > 0
+                    ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
+                    : currentAgentPhase || "Initializing..."}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCancelPipeline}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-2xs font-medium transition-colors border border-zinc-700/80 cursor-pointer shadow-sm shrink-0"
+                >
+                  <Icon icon={Square} className="w-2.5 h-2.5 fill-red-400 text-red-400" />
+                  <span>Stop Generating</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Message Actions for Running Turn */}
+            {streamingAnswer && (
+              <div className="mt-1 flex items-center justify-start px-1">
+                <CopyMessageButton text={streamingAnswer} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )}
+
+  {/* Live copy, while the turn is still going. Once it ends the same card
+      is on the message, so this one stands down rather than doubling up. */}
+  {status === "running" && turnChanges.length > 0 && (
+    <ChangeLogCard
+      changes={turnChanges.map((change) => ({
+        path: change.path,
+        ...countDiffLines(change.diff),
+      }))}
+      onReview={onReviewFile}
+    />
+  )}
+
+  <div ref={bottomRef} />
+    </>
+  );
+});
+
 export function AiAssistantChat({
-  prompt,
-  setPrompt,
   status,
   activityLog,
   onRunPipeline,
@@ -138,14 +513,14 @@ export function AiAssistantChat({
   respondToApproval,
   pendingQuestion = null,
   respondToQuestion,
-  turnChanges = [],
+  turnChanges = NO_CHANGES,
   onReviewFile,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
   streamingAnswer = "",
   streamingThought = "",
-  agentSteps = [],
+  agentSteps = NO_STEPS,
   activeAiSettings = null,
 }: AiAssistantChatProps) {
 
@@ -198,6 +573,9 @@ export function AiAssistantChat({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
     loadChatHistory(projectRoot)
   );
+  // Subscribed, not passed down: see services/chatDraft.ts. This is what keeps a
+  // keystroke from re-rendering the workbench above the chat.
+  const draft = useChatDraft();
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
@@ -608,7 +986,7 @@ export function AiAssistantChat({
       setWorkflowMode(mode);
       if (!selectedContext?.code) return;
       const context = `\n\nSelected code from ${selectedContext.path}:\n\`\`\`\n${selectedContext.code}\n\`\`\``;
-      setPrompt(
+      chatDraft.set(
         mode === "agent"
           ? `Edit the selected code to make it more readable. Preserve behavior and write the change to ${selectedContext.path}.${context}`
           : mode === "plan"
@@ -619,7 +997,7 @@ export function AiAssistantChat({
     };
     window.addEventListener("acsa:ai-workflow", handleWorkflowRequest);
     return () => window.removeEventListener("acsa:ai-workflow", handleWorkflowRequest);
-  }, [selectedContext, setPrompt]);
+  }, [selectedContext]);
 
   // Follow the tail on new messages, logs and streaming updates — but only while
   // the reader is already at the bottom. Scrolling up to read something used to
@@ -632,7 +1010,7 @@ export function AiAssistantChat({
   }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, status]);
 
   // ── Handle Send ─────────────────────────────────────────────────────────
-  const handleSend = async (textToSend = prompt) => {
+  const handleSend = async (textToSend = draft) => {
     const trimmed = textToSend.trim();
     if (!trimmed && attachedImages.length === 0) return;
 
@@ -681,7 +1059,7 @@ export function AiAssistantChat({
         saveChatHistory(next, projectRoot);
         return next;
       });
-      setPrompt("");
+      chatDraft.set("");
       setAttachedImages([]);
       return;
     }
@@ -728,7 +1106,7 @@ export function AiAssistantChat({
     const withPlaceholder = [...nextHistory, assistantPlaceholder];
     setChatMessages(withPlaceholder);
     saveChatHistory(withPlaceholder, projectRoot);
-    setPrompt("");
+    chatDraft.set("");
     setAttachedImages([]);
     setIsStreaming(true);
 
@@ -823,7 +1201,7 @@ export function AiAssistantChat({
   };
 
   const handleQuickAction = (text: string) => {
-    setPrompt(text);
+    chatDraft.set(text);
     void handleSend(text);
   };
 
@@ -1057,8 +1435,8 @@ export function AiAssistantChat({
         type="button"
         onClick={() => {
           setIsContextMenuOpen(false);
-          const nextPrompt = prompt && !prompt.endsWith(" ") ? `${prompt} @` : `${prompt}@`;
-          setPrompt(nextPrompt);
+          const nextPrompt = draft && !draft.endsWith(" ") ? `${draft} @` : `${draft}@`;
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -1072,8 +1450,8 @@ export function AiAssistantChat({
         type="button"
         onClick={() => {
           setIsContextMenuOpen(false);
-          const nextPrompt = prompt && !prompt.endsWith(" ") ? `${prompt} /` : `${prompt}/`;
-          setPrompt(nextPrompt);
+          const nextPrompt = draft && !draft.endsWith(" ") ? `${draft} /` : `${draft}/`;
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -1099,8 +1477,8 @@ export function AiAssistantChat({
         onClick={() => {
           setIsContextMenuOpen(false);
           const prefix = "/browser ";
-          const nextPrompt = prompt.startsWith(prefix) ? prompt : `${prefix}${prompt}`.trimStart();
-          setPrompt(nextPrompt);
+          const nextPrompt = draft.startsWith(prefix) ? draft : `${prefix}${draft}`.trimStart();
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -1281,8 +1659,8 @@ Click to re-index project.`}
 
                     <textarea
                       ref={textareaRef}
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
+                      value={draft}
+                      onChange={(e) => chatDraft.set(e.target.value)}
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
@@ -1374,9 +1752,9 @@ Click to re-index project.`}
                       <button
                         type="button"
                         onClick={() => handleSend()}
-                        disabled={!prompt.trim()}
+                        disabled={!draft.trim()}
                         className={`flex items-center justify-center w-8 h-8 rounded-xl transition-all shadow-sm ${
-                          prompt.trim()
+                          draft.trim()
                             ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20"
                             : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                         }`}
@@ -1484,319 +1862,24 @@ Click to re-index project.`}
           )}
 
           {/* Conversation Messages */}
-          {(chatMessages.length > 0 || status === "running") && (
-            <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 py-2" : "space-y-4"}>
-              {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
-                >
-                  {/* Role Header with Model, Provider, Timestamp */}
-                  <div className={`flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {msg.role === "user" ? (
-                        <>
-                          <span className="font-semibold text-zinc-300">You</span>
-                          <Icon icon={User} className="w-3 h-3 text-zinc-400 shrink-0" />
-                          {msg.timestamp && (
-                            <span className="text-4xs font-mono text-zinc-500 ml-1">
-                              {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {msg.provider ? (
-                            <ProviderLogo providerId={msg.provider} className="w-3.5 h-3.5 shrink-0" />
-                          ) : (
-                            <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                          )}
-                          <span className="font-semibold text-purple-300 font-mono text-2xs truncate">
-                            {msg.model || "AI Assistant"}
-                          </span>
-                          {msg.timestamp && (
-                            <span className="text-4xs font-mono text-zinc-500 ml-1">
-                              {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Message Bubble */}
-                  <div
-                    className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
-                      msg.role === "user"
-                        ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 rounded-tr-sm shadow-sm"
-                        : msg.error
-                        ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
-                        : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
-                    }`}
-                  >
-                    {/* User Attached Images */}
-                    {msg.images && msg.images.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {msg.images.map((img, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            className="cursor-pointer rounded-lg border border-zinc-700 hover:opacity-90 transition-opacity"
-                            title="Open attachment in a new window"
-                            onClick={() => window.open(img, "_blank")}
-                          >
-                            <img
-                              src={img}
-                              alt="Attachment"
-                              className="max-h-48 max-w-xs rounded-lg object-cover"
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Collapsible Model Thinking & Agent Steps (auto-collapsed when summary exists) */}
-                    {((msg.steps && msg.steps.length > 0) || Boolean(msg.thinking)) && (
-                      <ThinkingAccordion
-                        steps={msg.steps}
-                        thinking={msg.thinking}
-                        isLive={false}
-                        hasSummary={Boolean(msg.content && msg.content.trim())}
-                      />
-                    )}
-
-                    <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
-                    {msg.changes && msg.changes.length > 0 && (
-                      <ChangeLogCard changes={msg.changes} onReview={onReviewFile} />
-                    )}
-
-                    {/* Actionable Error Recovery Card */}
-                    {msg.error && (
-                      <div className="mt-3 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700/60 text-xs space-y-2.5 shadow-xl">
-                        {msg.errorType === "timeout" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-amber-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Generation Timed Out</span>
-                            </div>
-                            <p className="text-zinc-400 text-2xs leading-relaxed">
-                              The local model <strong>{msg.model || "qwen2.5-coder"}</strong> took longer than expected to process the request. Local 7B models can be slow under heavy context. Consider switching to a faster local model (e.g. <code>qwen2.5-coder:1.5b</code> or <code>3b</code>) or shortening the prompt.
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
-                              >
-                                Switch Model / Provider
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "offline" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-red-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
-                              <span>Provider Unreachable or Offline</span>
-                            </div>
-                            <p className="text-zinc-400 text-2xs leading-relaxed">
-                              Unable to connect to <strong>{msg.provider || selectedModelItem?.providerId || "the AI provider"}</strong>. If you are using local models, ensure the Ollama background daemon is running.
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
-                              >
-                                Configure Provider / Model
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  window.dispatchEvent(new CustomEvent("acsa:open-ollama-wizard"));
-                                }}
-                                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
-                              >
-                                Start Ollama Wizard
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "api" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-red-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
-                              <span>Provider API / Model Error</span>
-                            </div>
-                            <p className="text-zinc-400 text-2xs leading-relaxed">
-                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
-                                `The AI provider returned an error while processing your request with ${msg.model || "the selected model"}.`}
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
-                              >
-                                Configure Model / API Key
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "syntax" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Stopped Before Finishing</span>
-                            </div>
-                            <p className="text-zinc-400 text-2xs leading-relaxed">
-                              The agent hit a syntax or lint problem it could not resolve and stopped. Open the <strong>Output</strong> tab to see exactly which check complained, then reply with a correction.
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Task Execution Notice</span>
-                            </div>
-                            <p className="text-zinc-400 text-2xs leading-relaxed">
-                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
-                                "The task encountered an issue during execution. Check the output tab or console for details."}
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
-                              >
-                                Check AI Settings
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {/* Bottom Message Actions (Copy button positioned under message) */}
-                  {msg.content && (
-                    <div className={`mt-1 flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} px-1`}>
-                      <CopyMessageButton text={msg.content} />
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* Active Running Agent Assistant Turn */}
-              {status === "running" && (
-                <div className="flex flex-col items-start">
-                  <div className="flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 justify-start">
-                    {selectedModelItem?.providerId ? (
-                      <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
-                    ) : (
-                      <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    )}
-                    <span className="font-semibold text-purple-300 font-mono text-2xs">
-                      {selectedModelItem?.model || "ACSA Agent"}
-                    </span>
-                    {/* The most prominent label of the three, and it said
-                        "Working" through a six-minute wait for an answer. */}
-                    <span
-                      className={`flex items-center gap-1 text-3xs font-mono ml-2 ${
-                        blockedOn ? "text-amber-300" : "text-purple-400"
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          blockedOn ? "bg-amber-400 animate-pulse" : "bg-purple-400 animate-pulse"
-                        }`}
-                      />
-                      {blockedOn ? `Waiting for ${blockedOn}` : `Working (${agentElapsedSeconds}s)`}
-                    </span>
-                  </div>
-
-                  <div className="max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed bg-zinc-900/90 border border-purple-500/30 text-zinc-100 rounded-tl-sm w-full shadow-lg">
-                    {/* Live Thinking Accordion (auto-collapses when summary arrives) */}
-                    <ThinkingAccordion
-                      steps={agentSteps}
-                      thinking={streamingThought}
-                      isLive={true}
-                      hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
-                      elapsedSeconds={agentElapsedSeconds}
-                      blockedOn={blockedOn}
-                    />
-
-                    {/* Live Streaming Answer */}
-                    {streamingAnswer ? (
-                      <div className="mt-2.5 pt-2.5 border-t border-zinc-800/80">
-                        <FormattedMarkdown content={streamingAnswer} isStreaming={true} />
-                      </div>
-                    ) : blockedOn ? (
-                      /* Not thinking — stopped. A spinner here is a lie. */
-                      <div className="flex items-center gap-2 text-amber-300 text-xs py-1">
-                        <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-amber-400" />
-                        <span>
-                          {pendingQuestion
-                            ? "The agent asked you a question — answer it below to continue"
-                            : "The agent needs your approval before it continues"}
-                        </span>
-                      </div>
-                    ) : (
-                      !streamingThought && (!agentSteps || agentSteps.length === 0) ? (
-                        <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
-                          <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
-                          <span>Thinking through solution...</span>
-                        </div>
-                      ) : null
-                    )}
-
-                    {/* Stop Generating Button & Active Step */}
-                    <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
-                      <span
-                        className={`text-2xs truncate max-w-[70%] ${
-                          blockedOn ? "text-amber-300 font-medium" : "text-zinc-400"
-                        }`}
-                      >
-                        {blockedOn
-                          ? `Waiting for ${blockedOn}`
-                          : agentSteps.length > 0
-                          ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
-                          : currentAgentPhase || "Initializing..."}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={onCancelPipeline}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-2xs font-medium transition-colors border border-zinc-700/80 cursor-pointer shadow-sm shrink-0"
-                      >
-                        <Icon icon={Square} className="w-2.5 h-2.5 fill-red-400 text-red-400" />
-                        <span>Stop Generating</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Bottom Message Actions for Running Turn */}
-                  {streamingAnswer && (
-                    <div className="mt-1 flex items-center justify-start px-1">
-                      <CopyMessageButton text={streamingAnswer} />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+        <ChatTranscript
+          chatMessages={chatMessages}
+          isWide={isWide}
+          status={status}
+          streamingAnswer={streamingAnswer}
+          streamingThought={streamingThought}
+          agentSteps={agentSteps}
+          agentElapsedSeconds={agentElapsedSeconds}
+          currentAgentPhase={currentAgentPhase}
+          blockedOn={blockedOn}
+          turnChanges={turnChanges}
+          pendingQuestion={pendingQuestion}
+          selectedModelItem={selectedModelItem}
+          onReviewFile={onReviewFile}
+          onCancelPipeline={onCancelPipeline}
+          bottomRef={chatBottomRef}
+        />
         </>
-
-        {/* Live copy, while the turn is still going. Once it ends the same card
-            is on the message, so this one stands down rather than doubling up. */}
-        {status === "running" && turnChanges.length > 0 && (
-          <ChangeLogCard
-            changes={turnChanges.map((change) => ({
-              path: change.path,
-              ...countDiffLines(change.diff),
-            }))}
-            onReview={onReviewFile}
-          />
-        )}
-
-        <div ref={chatBottomRef} />
       </div>
 
       {/* ── Input Box & Controls (Only shown when not in empty Center Stage mode) ── */}
@@ -2008,8 +2091,8 @@ Click to re-index project.`}
 
               <textarea
                 ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                value={draft}
+                onChange={(e) => chatDraft.set(e.target.value)}
                 onPaste={handlePaste}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -2115,9 +2198,9 @@ Click to re-index project.`}
                     <button
                       type="button"
                       onClick={() => handleSend()}
-                      disabled={!prompt.trim() && attachedImages.length === 0}
+                      disabled={!draft.trim() && attachedImages.length === 0}
                       className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all shadow-sm shrink-0 ${
-                        prompt.trim() || attachedImages.length > 0
+                        draft.trim() || attachedImages.length > 0
                           ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 cursor-pointer"
                           : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                       }`}
@@ -2324,7 +2407,7 @@ function ChangeLogCard({
 }
 
 function ThinkingAccordion({
-  steps = [],
+  steps = NO_STEPS,
   thinking = "",
   isLive = false,
   hasSummary = false,
