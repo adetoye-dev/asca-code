@@ -41,7 +41,7 @@ export default {
           const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
           const scale = (prefix) =>
             Object.fromEntries(shades.map((s) => [s, token(`--${prefix}-${s}`)]));
-          return { zinc: scale("neutral"), purple: scale("violet") };
+          return { zinc: scale("neutral"), purple: scale("accent") };
         })(),
         background: "#09090b",
         /** @deprecated use the semantic tokens; kept until the surfaces move. */

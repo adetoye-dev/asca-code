@@ -36,17 +36,27 @@
   --neutral-900: #18181b;
   --neutral-950: #09090b;
 
-  --violet-50:  #faf5ff;
-  --violet-100: #f3e8ff;
-  --violet-200: #e9d5ff;
-  --violet-300: #d8b4fe;
-  --violet-400: #c084fc;
-  --violet-500: #a855f7;
-  --violet-600: #9333ea;
-  --violet-700: #7e22ce;
-  --violet-800: #6b21a8;
-  --violet-900: #581c87;
-  --violet-950: #3b0764;
+  /* ── The accent ramp ──
+   *
+   * These are what every `purple-*` class resolves to, and they are the app's
+   * accent whatever hue that happens to be — so they are named for the role, not
+   * the colour. `applyAccent()` overwrites them per the user's choice in
+   * Settings → Appearance; indigo is the shipped default.
+   *
+   * (The class names still say `purple`. Renaming those is the same deferred job
+   * as the greys: it belongs with a decided palette, not before one.)
+   */
+  --accent-50:  #eef2ff;
+  --accent-100: #e0e7ff;
+  --accent-200: #c7d2fe;
+  --accent-300: #a5b4fc;
+  --accent-400: #818cf8;
+  --accent-500: #6366f1;
+  --accent-600: #4f46e5;
+  --accent-700: #4338ca;
+  --accent-800: #3730a3;
+  --accent-900: #312e81;
+  --accent-950: #1e1b4b;
 
   /* ── Apple Obsidian Dark Slate Palette ── */
   --obsidian-950: #09090b; /* Deepest canvas floor */

@@ -54,7 +54,7 @@ export const PRESET_THEMES: Record<string, IdeTheme> = {
  * Candidate accents — the brand decision, made reactable.
  *
  * Every accent surface in the app is the `purple-*` scale (257 uses), and those
- * classes now resolve through `--violet-*`. Swapping the ramp here therefore
+ * classes now resolve through `--accent-*`. Swapping the ramp here therefore
  * retints the whole workbench, which is the point: the decision is a taste call
  * and taste needs looking at, not a list of hex codes.
  *
@@ -69,7 +69,7 @@ export interface AccentOption {
   name: string;
   /** One line for the picker, so the choice is not solely visual. */
   blurb: string;
-  /** The `--violet-*` ramp this accent installs. */
+  /** The `--accent-*` ramp this accent installs. */
   ramp: Record<string, string>;
 }
 
@@ -106,7 +106,12 @@ export const PRESET_ACCENTS: Record<string, AccentOption> = {
   },
 };
 
-export const DEFAULT_ACCENT = "violet";
+/**
+ * Indigo, chosen 2026-09-20. The mark's two ends were the candidates and the
+ * middle won: sky reads colder and violet collides with the reserved "progress"
+ * status colour. Violet and sky stay selectable.
+ */
+export const DEFAULT_ACCENT = "indigo";
 
 /** Install an accent ramp. Inline on `:root`, so it beats the stylesheet copy. */
 export function applyAccent(accentId: string): AccentOption {
@@ -114,7 +119,7 @@ export function applyAccent(accentId: string): AccentOption {
   if (typeof document !== "undefined") {
     const root = document.documentElement;
     for (const [shade, value] of Object.entries(accent.ramp)) {
-      root.style.setProperty(`--violet-${shade}`, value);
+      root.style.setProperty(`--accent-${shade}`, value);
     }
   }
   return accent;
