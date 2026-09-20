@@ -8,7 +8,7 @@
  * 4. Cmd+S / Ctrl+S keyboard shortcuts to save to physical disk.
  */
 
-import { useRef, useEffect, useState, useCallback, memo } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
@@ -76,6 +76,60 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
   useEffect(() => {
     settingsRef.current = aiSettings;
   }, [aiSettings]);
+
+  /**
+   * Editor preferences from Settings. These were previously hardcoded here,
+   * which is why the Font and Code Style panes appeared to save values that
+   * changed nothing.
+   *
+   * Memoised because `@monaco-editor/react` re-applies `options` with
+   * `editor.updateOptions(...)` whenever the object identity changes — and an
+   * inline literal changes on every render, i.e. on every keystroke in this
+   * editor. Same options in, no work.
+   */
+  const editorOptions = useMemo(
+    () => ({
+      fontSize: aiSettings?.fontSize ?? 13,
+      lineHeight: aiSettings?.lineHeight ? Math.round(aiSettings.lineHeight * (aiSettings?.fontSize ?? 13)) : 0,
+      fontLigatures: aiSettings?.enableLigatures ?? true,
+      fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
+      lineNumbers: "on" as const,
+      renderWhitespace: "selection" as const,
+      renderLineHighlight: "all" as const,
+      renderLineHighlightOnlyWhenFocus: false,
+      tabSize: aiSettings?.tabSize ?? 4,
+      insertSpaces: aiSettings?.insertSpaces ?? true,
+      wordWrap: aiSettings?.wordWrap ? ("on" as const) : ("off" as const),
+      automaticLayout: true,
+      scrollBeyondLastLine: false,
+      minimap: { enabled: true, maxColumn: 80 },
+      bracketPairColorization: { enabled: true },
+      guides: { bracketPairs: true, indentation: true },
+      inlineSuggest: { enabled: true },
+      suggest: {
+        preview: true,
+        showMethods: true,
+        showFunctions: true,
+        showConstructors: true,
+        showFields: true,
+        showVariables: true,
+        showClasses: true,
+        showStructs: true,
+        showInterfaces: true,
+        showModules: true,
+        showProperties: true,
+      },
+      padding: { top: 8, bottom: 8 },
+    }),
+    [
+      aiSettings?.fontSize,
+      aiSettings?.lineHeight,
+      aiSettings?.enableLigatures,
+      aiSettings?.tabSize,
+      aiSettings?.insertSpaces,
+      aiSettings?.wordWrap,
+    ]
+  );
 
   // Apply editor preferences live, so changing them in Settings takes effect
   // immediately instead of on the next time a file is opened.
@@ -999,42 +1053,7 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
         }}
         onChange={(val) => onChange(val || "")}
         onMount={handleEditorDidMount}
-        options={{
-          // Editor preferences from Settings. These were previously hardcoded
-          // here, which is why the Font and Code Style panes appeared to save
-          // values that changed nothing.
-          fontSize: aiSettings?.fontSize ?? 13,
-          lineHeight: aiSettings?.lineHeight ? Math.round((aiSettings.lineHeight) * (aiSettings?.fontSize ?? 13)) : 0,
-          fontLigatures: aiSettings?.enableLigatures ?? true,
-          fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
-          lineNumbers: "on",
-          renderWhitespace: "selection",
-          renderLineHighlight: "all",
-          renderLineHighlightOnlyWhenFocus: false,
-          tabSize: aiSettings?.tabSize ?? 4,
-          insertSpaces: aiSettings?.insertSpaces ?? true,
-          wordWrap: aiSettings?.wordWrap ? "on" : "off",
-          automaticLayout: true,
-          scrollBeyondLastLine: false,
-          minimap: { enabled: true, maxColumn: 80 },
-          bracketPairColorization: { enabled: true },
-          guides: { bracketPairs: true, indentation: true },
-          inlineSuggest: { enabled: true },
-          suggest: {
-            preview: true,
-            showMethods: true,
-            showFunctions: true,
-            showConstructors: true,
-            showFields: true,
-            showVariables: true,
-            showClasses: true,
-            showStructs: true,
-            showInterfaces: true,
-            showModules: true,
-            showProperties: true,
-          },
-          padding: { top: 8, bottom: 8 },
-        }}
+        options={editorOptions}
       />
     </div>
   );
