@@ -8,9 +8,11 @@
  * 4. Automatic workspace opening on completion.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle2, AlertCircle, GitFork, RefreshCw, Folder, X } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
+import { gitFetch } from "../../services/gitClient";
 
 interface CloneModalProps {
   isOpen: boolean;
@@ -29,6 +31,11 @@ export function CloneModal({
   const [targetDir, setTargetDir] = useState("");
   const [isCloning, setIsCloning] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: "info" | "success" | "error"; text: string } | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Tab stays in, Escape closes, focus comes back. This dialog had none of the
+  // three, so the only way out of it was the mouse.
+  useDialogA11y(dialogRef, onClose, isOpen);
 
   if (!isOpen) return null;
 
@@ -59,7 +66,7 @@ export function CloneModal({
     setStatusMsg({ type: "info", text: "Cloning repository from remote..." });
 
     try {
-      const res = await fetch("/api/git/clone", {
+      const res = await gitFetch("/api/git/clone", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -88,7 +95,13 @@ export function CloneModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Clone a repository"
+      className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 select-none animate-in fade-in duration-100"
+    >
       <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 p-5 space-y-4 text-xs text-zinc-200">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
@@ -98,13 +111,15 @@ export function CloneModal({
             </div>
             <div>
               <h3 className="font-bold text-sm text-zinc-100">Clone Repository</h3>
-              <p className="text-[11px] text-zinc-400">Clone a remote Git repository to your local machine</p>
+              <p className="text-2xs text-zinc-400">Clone a remote Git repository to your local machine</p>
             </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
+            title="Close"
             className="p-1 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"
           >
             <Icon icon={X} className="w-4 h-4" />
@@ -115,8 +130,8 @@ export function CloneModal({
         <div className="space-y-3">
           {/* Repo URL */}
           <div>
-            <label className="text-[11px] font-semibold text-zinc-300">Repository URL</label>
-            <input
+            <label htmlFor="clonemodal-repository-url-1" className="text-2xs font-semibold text-zinc-300">Repository URL</label>
+            <input id="clonemodal-repository-url-1"
               type="text"
               value={repoUrl}
               onChange={(e) => handleUrlChange(e.target.value)}
@@ -127,9 +142,9 @@ export function CloneModal({
 
           {/* Destination Path */}
           <div>
-            <label className="text-[11px] font-semibold text-zinc-300">Destination Directory</label>
+            <label htmlFor="clonemodal-destination-directory-2" className="text-2xs font-semibold text-zinc-300">Destination Directory</label>
             <div className="flex items-center gap-2 mt-1">
-              <input
+              <input id="clonemodal-destination-directory-2"
                 type="text"
                 value={targetDir}
                 onChange={(e) => setTargetDir(e.target.value)}
@@ -151,7 +166,7 @@ export function CloneModal({
         {/* Status Feedback */}
         {statusMsg && (
           <div
-            className={`p-2.5 rounded-xl border flex items-start gap-2 text-[11px] ${
+            className={`p-2.5 rounded-xl border flex items-start gap-2 text-2xs ${
               statusMsg.type === "info"
                 ? "bg-purple-950/40 border-purple-500/40 text-purple-300"
                 : statusMsg.type === "success"

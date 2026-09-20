@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 742 444" width="742" height="444">
+<rect width="742" height="444" fill="#18181b"/>
+<text x="24" y="40" font-family="system-ui" font-size="11" fill="#7b7b85">mark, on the app panel</text>
+<rect x="78" y="20" width="640" height="116" rx="10" fill="#101013"/>
+<g style="--fg:#eef2ff" transform="translate(134.0 70.0) scale(0.015625)"><path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(258.0 66.0) scale(0.023438)"><path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(382.0 62.0) scale(0.031250)"><path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(502.0 54.0) scale(0.046875)"><path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(622.0 46.0) scale(0.062500)"><path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<text x="24" y="172" font-family="system-ui" font-size="11" fill="#7b7b85">mono, dark and light</text>
+<rect x="78" y="152" width="640" height="116" rx="10" fill="#101013"/>
+<g style="--fg:#eef2ff" transform="translate(134.0 202.0) scale(0.015625)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(258.0 198.0) scale(0.023438)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(382.0 194.0) scale(0.031250)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(502.0 186.0) scale(0.046875)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#eef2ff" transform="translate(622.0 178.0) scale(0.062500)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<text x="24" y="238" font-family="system-ui" font-size="11" fill="#7b7b85"></text>
+<rect x="78" y="218" width="640" height="116" rx="10" fill="#f4f4f5"/>
+<g style="--fg:#1e1b4b" transform="translate(134.0 268.0) scale(0.015625)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#1e1b4b" transform="translate(258.0 264.0) scale(0.023438)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#1e1b4b" transform="translate(382.0 260.0) scale(0.031250)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#1e1b4b" transform="translate(502.0 252.0) scale(0.046875)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+<g style="--fg:#1e1b4b" transform="translate(622.0 244.0) scale(0.062500)"><g fill="none" stroke="var(--fg)">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="var(--fg)" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/></g>
+</svg>

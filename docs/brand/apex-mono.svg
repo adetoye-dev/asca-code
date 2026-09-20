@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ACSA Code">
+  <title>ACSA Code — monochrome</title>
+  <desc>One colour, for anywhere a background cannot be guaranteed: Finder list view, notifications, a README, print. The plane is a stroke so it does not become a second block of tone.</desc>
+  <g fill="none" stroke="currentColor">
+    <path stroke-width="72" stroke-linejoin="round" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  </g>
+  <path fill="currentColor" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/>
+</svg>

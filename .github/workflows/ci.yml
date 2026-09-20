@@ -1,9 +1,15 @@
 name: CI
 
 on:
+  # Named branches rather than `**`: every push used to start a full build,
+  # including on throwaway branches.
+  #
+  # `main` is here as well as `dev` so a merge is verified before it lands, and
+  # `workflow_dispatch` is here so the slow jobs can be asked for on purpose.
   push:
-    branches: ["**"]
+    branches: [dev, main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -70,7 +76,7 @@ jobs:
       - name: Sidecar answers each subcommand
         run: |
           set -euo pipefail
-          BIN="$(ls .tauri/binaries/acsa-engine-*)"
+          BIN=".tauri/engine/acsa-engine/acsa-engine"
           export ACSA_DATA_DIR="$(mktemp -d)"
           # Fails loudly if the freeze dropped a module — `pty` was silently
           # missing once and only surfaced when a user opened the terminal.
@@ -85,6 +91,14 @@ jobs:
     name: Desktop bundle
     runs-on: macos-latest
     needs: [verify]
+    # Deliberately not on every push to `dev`. It is the slowest job here (the
+    # Rust app built from scratch, ~8 minutes) and it duplicated what release.yml
+    # already does on a tag — so a push to the working branch paid for the same
+    # build twice, and `cancel-in-progress` then threw the earlier run away
+    # whenever two pushes landed close together, which is exactly when a "did the
+    # bundle break?" answer is worth having. Pull requests and `main` still cover
+    # it, and `gh workflow run ci.yml --ref dev` asks for it directly.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     env:
       # Inherited by `tauri build`'s beforeBuildCommand (`npm run build`).
       NODE_OPTIONS: --max-old-space-size=4096
@@ -111,6 +125,22 @@ jobs:
       - name: Build the engine sidecar
         run: scripts/build_engine_sidecar.sh
 
+      - name: Fetch the Codex agent runtime
+        run: scripts/fetch_codex_sidecar.sh
+
+      # `tauri::generate_context!()` is a proc macro with opinions, and each of
+      # these three was a separate failed run to discover:
+      #   * every `bundle.resources` path must exist — `engine/` (Python freeze)
+      #     and `engine-codex/` (Codex fetch) are gitignored build output;
+      #   * `frontendDist` must exist — hence the build below, which the bundle
+      #     would otherwise be the first thing to create.
+      # So: build everything the config references, and only then compile tests.
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Rust tests
+        run: cargo test --manifest-path .tauri/Cargo.toml
+
       - name: Bundle the app
         working-directory: .tauri
         run: ../node_modules/.bin/tauri build --bundles app
@@ -122,8 +152,12 @@ jobs:
         run: |
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
-          test -f "$APP/Contents/Resources/core-engine/manager.py"
-          test -x "$APP/Contents/MacOS/acsa-engine"
+          # `acsa_engine.py` is the entry point the Rust side falls back to when
+          # there is no frozen binary. This used to name `manager.py`, which the
+          # harness removal deleted — so the job failed on a file that was
+          # supposed to be gone.
+          test -f "$APP/Contents/Resources/core-engine/acsa_engine.py"
+          test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
           # MIT needs the notice to accompany the binary, and OFL needs the font
           # licence to travel with the font. Both live inside the bundle.
           test -f "$APP/Contents/Resources/LICENSE"

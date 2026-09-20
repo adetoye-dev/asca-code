@@ -91,8 +91,8 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
       <div className="text-xs font-semibold tracking-wider uppercase text-zinc-400 mb-1">
         ACSA Code
       </div>
-      <div className="text-[11px] text-zinc-600 mb-6 font-mono">
-        Autonomous AI Engineering Workbench
+      <div className="text-2xs text-zinc-500 mb-6 font-mono">
+        Local-first agentic engineering workbench
       </div>
 
       {setupSlot}
@@ -113,7 +113,7 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
               />
               <span className="font-medium">{item.label}</span>
             </span>
-            <kbd className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.08] text-[10px] font-mono text-zinc-500 group-hover:text-zinc-300 group-hover:border-zinc-600/60 transition-colors">
+            <kbd className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.08] text-3xs font-mono text-zinc-500 group-hover:text-zinc-300 group-hover:border-zinc-600/60 transition-colors">
               {item.shortcut}
             </kbd>
           </button>

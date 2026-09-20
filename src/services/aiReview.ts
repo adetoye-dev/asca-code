@@ -6,6 +6,8 @@
  * rendered as editor markers (squiggles) plus a review panel.
  */
 
+import { aiFetch } from "./aiClient";
+
 export interface ReviewIssue {
   line: number;
   severity: "error" | "warning" | "info";
@@ -54,7 +56,10 @@ export async function reviewFile(params: {
 }): Promise<ReviewResponse> {
   const { path, content, language = "", settings, signal } = params;
   try {
-    const res = await fetch("/api/ai/review-file", {
+    // Through `aiFetch`, so the desktop build reaches the engine over IPC. A raw
+    // `fetch` here only ever worked while a Vite dev server was serving `/api/*`,
+    // which is why review failed with nothing but "HTTP 404" in the bundle.
+    const res = await aiFetch("/api/ai/review-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

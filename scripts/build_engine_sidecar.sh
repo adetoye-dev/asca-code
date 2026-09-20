@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Freeze the Python engine into the single binary the desktop app ships.
 #
-# Why: the app used to run `python3 core-engine/manager.py`. macOS no longer
-# ships a usable interpreter and Windows ships none, so on a clean machine the
-# agent could not run at all. `acsa-engine` bundles the engine, the standard
-# library and a Python runtime into one executable, so the app needs nothing
-# installed.
+# Why: the app's backend is Python, and macOS no longer ships a usable
+# interpreter while Windows ships none, so on a clean machine nothing worked.
+# `acsa-engine` bundles the engine, the standard library and a Python runtime
+# into one executable, so the app needs nothing installed.
 #
 # Usage:  scripts/build_engine_sidecar.sh
-# Output: .tauri/binaries/acsa-engine-<target-triple>
+# Output: .tauri/engine/acsa-engine/acsa-engine  (an onedir tree, shipped as a resource)
 #
 # Tauri resolves `externalBin` entries by that triple suffix and strips it when
 # bundling, so the app looks for a plain `acsa-engine` next to its executable.
@@ -32,35 +31,53 @@ if [[ ! -x "${VENV}/bin/pyinstaller" ]]; then
 fi
 
 mkdir -p .tauri/binaries
+# `skill_loader` resolves the built-in skills relative to its own file, so the
+# markdown has to travel with it — otherwise the frozen engine reports an empty
+# skill catalog and the marketplace looks broken in the packaged app.
 
 # The dispatcher imports its entry points dynamically, so they are declared
 # explicitly; PyInstaller's static analysis cannot see them.
+# `--onedir`, not `--onefile`: onefile writes a NEW executable to a temp directory on
+# every launch, so macOS scans a fresh binary every time. Measured on this machine:
+# 8.5s per call warm, versus 0.06s for a stable onedir binary — the cost of a scan,
+# not of unpacking (the payload is only 14 MB). Since every IPC call spawns the
+# engine, onefile made the whole app feel broken.
 "${VENV}/bin/pyinstaller" \
-  --onefile --noconfirm --clean \
+  --onedir --noconfirm --clean \
   --name acsa-engine \
-  --distpath .tauri/binaries \
+  --distpath .tauri/engine \
   --workpath "${TMPDIR:-/tmp}/acsa-freeze-build" \
   --specpath "${TMPDIR:-/tmp}/acsa-freeze-spec" \
   --paths core-engine \
-  --paths core-engine/gauntlet \
-  --paths core-engine/compiler \
   --paths core-engine/data-map \
   --paths core-engine/mcp_servers \
   --paths core-engine/skills \
   --paths scripts \
-  --hidden-import manager \
   --hidden-import db_cli \
   --hidden-import project_indexer \
   --hidden-import pty_bridge \
   --hidden-import app_db \
   --hidden-import env_file \
-  --hidden-import scale_detector \
+  --hidden-import ollama_cli \
+  --hidden-import git_cli \
+  --hidden-import indexer_cli \
+  --hidden-import skills_cli \
+  --hidden-import mcp_cli \
+  --hidden-import ai_cli \
+  --hidden-import project_cli \
+  --hidden-import fs_cli \
+  --hidden-import skill_loader \
+  --add-data "${REPO_ROOT}/core-engine/skills:skills" \
   --hidden-import mcp_client \
+  --hidden-import responses_adapter \
+  --hidden-import crash_log \
+  --hidden-import backup \
+  --hidden-import support \
   core-engine/acsa_engine.py
 
-mv -f .tauri/binaries/acsa-engine ".tauri/binaries/acsa-engine-${TRIPLE}"
+ENGINE_BIN=".tauri/engine/acsa-engine/acsa-engine"
 
 echo
-echo "Built .tauri/binaries/acsa-engine-${TRIPLE}"
+echo "Built ${ENGINE_BIN}"
 echo "Smoke test:"
-".tauri/binaries/acsa-engine-${TRIPLE}" db info
+"${ENGINE_BIN}" db info

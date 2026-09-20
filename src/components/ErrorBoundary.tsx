@@ -8,6 +8,7 @@
 import { Component, ErrorInfo, ReactNode } from "react";
 import { Trash2, ChevronRight, ChevronDown, RefreshCw, AlertCircle, X } from "lucide-react";
 import { Icon } from "./ui/Icon";
+import { reportCrash } from "../services/crashReporter";
 
 interface Props {
   children: ReactNode;
@@ -36,6 +37,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("[ACSA Code ErrorBoundary Caught Error]:", error, errorInfo);
+    // Written to the local crash log, redacted by the engine. Nothing leaves the
+    // machine; the point is that the user can attach it to a bug report.
+    void reportCrash("render", error, { componentStack: errorInfo.componentStack });
     this.setState({ errorInfo });
   }
 
@@ -66,7 +70,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-sans text-zinc-200 select-none">
+        <div className="fixed inset-0 z-critical flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-sans text-zinc-200 select-none">
           <div className="w-[620px] max-w-[95vw] rounded-xl bg-workbench border border-hairline/40 shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col">
             {/* Header */}
             <div className="h-11 bg-workbench border-b border-hairline px-4 flex items-center justify-between">
@@ -90,7 +94,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <p className="text-zinc-300 mb-1.5 font-medium">
                   An error occurred while rendering this interface. The workbench protected your workspace from crashing.
                 </p>
-                <div className="p-3 rounded bg-red-950/40 border border-red-800/40 text-red-300 font-mono text-[11px] break-words">
+                <div className="p-3 rounded bg-red-950/40 border border-red-800/40 text-red-300 font-mono text-2xs break-words">
                   {this.state.error?.message || String(this.state.error)}
                 </div>
               </div>
@@ -111,7 +115,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 </button>
 
                 {this.state.showDetails && (
-                  <div className="mt-2 p-3 rounded bg-workbench border border-zinc-800 font-mono text-[10px] text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
+                  <div className="mt-2 p-3 rounded bg-workbench border border-zinc-800 font-mono text-3xs text-zinc-400 max-h-48 overflow-y-auto whitespace-pre-wrap select-text">
                     {this.state.error?.stack || "No stack trace available"}
                     {this.state.errorInfo?.componentStack && (
                       <div className="mt-2 text-zinc-500 border-t border-zinc-800 pt-2">

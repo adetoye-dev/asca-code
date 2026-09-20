@@ -72,7 +72,7 @@ export function resolveImportSpecifier(
     return null;
   }
 
-  // Python bare module: `agent_tools`, `gauntlet.syntax_guard`.
+  // Python bare module: `project_indexer`, `mcp_client`.
   if (/^[A-Za-z_][\w.]*$/.test(spec)) {
     const modPath = spec.replace(/\./g, "/");
     const candidates = [

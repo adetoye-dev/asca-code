@@ -24,11 +24,14 @@ import {
 import { Icon } from "../ui/Icon";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { systemMetricsService } from "../../services/systemMetricsService";
+import { aiFetch } from "../../services/aiClient";
+import { fetchStorageMetrics, fetchRunningProcesses, runSafeCleanup } from "../../services/hostMetrics";
 import type { SystemMetrics, StorageMetrics, RunningProcessItem } from "../../types/workbench";
 
 interface PerformanceDashboardProps {
-  systemMetrics: SystemMetrics | null;
   onRefreshMetrics?: () => void;
+  /** The open project. Storage and cleanup are scoped to it, not to the app. */
+  projectRoot?: string;
 }
 
 // ── 1. Diagonal Hatched Progress Gauge Component ─────────────────────────────
@@ -123,7 +126,7 @@ function SpendSavingsCard({
     return (
       <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Spend &amp; Savings</h3>
-        <p className="text-[11px] text-zinc-500 mt-3">
+        <p className="text-2xs text-zinc-500 mt-3">
           No AI activity yet. Run a task and its cost and savings will show up here.
         </p>
       </div>
@@ -134,34 +137,34 @@ function SpendSavingsCard({
     <div className="h-full flex flex-col rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">AI Spend &amp; Savings</h3>
-        <span className="text-[10px] font-mono text-zinc-500">
+        <span className="text-3xs font-mono text-zinc-500">
           {totalCalls} call(s){avgLatencyS > 0 ? ` · avg ${avgLatencyS.toFixed(0)}s` : ""}
         </span>
       </div>
 
       <div className="mt-4 flex flex-wrap items-end gap-x-10 gap-y-4">
         <div>
-          <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">Estimated saved</div>
+          <div className="text-3xs uppercase tracking-wider text-emerald-300/80">Estimated saved</div>
           <div className="text-3xl font-bold font-mono text-emerald-300 leading-none mt-1.5">
             ${avoided.toFixed(2)}
           </div>
-          <div className="text-[10px] text-zinc-500 mt-1.5">
+          <div className="text-3xs text-zinc-500 mt-1.5">
             by running {localShare}% of work on this machine
           </div>
         </div>
         <div className="flex gap-7">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Actual spend</div>
+            <div className="text-3xs uppercase tracking-wider text-zinc-500">Actual spend</div>
             <div className="text-lg font-bold font-mono text-zinc-100 mt-1">${spend.toFixed(4)}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-500">If all cloud</div>
+            <div className="text-3xs uppercase tracking-wider text-zinc-500">If all cloud</div>
             <div className="text-lg font-bold font-mono text-zinc-500 mt-1">
               ${(spend + avoided).toFixed(4)}
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Tokens</div>
+            <div className="text-3xs uppercase tracking-wider text-zinc-500">Tokens</div>
             <div className="text-lg font-bold font-mono text-zinc-100 mt-1">
               {Number(totalTokens || 0).toLocaleString()}
             </div>
@@ -174,7 +177,7 @@ function SpendSavingsCard({
           <div className="bg-emerald-500/80" style={{ width: `${localShare}%` }} />
           <div className="bg-purple-500/80 flex-1" />
         </div>
-        <div className="flex justify-between text-[10px] font-mono mt-1.5">
+        <div className="flex justify-between text-3xs font-mono mt-1.5">
           <span className="text-emerald-400">{localShare}% local · $0</span>
           <span className="text-purple-300">
             {100 - localShare}% cloud · ${spend.toFixed(4)}
@@ -182,7 +185,7 @@ function SpendSavingsCard({
         </div>
       </div>
 
-      <p className="mt-auto pt-3 text-[10px] text-zinc-500 leading-snug">
+      <p className="mt-auto pt-3 text-3xs text-zinc-500 leading-snug">
         Savings estimate prices local tokens at a reference cloud rate of ${REFERENCE_INPUT_PER_M}/1M input
         and ${REFERENCE_OUTPUT_PER_M}/1M output.
       </p>
@@ -200,7 +203,7 @@ function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
     <div className="h-full flex flex-col rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Usage — last 14 days</h3>
-        <span className="text-[10px] font-mono text-zinc-500">
+        <span className="text-3xs font-mono text-zinc-500">
           {hasActivity ? `peak ${maxTokens.toLocaleString()} tokens/day` : "no activity"}
         </span>
       </div>
@@ -228,12 +231,12 @@ function UsageTrendChart({ daily }: { daily: UsageDay[] }) {
           );
         })}
       </div>
-      <div className="mt-2 flex justify-between text-[10px] font-mono text-zinc-500">
+      <div className="mt-2 flex justify-between text-3xs font-mono text-zinc-500">
         <span>{String(rows[0]?.date || "").slice(5)}</span>
         <span>today</span>
       </div>
       {!hasActivity && (
-        <p className="mt-3 text-[11px] text-zinc-500">No AI activity in the last 14 days.</p>
+        <p className="mt-3 text-2xs text-zinc-500">No AI activity in the last 14 days.</p>
       )}
     </div>
   );
@@ -248,7 +251,7 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
     return (
       <div className="rounded-2xl bg-workbench border border-hairline p-4 sm:p-5 shadow-2xl backdrop-blur-md">
         <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">Models Used</h3>
-        <p className="text-[11px] text-zinc-500 mt-3">Nothing has run yet.</p>
+        <p className="text-2xs text-zinc-500 mt-3">Nothing has run yet.</p>
       </div>
     );
   }
@@ -261,7 +264,7 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
           const isLocal = m.provider === "ollama";
           return (
             <div key={`${m.provider}/${m.model}`}>
-              <div className="flex items-center justify-between text-[11px] font-mono gap-2">
+              <div className="flex items-center justify-between text-2xs font-mono gap-2">
                 <span className="text-zinc-300 truncate" title={`${m.provider}/${m.model}`}>
                   {m.model}
                 </span>
@@ -276,13 +279,13 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
                     style={{ width: `${share}%` }}
                   />
                 </div>
-                <span className="text-[10px] font-mono text-zinc-500 w-9 text-right">{share}%</span>
+                <span className="text-3xs font-mono text-zinc-500 w-9 text-right">{share}%</span>
               </div>
             </div>
           );
         })}
       </div>
-      <p className="mt-auto pt-3 text-[10px] text-zinc-500">
+      <p className="mt-auto pt-3 text-3xs text-zinc-500">
         Green runs locally and costs nothing; purple is a paid cloud model.
       </p>
     </div>
@@ -291,12 +294,12 @@ function ModelsUsedPanel({ byModel }: { byModel: ModelUsage[] }) {
 
 // ── 5. Main Component ────────────────────────────────────────────────────────
 export function PerformanceDashboard({
-  systemMetrics,
   onRefreshMetrics,
+  projectRoot = "",
 }: PerformanceDashboardProps) {
-  const [metrics, setMetrics] = useState<SystemMetrics | null>(
-    () => systemMetricsService.getMetrics() || systemMetrics
-  );
+  // Seeded from the service synchronously, then kept live by it: this page and
+  // the status bar read the same store rather than receiving copies from above.
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(() => systemMetricsService.getMetrics());
 
   useEffect(() => {
     return systemMetricsService.subscribe((latest) => {
@@ -337,10 +340,12 @@ export function PerformanceDashboard({
     setIsRefreshing(true);
     try {
       const [storageRes, procRes, sysMetrics, usageRes] = await Promise.all([
-        fetch("/api/system/storage"),
-        fetch("/api/system/processes"),
+        fetchStorageMetrics(projectRoot),
+        fetchRunningProcesses(),
         systemMetricsService.fetchMetrics(),
-        fetch("/api/ai/usage").catch(() => null),
+        // Through the AI transport, so a packaged build reads the ledger over
+        // IPC instead of asking its own asset protocol for a dev-only route.
+        aiFetch("/api/ai/usage").catch(() => null),
       ]);
 
       if (sysMetrics) {
@@ -353,8 +358,8 @@ export function PerformanceDashboard({
         } catch {}
       }
 
-      if (storageRes.ok) {
-        const data = await storageRes.json();
+      if (storageRes) {
+        const data = storageRes;
         setHasStorageMetrics(true);
         setStorage((previous) => {
           const safeNumber = (value: unknown, fallback: number) =>
@@ -380,11 +385,10 @@ export function PerformanceDashboard({
           };
         });
       }
-      if (procRes.ok) {
-        const data = await procRes.json();
-        setProcesses(data.processes || []);
+      if (procRes) {
+        setProcesses(procRes);
       }
-      setIsTelemetryOnline(Boolean(storageRes.ok && procRes.ok && sysMetrics && systemMetricsService.isHealthy()));
+      setIsTelemetryOnline(Boolean(storageRes && procRes && sysMetrics && systemMetricsService.isHealthy()));
       setLastChecked(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } catch {
       setIsTelemetryOnline(false);
@@ -398,6 +402,10 @@ export function PerformanceDashboard({
     fetchStorageAndProcesses();
     const timer = setInterval(fetchStorageAndProcesses, 6000);
     return () => clearInterval(timer);
+    // Polls until the component unmounts; `fetchStorageAndProcesses` is
+    // re-declared each render, so depending on it would restart the interval
+    // every time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSafeCleanup = async () => {
@@ -405,18 +413,15 @@ export function PerformanceDashboard({
     setCleanupResult(null);
 
     try {
-      const res = await fetch("/api/system/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
+      const data = await runSafeCleanup(projectRoot);
+      if (data) {
         setCleanupResult({
           reclaimedMb: data.reclaimedMb ?? 0,
           message: data.message || "Build caches cleared successfully.",
         });
         await fetchStorageAndProcesses();
+      } else {
+        setCleanupResult({ reclaimedMb: 0, message: "Cleanup did not run." });
       }
     } catch (err: any) {
       setCleanupResult({
@@ -428,7 +433,7 @@ export function PerformanceDashboard({
     }
   };
 
-  const activeMetrics = metrics || systemMetrics;
+  const activeMetrics = metrics;
   const cpuPercent = activeMetrics ? Math.round(activeMetrics.cpu_usage_percent) : 15;
   const memUsedGb = activeMetrics
     ? (activeMetrics.memory_used_mb / 1024).toFixed(1)
@@ -475,15 +480,15 @@ export function PerformanceDashboard({
 
   return (
     <div className="h-full w-full overflow-y-auto bg-canvas text-zinc-200 p-4 sm:p-6 lg:p-7 font-sans select-none">
-      <div className="max-w-7xl mx-auto space-y-5">
+      <div className="max-w-[clamp(64rem,92vw,110rem)] mx-auto space-y-5">
 
         {/* ── TOP CONTEXT / RIG METADATA STRIP (Exact Reference Inspiration) ──── */}
-        <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-zinc-400 pb-3 border-b border-hairline">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-2xs font-mono text-zinc-400 pb-3 border-b border-hairline">
           <div className="flex flex-wrap items-center gap-4 sm:gap-6">
             <span>
               <strong className="text-zinc-300 font-semibold">HOST:</strong> ACSA Local Engine ({hostPlatform} {hostArchitecture})
             </span>
-            <span className="hidden sm:inline text-zinc-600">|</span>
+            <span className="hidden sm:inline text-zinc-500">|</span>
             <span>
               <strong className="text-zinc-300 font-semibold">RUNTIME:</strong> Node {nodeVersion} · Vite {viteVersion} · Python {pythonVersion}
             </span>
@@ -530,7 +535,7 @@ export function PerformanceDashboard({
             
             {/* 1. CPU COMPUTE LOAD (Purple Hatch) */}
             <div className="space-y-2">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+              <div className="text-2xs font-mono uppercase tracking-wider text-zinc-400">
                 CPU Compute Load (%)
               </div>
               <div className="flex items-baseline gap-1.5">
@@ -544,7 +549,7 @@ export function PerformanceDashboard({
 
             {/* 2. MEMORY ALLOCATION (Cyan Hatch) */}
             <div className="space-y-2 sm:pl-5 lg:pl-6 pt-4 sm:pt-0">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+              <div className="text-2xs font-mono uppercase tracking-wider text-zinc-400">
                 Memory Allocation (RAM)
               </div>
               <div className="flex items-baseline gap-1.5">
@@ -558,7 +563,7 @@ export function PerformanceDashboard({
 
             {/* 3. ROOT STORAGE OCCUPANCY (Purple Hatch) */}
             <div className="space-y-2 sm:pl-5 lg:pl-6 pt-4 sm:pt-0">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+              <div className="text-2xs font-mono uppercase tracking-wider text-zinc-400">
                 Storage Occupancy (SSD /)
               </div>
               <div className="flex items-baseline gap-1.5">
@@ -573,13 +578,13 @@ export function PerformanceDashboard({
             {/* 4. RECLAIMABLE CACHE BUFFERS (Cyan Hatch) */}
             <div className="space-y-2 sm:pl-5 lg:pl-6 pt-4 sm:pt-0 flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                <div className="flex items-center justify-between text-2xs font-mono uppercase tracking-wider text-zinc-400">
                   <span>Cache & Buffers</span>
                   <button
                     type="button"
                     onClick={() => setShowCleanupConfirm(true)}
                     disabled={isCleaning || storage.cacheReclaimableMb < 1}
-                    className="text-[10px] font-mono font-semibold text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="text-3xs font-mono font-semibold text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     Purge
                   </button>
@@ -613,7 +618,7 @@ export function PerformanceDashboard({
             <button
               type="button"
               onClick={() => setCleanupResult(null)}
-              className="text-[11px] text-zinc-400 hover:text-white px-2 py-0.5 rounded bg-workbench border border-hairline transition-colors cursor-pointer"
+              className="text-2xs text-zinc-400 hover:text-white px-2 py-0.5 rounded bg-workbench border border-hairline transition-colors cursor-pointer"
             >
               Dismiss
             </button>
@@ -655,7 +660,7 @@ export function PerformanceDashboard({
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
                 Workspace Maintenance
               </h3>
-              <span className="text-[10px] font-mono text-zinc-500">
+              <span className="text-3xs font-mono text-zinc-500">
                 {storage.cacheReclaimableMb.toFixed(0)} MB reclaimable
               </span>
             </div>
@@ -693,7 +698,7 @@ export function PerformanceDashboard({
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs text-zinc-300 font-sans">
                       <thead>
-                        <tr className="border-b border-white/[0.06] text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                        <tr className="border-b border-white/[0.06] text-3xs text-zinc-500 font-mono uppercase tracking-wider">
                           <th className="py-2">Category</th>
                           <th className="py-2">Files</th>
                           <th className="py-2 text-right">Size</th>
@@ -719,7 +724,7 @@ export function PerformanceDashboard({
                   </div>
 
                   <div className="pt-2 flex items-center justify-between border-t border-white/[0.06]">
-                    <span className="text-[11px] font-mono text-zinc-500">
+                    <span className="text-2xs font-mono text-zinc-500">
                       Total Cache Reclaimable: {storage.cacheReclaimableMb.toFixed(1)} MB
                     </span>
                     <button
@@ -739,7 +744,7 @@ export function PerformanceDashboard({
                 <div className="overflow-x-auto max-h-[220px] overflow-y-auto">
                   <table className="w-full text-left text-xs text-zinc-300 font-sans">
                     <thead>
-                      <tr className="border-b border-hairline text-[10px] text-zinc-500 font-mono uppercase tracking-wider sticky top-0 bg-workbench">
+                      <tr className="border-b border-hairline text-3xs text-zinc-500 font-mono uppercase tracking-wider sticky top-0 bg-workbench">
                         <th className="py-2">PID</th>
                         <th className="py-2">Service</th>
                         <th className="py-2">Status</th>
@@ -747,13 +752,13 @@ export function PerformanceDashboard({
                         <th className="py-2 text-right">RAM</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-800/40 text-[11px] font-mono">
+                    <tbody className="divide-y divide-zinc-800/40 text-2xs font-mono">
                       {processes.map((p) => (
                         <tr key={p.pid} className="hover:bg-white/[0.02]">
                           <td className="py-2 text-zinc-500">{p.pid}</td>
                           <td className="py-2 font-sans font-medium text-zinc-200 truncate max-w-[120px]">{p.name}</td>
                           <td className="py-2">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                            <span className="px-1.5 py-0.5 rounded text-3xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
                               {p.status}
                             </span>
                           </td>

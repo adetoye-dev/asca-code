@@ -11,6 +11,13 @@
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { DESKTOP_REQUIRED_MESSAGE, hasIpc } from "../../services/engineBridge";
+
+/** Call the terminal IPC channel when it exists, else the dev bridge endpoint. */
+async function invokeTerminal<T = void>(command: string, args: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await invoke(command, args)) as T;
+}
 
 export interface XtermTerminalHandle {
   restart: () => void;
@@ -32,18 +39,16 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const eventSourceRef = useRef<EventSource | null>(null);
+    /** PID of the shell currently attached, so a replaced shell's exit is ignored. */
+    const terminalPidRef = useRef<number | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const inputBufferRef = useRef<string>("");
     const flushTimeoutRef = useRef<any>(null);
 
     const sendResize = useCallback((cols: number, rows: number) => {
       if (cols > 0 && rows > 0) {
-        fetch("/api/terminal/resize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols, rows }),
-        }).catch(() => {});
+        if (!hasIpc()) return;
+        invokeTerminal("terminal_resize", { cols, rows }).catch(() => {});
       }
     }, []);
 
@@ -66,11 +71,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
       if (!inputBufferRef.current) return;
       const dataToSend = inputBufferRef.current;
       inputBufferRef.current = "";
-      fetch("/api/terminal/input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: dataToSend }),
-      }).catch(() => {});
+      if (!hasIpc()) return;
+      invokeTerminal("terminal_input", { data: dataToSend }).catch(() => {});
     }, []);
 
     const sendInput = useCallback(
@@ -93,21 +95,18 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     );
 
     const initShell = useCallback(
-      async (force = false) => {
+      async () => {
         try {
-          const res = await fetch("/api/terminal/spawn", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cwd,
-              cols: termRef.current?.cols || 80,
-              rows: termRef.current?.rows || 24,
-              force,
-            }),
-          });
-          if (res.ok) {
+          const cols = termRef.current?.cols || 80;
+          const rows = termRef.current?.rows || 24;
+          if (hasIpc()) {
+            terminalPidRef.current = await invokeTerminal<number>("terminal_spawn", { cwd, cols, rows });
             setIsConnected(true);
             onConnectionChangeRef.current?.(true);
+          } else {
+            termRef.current?.writeln(`\r\n\x1b[33m${DESKTOP_REQUIRED_MESSAGE}\x1b[0m\r\n`);
+            setIsConnected(false);
+            onConnectionChangeRef.current?.(false);
           }
         } catch {
           termRef.current?.writeln("\r\n\x1b[31mFailed to connect to local shell process.\x1b[0m\r\n");
@@ -115,7 +114,8 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
           onConnectionChangeRef.current?.(false);
         }
       },
-      [cwd, onConnectionChange]
+      // `onConnectionChange` is read through a ref so this callback stays stable.
+      [cwd]
     );
     const initShellRef = useRef(initShell);
     const sendInputRef = useRef(sendInput);
@@ -136,7 +136,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     const handleRestart = useCallback(() => {
       termRef.current?.clear();
       termRef.current?.writeln("\r\n\x1b[33mRestarting interactive shell session...\x1b[0m\r\n");
-      initShell(true);
+      initShell();
       termRef.current?.focus();
     }, [initShell]);
 
@@ -214,33 +214,53 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         sendResizeRef.current(size.cols, size.rows);
       });
 
-      // 5. Connect to terminal output EventSource stream
-      const es = new EventSource("/api/terminal/stream");
-      eventSourceRef.current = es;
-
-      es.onopen = () => {
+      // 5. Terminal output. With IPC (the app, and `tauri dev`) the shell is a
+      //    child of the app and its bytes arrive as Tauri events; in a plain
+      //    browser the dev bridge still streams them over server-sent events.
+      let closeStream: () => void;
+      if (hasIpc()) {
+        let disposed = false;
+        const unlisteners: Array<() => void> = [];
+        void (async () => {
+          const { listen } = await import("@tauri-apps/api/event");
+          const offData = await listen<{ pid?: number; data?: string }>("terminal:data", (event) => {
+            const { pid, data } = event.payload ?? {};
+            // Output from a shell that has already been replaced is not this session's.
+            if (pid !== undefined && pid !== terminalPidRef.current) return;
+            if (data) term.write(data);
+          });
+          const offExit = await listen<{ pid?: number }>("terminal:exit", (event) => {
+            // Restarting kills the previous child, which then reports exit. Without
+            // this check that parting message marks the *new* session dead, and the
+            // terminal only recovers on a full reload.
+            const { pid } = event.payload ?? {};
+            if (pid !== undefined && pid !== terminalPidRef.current) return;
+            setIsConnected(false);
+            onConnectionChangeRef.current?.(false);
+          });
+          if (disposed) {
+            offData();
+            offExit();
+          } else {
+            unlisteners.push(offData, offExit);
+          }
+        })();
         setIsConnected(true);
         onConnectionChangeRef.current?.(true);
-      };
-
-      es.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload.data) {
-            term.write(payload.data);
-          }
-        } catch {
-          term.write(event.data);
-        }
-      };
-
-      es.onerror = () => {
+        closeStream = () => {
+          disposed = true;
+          unlisteners.forEach((off) => off());
+        };
+      } else {
+        // No desktop shell: no PTY, and no channel to stream its output over.
+        // `initShell` writes the reason into the terminal itself.
         setIsConnected(false);
         onConnectionChangeRef.current?.(false);
-      };
+        closeStream = () => {};
+      }
 
       // 6. Spawn backend shell process
-      initShellRef.current(false);
+      initShellRef.current();
 
       // Initial resize sync & focus
       const timer = setTimeout(() => {
@@ -270,10 +290,14 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
         resizeObserver.disconnect();
         onDataDisposable.dispose();
         onResizeDisposable.dispose();
-        es.close();
+        closeStream();
         term.dispose();
         if (flushTimeoutRef.current) clearTimeout(flushTimeoutRef.current);
       };
+      // Mount-only: this builds the terminal and spawns the shell. `fontSize` is
+      // read once here and applied on change by the effect below, so adding it
+      // would restart the shell every time the setting moved.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Sync dimensions and focus whenever visibility changes (e.g. tab switch)
@@ -298,12 +322,14 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, XtermTerminalProps>
     // Respawn shell if project directory changes
     useEffect(() => {
       if (termRef.current && cwd) {
-        initShell(false);
+        initShell();
       }
     }, [cwd, initShell]);
 
     return (
       <div
+        role="presentation"
+        title="Click to focus the terminal"
         onClick={() => termRef.current?.focus()}
         className="h-full w-full bg-workbench overflow-hidden select-none cursor-text relative"
       >

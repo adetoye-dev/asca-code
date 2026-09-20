@@ -22,32 +22,19 @@ Design notes
   encryption at rest: the standard library has no authenticated cipher and
   hand-rolling one would be worse than the file permissions. OS keychain
   integration is the follow-up, and `docs/PRODUCTION_CHECKLIST.md` says so.
-* **Passwords.** PBKDF2-HMAC-SHA256 with a per-account salt and a high iteration
-  count, compared in constant time. Session tokens are random and stored only as
-  a SHA-256 digest, so a database leak does not yield usable sessions.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
+import datetime
 import json
 import os
-import secrets
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 SCHEMA_VERSION = 1
-
-# PBKDF2 cost. Tuned to stay well under a second on a laptop while making
-# offline guessing expensive.
-PBKDF2_ITERATIONS = 600_000
-PBKDF2_DIGEST = "sha256"
-
-SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
-
 
 # ── Location ────────────────────────────────────────────────────────────────
 
@@ -167,29 +154,6 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events (ts);
 
-        -- Accounts and sessions. Single-user today, but the shape is the one a
-        -- real sign-in needs, so adding it later is not a migration of meaning.
-        CREATE TABLE IF NOT EXISTS accounts (
-            id            TEXT PRIMARY KEY,
-            email         TEXT NOT NULL UNIQUE,
-            display_name  TEXT,
-            password_hash TEXT NOT NULL,
-            password_salt TEXT NOT NULL,
-            iterations    INTEGER NOT NULL,
-            created_at    REAL NOT NULL,
-            last_login_at REAL,
-            disabled      INTEGER NOT NULL DEFAULT 0
-        );
-
-        -- Only the digest of a session token is stored.
-        CREATE TABLE IF NOT EXISTS auth_sessions (
-            token_hash  TEXT PRIMARY KEY,
-            account_id  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-            created_at  REAL NOT NULL,
-            expires_at  REAL NOT NULL,
-            last_seen_at REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sessions_account ON auth_sessions (account_id);
         """,
     ),
 ]
@@ -206,6 +170,24 @@ def env_var_for_secret(name: str) -> str:
     return f"ACSA_SECRET_{cleaned}"
 
 
+class _ScopedConnection(sqlite3.Connection):
+    """A connection that closes when its `with` block ends.
+
+    `with sqlite3.connect(...) as conn` only commits — it does **not** close the
+    connection. Every reader here uses that form for a scoped read, so each one
+    left an open handle until the garbage collector happened to reach it; Python
+    3.14 says so out loud ("unclosed database") dozens of times per test run.
+    Closing on exit is what the callers already mean, so say it once here rather
+    than add a `finally: conn.close()` to thirty call sites.
+    """
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 def connect() -> sqlite3.Connection:
     """Open the database with the pragmas this app relies on."""
     init_db()
@@ -213,7 +195,7 @@ def connect() -> sqlite3.Connection:
     # than inheriting a permissive default.
     previous = os.umask(0o077)
     try:
-        conn = sqlite3.connect(str(db_path()), timeout=10)
+        conn = sqlite3.connect(str(db_path()), timeout=10, factory=_ScopedConnection)
     finally:
         os.umask(previous)
     _restrict(db_path(), 0o600)
@@ -295,21 +277,23 @@ def delete_setting(key: str) -> None:
 
 
 def get_providers() -> dict[str, dict[str, Any]]:
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM providers").fetchall()
     providers: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        try:
-            models = json.loads(row["available_models"] or "[]")
-        except json.JSONDecodeError:
-            models = []
-        providers[row["id"]] = {
-            "baseUrl": row["base_url"] or "",
-            "selectedModel": row["selected_model"] or "",
-            "availableModels": models,
-            # Surfaced so the UI can show "key configured" without the key.
-            "hasApiKey": has_secret(secret_name_for_provider(row["id"]), conn=conn),
-        }
+    with connect() as conn:
+        for row in conn.execute("SELECT * FROM providers").fetchall():
+            try:
+                models = json.loads(row["available_models"] or "[]")
+            except json.JSONDecodeError:
+                models = []
+            providers[row["id"]] = {
+                "baseUrl": row["base_url"] or "",
+                "selectedModel": row["selected_model"] or "",
+                "availableModels": models,
+                # Surfaced so the UI can show "key configured" without the key.
+                # Read inside the block: the connection is scoped to it, and
+                # reading it afterwards only ever worked while the connection
+                # was leaking.
+                "hasApiKey": has_secret(secret_name_for_provider(row["id"]), conn=conn),
+            }
     return providers
 
 
@@ -456,7 +440,25 @@ def list_projects(limit: int = 10) -> list[dict[str, Any]]:
             " ORDER BY last_opened_at DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_flag_missing(dict(row)) for row in rows]
+
+
+def _flag_missing(project: dict[str, Any]) -> dict[str, Any]:
+    """Mark a remembered project whose folder is no longer on disk.
+
+    A project row outlives its folder: the folder gets deleted, moved or renamed
+    between sessions and the row stays. The switcher offers the three most recent,
+    so a handful of dead rows can hide every project that still exists — eight
+    deleted test projects sat above the two real ones, and "my recent projects
+    don't appear in the switcher" was literally true.
+
+    Flagged rather than deleted: a folder can come back (an unmounted volume, a
+    rename), and dropping a user's history is not this function's call. The UI
+    decides what to show; nothing is destroyed here.
+    """
+    path = str(project.get("path") or "")
+    project["missing"] = not path or not os.path.isdir(path)
+    return project
 
 
 def forget_project(path: str) -> None:
@@ -551,15 +553,54 @@ def clear_chat(project_path: str) -> None:
 # ── Usage ledger ────────────────────────────────────────────────────────────
 
 
+# ── Usage & cost ledger ─────────────────────────────────────────────────────
+
+# Approximate USD per 1M tokens: (input, output). Local models bill nothing, so
+# an unknown provider is priced at zero rather than guessed at.
+_PRICING: dict[str, tuple[float, float]] = {
+    "openai": (2.50, 10.00),
+    "anthropic": (3.00, 15.00),
+    "google": (1.25, 5.00),
+    "groq": (0.79, 0.79),
+    "deepseek": (0.27, 1.10),
+    "mistral": (0.20, 0.60),
+    "moonshot": (0.60, 0.60),
+    "xai": (2.00, 8.00),
+    "together": (0.88, 0.88),
+    "perplexity": (1.00, 1.00),
+    "openrouter": (1.00, 3.00),
+}
+
+
+def estimate_cost_usd(
+    provider: Optional[str], prompt_tokens: int, completion_tokens: int
+) -> float:
+    """Estimated USD for one call. Local and unknown providers cost 0."""
+    price = _PRICING.get((provider or "").lower())
+    if not price:
+        return 0.0
+    return (int(prompt_tokens or 0) / 1_000_000) * price[0] + (
+        int(completion_tokens or 0) / 1_000_000
+    ) * price[1]
+
+
 def record_usage(
     provider: str,
     model: str,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     latency_ms: float = 0.0,
-    cost_usd: float = 0.0,
+    cost_usd: Optional[float] = None,
     project_path: Optional[str] = None,
 ) -> None:
+    """Append one call. Cost is derived from the pricing table when not given.
+
+    Callers were passing `cost_usd=0` for every hosted provider, which made the
+    cost panel read `$0.00` while real money was being spent. Deriving it here
+    means a caller cannot forget.
+    """
+    if cost_usd is None:
+        cost_usd = estimate_cost_usd(provider, prompt_tokens, completion_tokens)
     with connect() as conn:
         conn.execute(
             "INSERT INTO usage_events"
@@ -578,7 +619,14 @@ def record_usage(
         )
 
 
-def usage_summary(project_path: Optional[str] = None, since_ts: float = 0.0) -> dict[str, Any]:
+def usage_summary(
+    project_path: Optional[str] = None, since_ts: float = 0.0, days: int = 14
+) -> dict[str, Any]:
+    """Totals, a per-model breakdown, a filled daily window and the latest rows.
+
+    One shape serves the Performance page directly, so the UI does no arithmetic
+    and there is no second aggregation to drift from this one.
+    """
     clauses = ["ts >= ?"]
     params: list[Any] = [float(since_ts)]
     if project_path:
@@ -590,171 +638,67 @@ def usage_summary(project_path: Optional[str] = None, since_ts: float = 0.0) -> 
             f"SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,"
             f" COALESCE(SUM(completion_tokens),0) AS completion_tokens,"
             f" COALESCE(SUM(cost_usd),0) AS cost_usd,"
-            f" COALESCE(AVG(latency_ms),0) AS avg_latency_ms"
+            f" COALESCE(SUM(latency_ms),0) AS total_latency_ms"
             f" FROM usage_events WHERE {where}",
             params,
         ).fetchone()
         by_model = conn.execute(
-            f"SELECT provider, model, COUNT(*) AS calls, COALESCE(SUM(cost_usd),0) AS cost_usd,"
-            f" COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tokens"
+            f"SELECT provider, model, COUNT(*) AS calls,"
+            f" COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,"
+            f" COALESCE(SUM(completion_tokens),0) AS completion_tokens,"
+            f" COALESCE(SUM(cost_usd),0) AS cost_usd,"
+            f" COALESCE(SUM(latency_ms),0) AS latency_ms"
             f" FROM usage_events WHERE {where} GROUP BY provider, model ORDER BY calls DESC",
             params,
         ).fetchall()
-    return {
-        "calls": totals["calls"],
-        "promptTokens": totals["prompt_tokens"],
-        "completionTokens": totals["completion_tokens"],
-        "costUsd": round(totals["cost_usd"], 6),
-        "avgLatencyMs": round(totals["avg_latency_ms"], 1),
-        "byModel": [dict(row) for row in by_model],
-    }
-
-
-# ── Accounts & sessions ─────────────────────────────────────────────────────
-
-
-def _hash_password(password: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS) -> str:
-    return hashlib.pbkdf2_hmac(PBKDF2_DIGEST, password.encode("utf-8"), salt, iterations).hex()
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _normalise_email(email: str) -> str:
-    return (email or "").strip().lower()
-
-
-def create_account(email: str, password: str, display_name: Optional[str] = None) -> dict[str, Any]:
-    normalised = _normalise_email(email)
-    if "@" not in normalised:
-        raise ValueError("a valid email address is required")
-    if len(password or "") < 8:
-        raise ValueError("password must be at least 8 characters")
-
-    account_id = f"acc_{secrets.token_hex(8)}"
-    salt = secrets.token_bytes(16)
-    now = time.time()
-    with connect() as conn:
-        existing = conn.execute(
-            "SELECT 1 FROM accounts WHERE email = ?", (normalised,)
-        ).fetchone()
-        if existing:
-            raise ValueError("an account with that email already exists")
-        conn.execute(
-            "INSERT INTO accounts"
-            " (id, email, display_name, password_hash, password_salt, iterations, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                account_id,
-                normalised,
-                display_name or normalised.split("@")[0],
-                _hash_password(password, salt),
-                salt.hex(),
-                PBKDF2_ITERATIONS,
-                now,
-            ),
-        )
-    return {"id": account_id, "email": normalised, "displayName": display_name or normalised.split("@")[0]}
-
-
-def verify_login(email: str, password: str) -> Optional[dict[str, Any]]:
-    normalised = _normalise_email(email)
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM accounts WHERE email = ?", (normalised,)
-        ).fetchone()
-    if not row or row["disabled"]:
-        # Spend the same work as a real verification so a missing account is not
-        # distinguishable by timing.
-        _hash_password(password or "", b"", PBKDF2_ITERATIONS)
-        return None
-    expected = row["password_hash"]
-    candidate = _hash_password(password or "", bytes.fromhex(row["password_salt"]), row["iterations"])
-    if not hmac.compare_digest(expected, candidate):
-        return None
-    with connect() as conn:
-        conn.execute("UPDATE accounts SET last_login_at = ? WHERE id = ?", (time.time(), row["id"]))
-    return {"id": row["id"], "email": row["email"], "displayName": row["display_name"]}
-
-
-def change_password(account_id: str, current_password: str, new_password: str) -> bool:
-    if len(new_password or "") < 8:
-        raise ValueError("password must be at least 8 characters")
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        if not row:
-            return False
-        candidate = _hash_password(
-            current_password or "", bytes.fromhex(row["password_salt"]), row["iterations"]
-        )
-        if not hmac.compare_digest(row["password_hash"], candidate):
-            return False
-        salt = secrets.token_bytes(16)
-        conn.execute(
-            "UPDATE accounts SET password_hash = ?, password_salt = ?, iterations = ? WHERE id = ?",
-            (_hash_password(new_password, salt), salt.hex(), PBKDF2_ITERATIONS, account_id),
-        )
-        conn.execute("DELETE FROM auth_sessions WHERE account_id = ?", (account_id,))
-    return True
-
-
-def create_session(account_id: str, ttl_seconds: int = SESSION_TTL_SECONDS) -> str:
-    """Issue a session token. Only its digest is stored; return the raw token once."""
-    token = secrets.token_urlsafe(32)
-    now = time.time()
-    with connect() as conn:
-        conn.execute(
-            "INSERT INTO auth_sessions (token_hash, account_id, created_at, expires_at, last_seen_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (_hash_token(token), account_id, now, now + ttl_seconds, now),
-        )
-    return token
-
-
-def validate_session(token: str) -> Optional[dict[str, Any]]:
-    if not token:
-        return None
-    digest = _hash_token(token)
-    now = time.time()
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT s.account_id, s.expires_at, a.email, a.display_name, a.disabled"
-            " FROM auth_sessions s JOIN accounts a ON a.id = s.account_id"
-            " WHERE s.token_hash = ?",
-            (digest,),
-        ).fetchone()
-        if not row:
-            return None
-        if row["expires_at"] < now or row["disabled"]:
-            conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (digest,))
-            return None
-        conn.execute(
-            "UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?", (now, digest)
-        )
-    return {
-        "accountId": row["account_id"],
-        "email": row["email"],
-        "displayName": row["display_name"],
-    }
-
-
-def revoke_session(token: str) -> None:
-    with connect() as conn:
-        conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (_hash_token(token),))
-
-
-def revoke_all_sessions(account_id: str) -> int:
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM auth_sessions WHERE account_id = ?", (account_id,))
-    return cursor.rowcount
-
-
-def list_accounts() -> list[dict[str, Any]]:
-    """Account directory without credential material."""
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT id, email, display_name, created_at, last_login_at, disabled"
-            " FROM accounts ORDER BY created_at ASC"
+        daily_rows = conn.execute(
+            f"SELECT ts, prompt_tokens, completion_tokens, cost_usd"
+            f" FROM usage_events WHERE {where}",
+            params,
         ).fetchall()
-    return [dict(row) for row in rows]
+        recent = conn.execute(
+            f"SELECT ts, provider, model, prompt_tokens, completion_tokens, latency_ms, cost_usd,"
+            f" project_path FROM usage_events WHERE {where} ORDER BY ts DESC LIMIT 20",
+            params,
+        ).fetchall()
+
+    # A complete window, so one busy day is a bar among quiet ones instead of
+    # the whole chart.
+    today = datetime.date.today()
+    buckets: dict[str, dict[str, Any]] = {
+        (today - datetime.timedelta(days=offset)).isoformat(): {
+            "date": (today - datetime.timedelta(days=offset)).isoformat(),
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0.0,
+        }
+        for offset in range(max(1, days) - 1, -1, -1)
+    }
+    for row in daily_rows:
+        key = datetime.datetime.fromtimestamp(row["ts"]).date().isoformat()
+        bucket = buckets.get(key)
+        if bucket is None:
+            continue
+        bucket["calls"] += 1
+        bucket["prompt_tokens"] += int(row["prompt_tokens"] or 0)
+        bucket["completion_tokens"] += int(row["completion_tokens"] or 0)
+        bucket["cost_usd"] = round(bucket["cost_usd"] + float(row["cost_usd"] or 0.0), 6)
+
+    return {
+        "total_calls": totals["calls"],
+        "prompt_tokens": totals["prompt_tokens"],
+        "completion_tokens": totals["completion_tokens"],
+        "total_tokens": totals["prompt_tokens"] + totals["completion_tokens"],
+        "cost_usd": round(totals["cost_usd"], 6),
+        "total_latency_ms": round(totals["total_latency_ms"], 1),
+        "by_model": [
+            {**dict(row), "cost_usd": round(row["cost_usd"], 6), "latency_ms": round(row["latency_ms"], 1)}
+            for row in by_model
+        ],
+        "daily": list(buckets.values()),
+        "recent": [
+            {**dict(row), "cost_usd": round(row["cost_usd"], 6)}
+            for row in recent
+        ],
+    }

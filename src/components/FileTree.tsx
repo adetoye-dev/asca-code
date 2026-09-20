@@ -119,6 +119,14 @@ interface FileTreeProps {
   touchedPaths?: string[];
 }
 
+/**
+ * A stable empty list. `touchedPaths = []` in the parameter list would hand back a
+ * new array every render, and a new array is enough to make a memoised child below
+ * fail its comparison forever — the trap that silently cost the chat transcript
+ * its memo.
+ */
+const NO_TOUCHED_PATHS: string[] = [];
+
 export function FileTree({
   files,
   activeFilePath,
@@ -129,7 +137,7 @@ export function FileTree({
   onOpenFolder,
   projectName,
   projectPath,
-  touchedPaths = [],
+  touchedPaths = NO_TOUCHED_PATHS,
 }: FileTreeProps) {
   // Default: ALL directories COLLAPSED (Set is empty)
   // Restores user-expanded directories from localStorage if available
@@ -289,8 +297,11 @@ export function FileTree({
     });
 
     return (
-      <div key={node.path} className="select-none text-[13px] font-sans">
+      <div key={node.path} className="select-none text-body font-sans">
         <div
+          role="treeitem"
+          aria-selected={isActive}
+          aria-expanded={isDir ? expandedDirs.has(node.path) : undefined}
           onClick={() => {
             if (isDir) {
               toggleDir(node.path);
@@ -332,7 +343,7 @@ export function FileTree({
             <FileIcon fileName={node.name} isDir={isDir} isOpen={isExpanded} className="w-4 h-4 shrink-0" />
             <span className="truncate">{node.name}</span>
             {isTouched && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 ml-1" title="Touched by Gauntlet" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 ml-1" title="Changed by the agent in this session" />
             )}
           </div>
 
@@ -373,7 +384,7 @@ export function FileTree({
             {node.children.length === 0 ? (
               <div
                 style={{ paddingLeft: `${(depth + 1) * 12 + 18}px` }}
-                className="py-0.5 text-[11px] text-zinc-500 italic"
+                className="py-0.5 text-2xs text-zinc-500 italic"
               >
                 (empty folder)
               </div>
@@ -390,7 +401,7 @@ export function FileTree({
     <div className="flex flex-col h-full border-r border-zinc-800/80 w-full shrink-0 select-none font-sans">
       {/* Explorer Header */}
       <div className="flex flex-col border-b border-zinc-800/80 bg-zinc-950/40">
-        <div className="flex items-center justify-between px-3 py-2 text-zinc-300 text-[11px] font-semibold uppercase tracking-wider">
+        <div className="flex items-center justify-between px-3 py-2 text-zinc-300 text-2xs font-semibold uppercase tracking-wider">
           <span className="truncate" title={projectPath && projectPath !== "." ? projectPath : projectName}>
             {projectName || "EXPLORER"}
           </span>
@@ -439,7 +450,7 @@ export function FileTree({
 
       {/* ── Project-Scoped File / Folder Creation Panel ──────────────────────── */}
       {newEntryModal && (
-        <div className="border-b border-zinc-700/80 bg-workbench p-3 shadow-lg text-[13px] animate-in fade-in slide-in-from-top-2 duration-150 shrink-0 font-sans">
+        <div className="border-b border-zinc-700/80 bg-workbench p-3 shadow-lg text-body animate-in fade-in slide-in-from-top-2 duration-150 shrink-0 font-sans">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5 font-semibold text-zinc-100 text-xs">
               {newEntryModal.isDir ? (
@@ -462,15 +473,15 @@ export function FileTree({
           <form onSubmit={handleCreateSubmit} className="space-y-2.5">
             {/* Target Location / Destination Folder Dropdown */}
             <div>
-              <label className="text-xs text-zinc-300 font-medium block mb-1">
+              <label htmlFor="filetree-destination-folder-1" className="text-xs text-zinc-300 font-medium block mb-1">
                 Destination Folder:
               </label>
-              <select
+              <select id="filetree-destination-folder-1"
                 value={newEntryModal.parentPath}
                 onChange={(e) =>
                   setNewEntryModal((prev) => (prev ? { ...prev, parentPath: e.target.value } : null))
                 }
-                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 focus:outline-none focus:border-zinc-500 font-sans cursor-pointer transition-colors"
+                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-body text-zinc-100 focus:outline-none focus:border-zinc-500 font-sans cursor-pointer transition-colors"
               >
                 {folderOptions.map((opt) => (
                   <option key={opt.path || "root"} value={opt.path}>
@@ -482,10 +493,12 @@ export function FileTree({
 
             {/* Name / Subpath Input */}
             <div>
-              <label className="text-xs text-zinc-300 font-medium block mb-1">
+              <label htmlFor="filetree-field-2" className="text-xs text-zinc-300 font-medium block mb-1">
                 {newEntryModal.isDir ? "Folder Name (or subpath):" : "File Name (or subpath):"}
               </label>
-              <input
+              <input id="filetree-field-2"
+                // The user just asked for this input; focusing it is the point.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
                 type="text"
                 placeholder={
@@ -500,13 +513,13 @@ export function FileTree({
                     setNewEntryModal(null);
                   }
                 }}
-                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-sans transition-colors"
+                className="w-full bg-workbench border border-zinc-700 hover:border-zinc-500 rounded-md px-2.5 py-1.5 text-body text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 font-sans transition-colors"
               />
             </div>
 
             {/* Live Destination Path Preview */}
             {newEntryName.trim() && (
-              <div className="text-[10px] text-zinc-400 font-mono bg-black/40 px-2 py-1 rounded border border-white/5 truncate">
+              <div className="text-3xs text-zinc-400 font-mono bg-black/40 px-2 py-1 rounded border border-white/5 truncate">
                 <span className="text-zinc-500">Will create: </span>
                 <span className="text-zinc-200">
                   {getPreviewPath(newEntryModal.parentPath, newEntryName.trim())}
@@ -519,14 +532,14 @@ export function FileTree({
               <button
                 type="button"
                 onClick={() => setNewEntryModal(null)}
-                className="px-2.5 py-1 text-[11px] rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
+                className="px-2.5 py-1 text-2xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!newEntryName.trim()}
-                className="px-3 py-1 text-[11px] rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium shadow-sm transition-all"
+                className="px-3 py-1 text-2xs rounded bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium shadow-sm transition-all"
               >
                 Create {newEntryModal.isDir ? "Folder" : "File"}
               </button>
@@ -556,7 +569,7 @@ export function FileTree({
                 setNewEntryModal({ parentPath: "", isDir: false });
                 setNewEntryName("main.py");
               }}
-              className="mt-1 text-zinc-400 hover:text-white underline block mx-auto text-[11px]"
+              className="mt-1 text-zinc-400 hover:text-white underline block mx-auto text-2xs"
             >
               + Create main.py
             </button>
@@ -569,11 +582,12 @@ export function FileTree({
       {/* Right-click Context Menu */}
       {contextMenu && contextMenuPos && (
         <div
+          role="presentation"
           style={{ top: contextMenuPos.y, left: contextMenuPos.x }}
-          className="fixed z-50 min-w-[170px] bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-2xl p-1 text-xs text-zinc-200 animate-in fade-in zoom-in-95 duration-75 select-none font-sans"
+          className="fixed z-popover min-w-[170px] bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-2xl p-1 text-xs text-zinc-200 animate-in fade-in zoom-in-95 duration-75 select-none font-sans"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-2.5 py-1 text-[11px] text-zinc-400 font-mono truncate border-b border-white/5 mb-1 max-w-[200px]">
+          <div className="px-2.5 py-1 text-2xs text-zinc-400 font-mono truncate border-b border-white/5 mb-1 max-w-[200px]">
             {contextMenu.node.name}
           </div>
           {contextMenu.node.is_dir && (

@@ -1,20 +1,21 @@
 /**
- * AiAssistantChat.tsx — Full Conversational AI Chat & Agent Gauntlet
+ * AiAssistantChat.tsx — the chat panel and the agent surface.
  *
- * Provides two primary workflows:
- * 1. 💬 Chat Mode (Default): Conversational AI assistant with real token streaming,
- *    syntax-highlighted code blocks, 1-click copy, and workspace awareness (git context,
- *    recent changes).
- * 2. ⚡ Agent Gauntlet Mode: Autonomous multi-round code generation & verification gauntlet
- *    (python3 core-engine/manager.py) with AST compilation and syntax gates.
+ * Two workflows share one composer:
+ * 1. 💬 Ask (default) — conversational streaming with code blocks, copy, and
+ *    workspace context (git state, recent changes).
+ * 2. ⚡ Agent — an autonomous task run, executed by the Codex runtime and
+ *    streamed into the transcript step by step.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { Icon } from "../ui/Icon";
-import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users } from "lucide-react";
-import type { PipelineStatus, PipelineOutputLine } from "../TelemetryScorecard";
+import { Trash2, Copy, GitCommit, Maximize2, Minimize2, RefreshCw, Square, User, Check, ChevronDown, ChevronRight, Code, Code2, MessageSquare, ListTodo, X, Bot, CheckCircle2, Plus, Folder, GitBranch, ArrowUp, Image as ImageIcon, Database, AlertCircle, AtSign, Sparkles, Shield, Terminal, Search, Wrench, Users, HelpCircle } from "lucide-react";
+import type { PipelineStatus, PipelineOutputLine } from "../../types/telemetry";
+import { isFollowingBottom } from "../../services/scrollAnchor";
 import {
   getConfiguredModelsList,
+  ensureProvidersHydrated,
   ConfiguredModelItem,
   loadAllProviders,
   getAutoSelectedLocalWorker,
@@ -23,16 +24,22 @@ import {
   resolveInitialSelectedModel,
   saveActiveSelectedModel,
   getActiveSelectedModel,
+  syncOllamaModels,
 } from "../../services/aiModelManager";
 import {
   ProviderLogo,
 } from "../ui/BrandLogos";
-import { openAiManagementDashboard, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
+import {
+  openAiManagementDashboard,
+  checkOllamaStatus,
+  EVENT_START_CODING_WITH_OLLAMA,
+} from "../../services/ollamaSetup";
 import {
   streamChatCompletion,
   type ChatMessage,
   type AgentStep,
 } from "../../services/aiChatService";
+import { chatDraft, useChatDraft } from "../../services/chatDraft";
 import {
   loadChatHistory,
   saveChatHistory,
@@ -40,11 +47,11 @@ import {
   subscribeChatHistory,
 } from "../../services/aiChatPersistence";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import type { ProjectIndexState } from "../../hooks/usePipeline";
+import type { AgentQuestion, PendingFileChange, ProjectIndexState } from "../../hooks/usePipeline";
+import { approvalSummary, countDiffLines } from "../../hooks/usePipeline";
+import type { ApprovalDecision } from "../../services/agentApproval";
 
 interface AiAssistantChatProps {
-  prompt: string;
-  setPrompt: (p: string) => void;
   status: PipelineStatus;
   activityLog: PipelineOutputLine[];
   onRunPipeline: (
@@ -64,19 +71,47 @@ interface AiAssistantChatProps {
   isWide?: boolean;
   selectedContext?: { path: string; code: string } | null;
   failureDetail?: string;
-  orchestrationResult?: any;
+  /** A finished run that left every file's path and size untouched. */
+  noFileChanges?: boolean;
+  /** The runtime's own name for a state where it is blocked on the human. */
+  waitingForUser?: string;
+  /** A request the agent is blocked on, waiting for the user's answer. */
+  pendingApproval?: {
+    id: unknown;
+    method: string;
+    command: string;
+    reason: string;
+    changes?: PendingFileChange[];
+  } | null;
+  respondToApproval?: (decision: ApprovalDecision) => Promise<void>;
+  /** A `request_user_input` question, which needs answers rather than a decision. */
+  pendingQuestion?: { id: unknown; questions: AgentQuestion[] } | null;
+  respondToQuestion?: (answers: Record<string, string[]>) => Promise<void>;
+  /** What the last turn changed, from the runtime's own item diffs. */
+  turnChanges?: PendingFileChange[];
+  /** Open a file's two sides in the diff viewer. */
+  onReviewFile?: (path: string) => Promise<void>;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
   streamingAnswer?: string;
   streamingThought?: string;
   agentSteps?: AgentStep[];
-  pendingPermission?: { id: string; command: string; description: string } | null;
-  respondToPermission?: (id: string, decision: "approved" | "rejected") => Promise<void>;
   activeAiSettings?: { provider: string; model: string } | null;
 }
 
 export type WorkflowMode = "agent" | "chat" | "plan";
+
+/**
+ * Stable empties for the optional list props.
+ *
+ * `agentSteps = []` in a parameter list runs on every render and hands back a new
+ * array each time, which is enough to make any memoised child below fail its
+ * comparison forever. These are the same value every render, so the comparison
+ * holds.
+ */
+const NO_STEPS: AgentStep[] = [];
+const NO_CHANGES: PendingFileChange[] = [];
 
 export function cleanThoughtText(raw?: string): string {
   if (!raw) return "";
@@ -88,14 +123,379 @@ export function cleanThoughtText(raw?: string): string {
     .replace(/```(?:json)?\s*\{\s*"(?:tool|name)"[\s\S]*?\}\s*```/gi, "")
     .replace(/Action:\s*[A-Za-z0-9_]+\s*\nAction Input:\s*\{[\s\S]*?\}/g, "")
     .replace(/(?:^|\n)(?:[#*`\s]*)(?:(?:File|path|Target)?:\s*)?\[?[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9_]+\]?[:*#`\s]*\n<{5,9}\s*SEARCH[\s\S]*?>{5,9}\s*REPLACE/g, "")
-    .replace(/(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$|\Z))/g, "")
+    .replace(/(?:^|\n)diff\s+--git[\s\S]*?(?=\n(?:[A-Z#*`]|diff\s+--git|$))/g, "")
     .replace(/<\/(?:tool_call|invoke|function_call|call|action|parameter|arg|argument|think)>/gi, "")
     .trim();
 }
 
+interface ChatTranscriptProps {
+  chatMessages: ChatMessage[];
+  isWide: boolean;
+  status: PipelineStatus;
+  streamingAnswer: string;
+  streamingThought: string;
+  agentSteps: AgentStep[];
+  agentElapsedSeconds: number;
+  currentAgentPhase: string;
+  blockedOn: string;
+  turnChanges: PendingFileChange[];
+  pendingQuestion: AiAssistantChatProps["pendingQuestion"];
+  /** The model that produced the turn, named on the message it produced. */
+  selectedModelItem: ConfiguredModelItem | null;
+  onReviewFile?: (path: string) => Promise<void>;
+  onCancelPipeline: () => void;
+  bottomRef: React.RefObject<HTMLDivElement>;
+}
+
+/**
+ * The conversation, memoised.
+ *
+ * The composer's text is state in the component above, so every character typed
+ * re-rendered this — all of it: every message, its markdown, its code blocks,
+ * its thinking accordion — because a keystroke and the transcript happened to
+ * live in the same component. The transcript's inputs are unchanged by typing, so
+ * with this boundary a keystroke costs the composer and nothing else.
+ *
+ * Props are all primitives, stable callbacks, or state that only moves when the
+ * conversation does (`chatMessages` is replaced on a new message, not mutated),
+ * which is what lets the comparison hold.
+ */
+const ChatTranscript = memo(function ChatTranscript({
+  chatMessages,
+  isWide,
+  status,
+  streamingAnswer,
+  streamingThought,
+  agentSteps,
+  agentElapsedSeconds,
+  currentAgentPhase,
+  blockedOn,
+  turnChanges,
+  pendingQuestion,
+  selectedModelItem,
+  onReviewFile,
+  onCancelPipeline,
+  bottomRef,
+}: ChatTranscriptProps) {
+  return (
+    <>
+    {(chatMessages.length > 0 || status === "running") && (
+      <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 py-2" : "space-y-4"}>
+        {chatMessages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex flex-col ${
+              msg.role === "user" ? "items-end" : "items-start"
+            }`}
+          >
+            {/* Role Header with Model, Provider, Timestamp */}
+            <div className={`flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                {msg.role === "user" ? (
+                  <>
+                    <span className="font-semibold text-zinc-300">You</span>
+                    <Icon icon={User} className="w-3 h-3 text-zinc-400 shrink-0" />
+                    {msg.timestamp && (
+                      <span className="text-4xs font-mono text-zinc-500 ml-1">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {msg.provider ? (
+                      <ProviderLogo providerId={msg.provider} className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    )}
+                    <span className="font-semibold text-purple-300 font-mono text-2xs truncate">
+                      {msg.model || "AI Assistant"}
+                    </span>
+                    {msg.timestamp && (
+                      <span className="text-4xs font-mono text-zinc-500 ml-1">
+                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Message Bubble */}
+            <div
+              className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
+                msg.role === "user"
+                  ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 rounded-tr-sm shadow-sm"
+                  : msg.error
+                  ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
+                  : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
+              }`}
+            >
+              {/* User Attached Images */}
+              {msg.images && msg.images.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {msg.images.map((img, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="cursor-pointer rounded-lg border border-zinc-700 hover:opacity-90 transition-opacity"
+                      title="Open attachment in a new window"
+                      onClick={() => window.open(img, "_blank")}
+                    >
+                      <img
+                        src={img}
+                        alt="Attachment"
+                        className="max-h-48 max-w-xs rounded-lg object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Collapsible Model Thinking & Agent Steps (auto-collapsed when summary exists) */}
+              {((msg.steps && msg.steps.length > 0) || Boolean(msg.thinking)) && (
+                <ThinkingAccordion
+                  steps={msg.steps}
+                  thinking={msg.thinking}
+                  isLive={false}
+                  hasSummary={Boolean(msg.content && msg.content.trim())}
+                />
+              )}
+
+              <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
+              {msg.changes && msg.changes.length > 0 && (
+                <ChangeLogCard changes={msg.changes} onReview={onReviewFile} />
+              )}
+
+              {/* Actionable Error Recovery Card */}
+              {msg.error && (
+                <div className="mt-3 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700/60 text-xs space-y-2.5 shadow-xl">
+                  {msg.errorType === "timeout" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-amber-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Generation Timed Out</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        The local model <strong>{msg.model || "qwen2.5-coder"}</strong> took longer than expected to process the request. Local 7B models can be slow under heavy context. Consider switching to a faster local model (e.g. <code>qwen2.5-coder:1.5b</code> or <code>3b</code>) or shortening the prompt.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Switch Model / Provider
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "offline" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-red-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>Provider Unreachable or Offline</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        Unable to connect to <strong>{msg.provider || selectedModelItem?.providerId || "the AI provider"}</strong>. If you are using local models, ensure the Ollama background daemon is running.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Configure Provider / Model
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent("acsa:open-ollama-wizard"));
+                          }}
+                          className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
+                        >
+                          Start Ollama Wizard
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "api" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-red-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
+                        <span>Provider API / Model Error</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                          `The AI provider returned an error while processing your request with ${msg.model || "the selected model"}.`}
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-2xs font-medium transition-colors cursor-pointer"
+                        >
+                          Configure Model / API Key
+                        </button>
+                      </div>
+                    </>
+                  ) : msg.errorType === "syntax" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Stopped Before Finishing</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        The agent hit a syntax or lint problem it could not resolve and stopped. Open the <strong>Output</strong> tab to see exactly which check complained, then reply with a correction.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                        <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Task Execution Notice</span>
+                      </div>
+                      <p className="text-zinc-400 text-2xs leading-relaxed">
+                        {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
+                          "The task encountered an issue during execution. Check the output tab or console for details."}
+                      </p>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openAiManagementDashboard()}
+                          className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-2xs transition-colors border border-zinc-700 cursor-pointer"
+                        >
+                          Check AI Settings
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            {/* Bottom Message Actions (Copy button positioned under message) */}
+            {msg.content && (
+              <div className={`mt-1 flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} px-1`}>
+                <CopyMessageButton text={msg.content} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* Active Running Agent Assistant Turn */}
+        {status === "running" && (
+          <div className="flex flex-col items-start">
+            <div className="flex items-center gap-1.5 mb-1 px-1 text-3xs text-zinc-400 justify-start">
+              {selectedModelItem?.providerId ? (
+                <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              )}
+              <span className="font-semibold text-purple-300 font-mono text-2xs">
+                {selectedModelItem?.model || "ACSA Agent"}
+              </span>
+              {/* The most prominent label of the three, and it said
+                  "Working" through a six-minute wait for an answer. */}
+              <span
+                className={`flex items-center gap-1 text-3xs font-mono ml-2 ${
+                  blockedOn ? "text-amber-300" : "text-purple-400"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    blockedOn ? "bg-amber-400 animate-pulse" : "bg-purple-400 animate-pulse"
+                  }`}
+                />
+                {blockedOn ? `Waiting for ${blockedOn}` : `Working (${agentElapsedSeconds}s)`}
+              </span>
+            </div>
+
+            <div className="max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed bg-zinc-900/90 border border-purple-500/30 text-zinc-100 rounded-tl-sm w-full shadow-lg">
+              {/* Live Thinking Accordion (auto-collapses when summary arrives) */}
+              <ThinkingAccordion
+                steps={agentSteps}
+                thinking={streamingThought}
+                isLive={true}
+                hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
+                elapsedSeconds={agentElapsedSeconds}
+                blockedOn={blockedOn}
+              />
+
+              {/* Live Streaming Answer */}
+              {streamingAnswer ? (
+                <div className="mt-2.5 pt-2.5 border-t border-zinc-800/80">
+                  <FormattedMarkdown content={streamingAnswer} isStreaming={true} />
+                </div>
+              ) : blockedOn ? (
+                /* Not thinking — stopped. A spinner here is a lie. */
+                <div className="flex items-center gap-2 text-amber-300 text-xs py-1">
+                  <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    {pendingQuestion
+                      ? "The agent asked you a question — answer it below to continue"
+                      : "The agent needs your approval before it continues"}
+                  </span>
+                </div>
+              ) : (
+                !streamingThought && (!agentSteps || agentSteps.length === 0) ? (
+                  <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
+                    <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
+                    <span>Thinking through solution...</span>
+                  </div>
+                ) : null
+              )}
+
+              {/* Stop Generating Button & Active Step */}
+              <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
+                <span
+                  className={`text-2xs truncate max-w-[70%] ${
+                    blockedOn ? "text-amber-300 font-medium" : "text-zinc-400"
+                  }`}
+                >
+                  {blockedOn
+                    ? `Waiting for ${blockedOn}`
+                    : agentSteps.length > 0
+                    ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
+                    : currentAgentPhase || "Initializing..."}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCancelPipeline}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-2xs font-medium transition-colors border border-zinc-700/80 cursor-pointer shadow-sm shrink-0"
+                >
+                  <Icon icon={Square} className="w-2.5 h-2.5 fill-red-400 text-red-400" />
+                  <span>Stop Generating</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Message Actions for Running Turn */}
+            {streamingAnswer && (
+              <div className="mt-1 flex items-center justify-start px-1">
+                <CopyMessageButton text={streamingAnswer} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )}
+
+  {/* Live copy, while the turn is still going. Once it ends the same card
+      is on the message, so this one stands down rather than doubling up. */}
+  {status === "running" && turnChanges.length > 0 && (
+    <ChangeLogCard
+      changes={turnChanges.map((change) => ({
+        path: change.path,
+        ...countDiffLines(change.diff),
+      }))}
+      onReview={onReviewFile}
+    />
+  )}
+
+  <div ref={bottomRef} />
+    </>
+  );
+});
+
 export function AiAssistantChat({
-  prompt,
-  setPrompt,
   status,
   activityLog,
   onRunPipeline,
@@ -107,15 +507,20 @@ export function AiAssistantChat({
   isWide = false,
   selectedContext = null,
   failureDetail = "",
-  orchestrationResult = null,
+  noFileChanges = false,
+  waitingForUser = "",
+  pendingApproval = null,
+  respondToApproval,
+  pendingQuestion = null,
+  respondToQuestion,
+  turnChanges = NO_CHANGES,
+  onReviewFile,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
   streamingAnswer = "",
   streamingThought = "",
-  agentSteps = [],
-  pendingPermission = null,
-  respondToPermission,
+  agentSteps = NO_STEPS,
   activeAiSettings = null,
 }: AiAssistantChatProps) {
 
@@ -123,6 +528,24 @@ export function AiAssistantChat({
   const [selectedModelItem, setSelectedModelItem] = useState<ConfiguredModelItem | null>(() =>
     resolveInitialSelectedModel()
   );
+
+  // The registry hydrates asynchronously (from the database, over IPC), so reading
+  // it in a mount-time initialiser can legitimately find nothing — and then chat
+  // refuses to send with "no model is installed or selected" for the whole session,
+  // even though the dashboard shows a connected provider. Re-resolve once hydration
+  // lands; an explicit pick by the user is never overwritten.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await ensureProvidersHydrated();
+      if (cancelled) return;
+      setConfiguredModels(getConfiguredModelsList());
+      setSelectedModelItem((current) => current ?? resolveInitialSelectedModel());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSelectModel = (item: ConfiguredModelItem | null) => {
     setSelectedModelItem(item);
@@ -135,6 +558,14 @@ export function AiAssistantChat({
     selectedModelItem?.providerId || activeAiSettings?.provider || "ollama";
   const effectiveModel =
     selectedModelItem?.model || activeAiSettings?.model || localWorker;
+  // What the model pill says on hover. The old text announced a "Cloud Brain" and
+  // a "Local Worker" regardless of what was selected; now that a local model can be
+  // the agent itself, say where the chosen one actually runs.
+  const modelTitle = selectedModelItem
+    ? selectedModelItem.category === "local"
+      ? `${selectedModelItem.model} — runs on this machine. Free, and nothing leaves it, but a local model is far less capable than a hosted one.`
+      : `${selectedModelItem.model} — hosted by ${selectedModelItem.providerName}`
+    : `Running on ${effectiveProvider}:${effectiveModel}`;
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
@@ -142,6 +573,9 @@ export function AiAssistantChat({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
     loadChatHistory(projectRoot)
   );
+  // Subscribed, not passed down: see services/chatDraft.ts. This is what keeps a
+  // keystroke from re-rendering the workbench above the chat.
+  const draft = useChatDraft();
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
@@ -195,11 +629,18 @@ export function AiAssistantChat({
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const heroMenuRef = useRef<HTMLDivElement>(null);
+  /** The row for the model in use, so the list can open on it. */
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const heroModeMenuRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const heroContextMenuRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  /** The transcript's scroll container, so appends can tell whether to follow. */
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  /** The composer, so a card that needs an answer can be brought into view. */
+  const composerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -244,11 +685,7 @@ export function AiAssistantChat({
         detailLower.includes("connection refused")
       ) {
         errorType = "offline";
-      } else if (
-        detailLower.includes("timed out") ||
-        detailLower.includes("timeout") ||
-        orchestrationResult?.outcome === "timeout"
-      ) {
+      } else if (detailLower.includes("timed out") || detailLower.includes("timeout")) {
         errorType = "timeout";
       } else if (
         detailLower.includes("api error") ||
@@ -266,26 +703,33 @@ export function AiAssistantChat({
         detailLower.includes("empty response")
       ) {
         errorType = "api";
-      } else if (
-        detailLower.includes("syntax") ||
-        detailLower.includes("lint") ||
-        detailLower.includes("paradox") ||
-        orchestrationResult?.outcome === "paradox_detected"
-      ) {
+      } else if (detailLower.includes("syntax") || detailLower.includes("lint")) {
         errorType = "syntax";
       }
 
-      const hasEditedFiles = Boolean(
-        (orchestrationResult?.edited_files && orchestrationResult.edited_files.length > 0) ||
-        (orchestrationResult?.final_patches && orchestrationResult.final_patches.length > 0)
-      );
-
+      // The agent's own final message is the answer. There is no separate
+      // "verification result" object any more — that data source is gone.
+      //
+      // A run that changed no file says so. The wording describes what was
+      // measured (paths and sizes) rather than claiming "nothing happened" — a
+      // run that answered a question legitimately changes nothing, and a design
+      // that was never written is otherwise indistinguishable from one that was.
+      const noChangesNote =
+        "\n\n> No files were added, removed or resized in this run.";
+      // The runtime's own state, not a guess from the text: it says
+      // `waitingOnUserInput` when a skill has asked a question and the turn is
+      // holding for an answer. Without this the reply ends the turn looking like
+      // a finished task, and the next thing the user sends starts a new one.
+      const waitingNote =
+        waitingForUser === "waitingOnUserInput"
+          ? "\n\n> **Waiting on you.** The agent asked something and stopped. Answer in the box below to carry on — your reply continues the same thread."
+          : waitingForUser === "waitingOnApproval"
+          ? "\n\n> **Waiting on you.** The agent needs an approval before it continues."
+          : "";
       const finalContent = isSuccess
-        ? (orchestrationResult?.answer || streamingAnswer)
-          ? (orchestrationResult?.answer || streamingAnswer)
-          : hasEditedFiles
-          ? `### Verified Workspace Update\n\nTask successfully verified and applied in ${orchestrationResult.total_rounds ?? 1} round(s) (${Math.round(orchestrationResult.elapsed_ms ?? 0)}ms).`
-          : "Task completed. No file modifications were made."
+        ? (streamingAnswer || "Task completed.") +
+          (noFileChanges ? noChangesNote : "") +
+          waitingNote
         : failureDetail
         ? `⚠️ **Task Failed:** ${failureDetail}`
         : "The task needs attention. Review Problems or Output for details.";
@@ -305,6 +749,15 @@ export function AiAssistantChat({
         thinking: cleanThoughtText(streamingThought) || undefined,
         error: !isSuccess,
         errorType: !isSuccess ? errorType : undefined,
+        // Recorded on the message, not only in live state, so the log scrolls
+        // back with the transcript instead of vanishing on the next turn.
+        changes:
+          turnChanges.length > 0
+            ? turnChanges.map((change) => ({
+                path: change.path,
+                ...countDiffLines(change.diff),
+              }))
+            : undefined,
       };
       setChatMessages((prev) => {
         const next = [...prev, agentMsg];
@@ -313,7 +766,96 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, orchestrationResult, failureDetail, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, noFileChanges, waitingForUser, turnChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+
+  /**
+   * Ask Ollama what is actually installed, and believe it.
+   *
+   * Models are deleted outside the app, and the registry only ever grew, so a
+   * deleted model stayed in this picker forever. The daemon is the source of
+   * truth; refresh whenever the list is about to be looked at. `syncOllamaModels`
+   * also clears a saved selection that names a model that is gone, because the
+   * agent resolves its model from that.
+   */
+  /**
+   * What the run is blocked on, in words, or "" when it is not blocked.
+   *
+   * A blocked run used to look exactly like a busy one — the spinner and the
+   * "Step N" line kept going for minutes while the turn was really waiting on a
+   * person. Watched live: a run sat for roughly six minutes and the only way to
+   * learn why was to read the accessibility tree.
+   */
+  const blockedOn = pendingQuestion
+    ? "your answer"
+    : pendingApproval
+    ? "your approval"
+    : "";
+
+  // Answers being collected for a `request_user_input` question, keyed by
+  // question id. The runtime takes every answer in one response, so option
+  // clicks accumulate and the response goes out once each question has one —
+  // which for the common single-question case means the first click sends.
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    // A new question starts from a clean slate; carrying answers across would
+    // answer the wrong question.
+    setQuestionAnswers({});
+  }, [pendingQuestion?.id]);
+
+  useEffect(() => {
+    if (!blockedOn) return;
+    // Bring it into view. On a long transcript the card is both the only thing
+    // that needs attention and the easiest thing to miss, and until this existed
+    // nothing moved or changed when the turn stopped to ask.
+    composerRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [blockedOn]);
+
+  const answerQuestion = useCallback(
+    (questionId: string, values: string[]) => {
+      const next = { ...questionAnswers, [questionId]: values };
+      setQuestionAnswers(next);
+
+      const questions = pendingQuestion?.questions ?? [];
+      const complete =
+        questions.length > 0 &&
+        questions.every((q) => (next[q.id] ?? []).some((value) => value.trim() !== ""));
+      if (complete) {
+        void respondToQuestion?.(next);
+        setQuestionAnswers({});
+      }
+    },
+    [questionAnswers, pendingQuestion, respondToQuestion],
+  );
+
+  const refreshLocalModels = useCallback(async () => {
+    try {
+      const status = await checkOllamaStatus();
+      if (!status.running) return;
+      syncOllamaModels(status.models);
+      setConfiguredModels(getConfiguredModelsList());
+    } catch {
+      /* Not installed, or not running: leave the registry as it is. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLocalModels();
+  }, [refreshLocalModels]);
+
+  useEffect(() => {
+    if (isModelMenuOpen) void refreshLocalModels();
+  }, [isModelMenuOpen, refreshLocalModels]);
+
+  // The list is taller than the panel when a window is short, so it used to open
+  // showing rows below the model actually in use. Start on the selected row.
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    const timer = window.setTimeout(() => {
+      selectedRowRef.current?.scrollIntoView({ block: "nearest" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isModelMenuOpen]);
 
   // Sync available models and listen for global updates
   useEffect(() => {
@@ -416,6 +958,7 @@ export function AiAssistantChat({
     const handleClickOutside = (e: MouseEvent) => {
       if (
         (!menuRef.current || !menuRef.current.contains(e.target as Node)) &&
+        (!modelMenuRef.current || !modelMenuRef.current.contains(e.target as Node)) &&
         (!heroMenuRef.current || !heroMenuRef.current.contains(e.target as Node))
       ) {
         setIsModelMenuOpen(false);
@@ -443,7 +986,7 @@ export function AiAssistantChat({
       setWorkflowMode(mode);
       if (!selectedContext?.code) return;
       const context = `\n\nSelected code from ${selectedContext.path}:\n\`\`\`\n${selectedContext.code}\n\`\`\``;
-      setPrompt(
+      chatDraft.set(
         mode === "agent"
           ? `Edit the selected code to make it more readable. Preserve behavior and write the change to ${selectedContext.path}.${context}`
           : mode === "plan"
@@ -454,15 +997,20 @@ export function AiAssistantChat({
     };
     window.addEventListener("acsa:ai-workflow", handleWorkflowRequest);
     return () => window.removeEventListener("acsa:ai-workflow", handleWorkflowRequest);
-  }, [selectedContext, setPrompt]);
+  }, [selectedContext]);
 
-  // Scroll chat bottom on new messages, logs, or streaming updates
+  // Follow the tail on new messages, logs and streaming updates — but only while
+  // the reader is already at the bottom. Scrolling up to read something used to
+  // be undone by the next token. Streaming lands many times a second and a smooth
+  // scroll restarted that often never settles, so those are instant.
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, pendingPermission]);
+    if (!isFollowingBottom(transcriptScrollRef.current)) return;
+    const streaming = isStreaming || status === "running";
+    chatBottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+  }, [chatMessages, activityLog, isStreaming, streamingAnswer, agentSteps, status]);
 
   // ── Handle Send ─────────────────────────────────────────────────────────
-  const handleSend = async (textToSend = prompt) => {
+  const handleSend = async (textToSend = draft) => {
     const trimmed = textToSend.trim();
     if (!trimmed && attachedImages.length === 0) return;
 
@@ -511,7 +1059,7 @@ export function AiAssistantChat({
         saveChatHistory(next, projectRoot);
         return next;
       });
-      setPrompt("");
+      chatDraft.set("");
       setAttachedImages([]);
       return;
     }
@@ -558,7 +1106,7 @@ export function AiAssistantChat({
     const withPlaceholder = [...nextHistory, assistantPlaceholder];
     setChatMessages(withPlaceholder);
     saveChatHistory(withPlaceholder, projectRoot);
-    setPrompt("");
+    chatDraft.set("");
     setAttachedImages([]);
     setIsStreaming(true);
 
@@ -653,7 +1201,7 @@ export function AiAssistantChat({
   };
 
   const handleQuickAction = (text: string) => {
-    setPrompt(text);
+    chatDraft.set(text);
     void handleSend(text);
   };
 
@@ -669,15 +1217,16 @@ export function AiAssistantChat({
 
     return (
       <div
+        ref={modelMenuRef}
         className={`absolute ${
-          isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-1.5 left-0"
-        } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 flex flex-col text-left`}
+          isCenterHero ? "top-full mt-2 left-0 max-w-[calc(100vw-2rem)]" : "bottom-full mb-1.5 right-0 max-w-[calc(100%-0.5rem)]"
+        } w-72 max-h-80 bg-[#18181b] border border-zinc-800 rounded-xl shadow-2xl p-2 z-popover flex flex-col text-left`}
       >
         <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-800/80 shrink-0">
-          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider font-mono">
-            Orchestrator Brain (Cloud)
+          <span className="text-3xs font-semibold text-zinc-400 uppercase tracking-wider font-mono">
+            Agent Model
           </span>
-          <span className="text-[10px] text-zinc-500 font-mono">
+          <span className="text-3xs text-zinc-500 font-mono">
             {configuredModels.length} models
           </span>
         </div>
@@ -698,13 +1247,14 @@ export function AiAssistantChat({
         <div className="flex-1 overflow-y-auto space-y-0.5 min-h-0 pr-0.5">
           {configuredModels.length === 0 ? (
             <div className="px-2.5 py-3 text-center space-y-2">
-              <div className="text-xs text-zinc-400 font-sans">No Cloud Brain Configured</div>
-              <p className="text-[10px] text-zinc-500 font-sans">
-                Running on the local worker instead:{" "}
-                <span className="text-emerald-400 font-mono">{localWorker}</span>
+              <div className="text-xs text-zinc-400 font-sans">No model available</div>
+              <p className="text-3xs text-zinc-500 font-sans">
+                Add a cloud key, or install a model for{" "}
+                <span className="text-emerald-400 font-mono">Ollama</span> to run on this machine.
               </p>
-              <p className="text-[10px] text-zinc-500 font-sans">
-                Add an API key to enable high-reasoning planning and task orchestration.
+              <p className="text-3xs text-zinc-500 font-sans">
+                A local model is free and private, but needs to be one that supports tool
+                calling to edit files and run commands.
               </p>
               <button
                 type="button"
@@ -728,18 +1278,26 @@ export function AiAssistantChat({
               return (
                 <button
                   key={`${item.providerId}-${item.model}`}
+                  ref={isSelected ? selectedRowRef : undefined}
                   type="button"
                   onClick={() => {
                     handleSelectModel(item);
                     setIsModelMenuOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
+                  className={`w-full shrink-0 min-h-[1.75rem] flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                     isSelected ? "bg-purple-950/50 text-purple-300 font-semibold" : "text-zinc-300 hover:bg-zinc-800/80"
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
+                  <div className="flex items-center gap-2 min-w-0 truncate">
                     <ProviderLogo providerId={item.providerId} className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate font-mono text-[11px]">{item.model}</span>
+                    <span className="truncate font-mono text-2xs">{item.model}</span>
+                    {/* A local model runs on this machine, cannot be as capable as
+                        a hosted one, and costs nothing — worth saying in the row. */}
+                    {item.category === "local" && (
+                      <span className="shrink-0 px-1 py-px rounded text-4xs font-mono uppercase tracking-wide bg-emerald-950/60 text-emerald-400 border border-emerald-900/60">
+                        local
+                      </span>
+                    )}
                   </div>
                   {isSelected && <Icon icon={Check} className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
                 </button>
@@ -755,7 +1313,7 @@ export function AiAssistantChat({
               setIsModelMenuOpen(false);
               openAiManagementDashboard();
             }}
-            className="text-[10px] text-purple-400 hover:text-purple-300 py-0.5 transition-colors font-mono font-medium flex items-center gap-1"
+            className="text-3xs text-purple-400 hover:text-purple-300 py-0.5 transition-colors font-mono font-medium flex items-center gap-1"
           >
             <span>⚙️ Configure Cloud Keys & Models</span>
           </button>
@@ -768,7 +1326,7 @@ export function AiAssistantChat({
     <div
       className={`absolute ${
         isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
-      } w-60 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1 text-left`}
+      } w-60 max-w-[calc(100vw-1.5rem)] bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-popover space-y-1 text-left`}
     >
       {/* Option 1: Agent (Default) */}
       <button
@@ -782,13 +1340,13 @@ export function AiAssistantChat({
             ? "border border-purple-500/60 bg-purple-950/40 text-purple-200 font-medium shadow-sm"
             : "border border-transparent text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
         }`}
-        title="Autonomous multi-step code generation & verification gauntlet (Shift+Cmd+I)"
+        title="Run a multi-step agent task on your project (Shift+Cmd+I)"
       >
         <div className="flex items-center gap-2">
           <Icon icon={Code2} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
           <span className="font-medium">Agent</span>
         </div>
-        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⇧⌘I</span>
+        <span className="text-3xs font-mono text-zinc-500 tracking-tighter">⇧⌘I</span>
       </button>
 
       {/* Option 2: Ask / Chat */}
@@ -809,7 +1367,7 @@ export function AiAssistantChat({
           <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
           <span className="font-medium">Ask</span>
         </div>
-        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⌘L</span>
+        <span className="text-3xs font-mono text-zinc-500 tracking-tighter">⌘L</span>
       </button>
 
       {/* Option 3: Plan / Brainstorm */}
@@ -830,7 +1388,7 @@ export function AiAssistantChat({
           <Icon icon={ListTodo} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
           <span className="font-medium">Plan</span>
         </div>
-        <span className="text-[10px] font-mono text-zinc-500 tracking-tighter">⇧⌘P</span>
+        <span className="text-3xs font-mono text-zinc-500 tracking-tighter">⇧⌘P</span>
       </button>
 
       <div className="border-t border-zinc-800/80 my-1" />
@@ -853,9 +1411,9 @@ export function AiAssistantChat({
     <div
       className={`absolute ${
         isCenterHero ? "top-full mt-2 left-0" : "bottom-full mb-2 left-0"
-      } w-52 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-0.5 text-left animate-in fade-in-0 zoom-in-95 duration-100`}
+      } w-52 bg-[#18181b]/95 backdrop-blur-xl border border-zinc-700/60 rounded-xl shadow-2xl p-1.5 z-popover space-y-0.5 text-left animate-in fade-in-0 zoom-in-95 duration-100`}
     >
-      <div className="px-2.5 py-1.5 text-[11px] font-semibold text-zinc-400 select-none">
+      <div className="px-2.5 py-1.5 text-2xs font-semibold text-zinc-400 select-none">
         Add Context
       </div>
 
@@ -877,8 +1435,8 @@ export function AiAssistantChat({
         type="button"
         onClick={() => {
           setIsContextMenuOpen(false);
-          const nextPrompt = prompt && !prompt.endsWith(" ") ? `${prompt} @` : `${prompt}@`;
-          setPrompt(nextPrompt);
+          const nextPrompt = draft && !draft.endsWith(" ") ? `${draft} @` : `${draft}@`;
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -892,8 +1450,8 @@ export function AiAssistantChat({
         type="button"
         onClick={() => {
           setIsContextMenuOpen(false);
-          const nextPrompt = prompt && !prompt.endsWith(" ") ? `${prompt} /` : `${prompt}/`;
-          setPrompt(nextPrompt);
+          const nextPrompt = draft && !draft.endsWith(" ") ? `${draft} /` : `${draft}/`;
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -919,8 +1477,8 @@ export function AiAssistantChat({
         onClick={() => {
           setIsContextMenuOpen(false);
           const prefix = "/browser ";
-          const nextPrompt = prompt.startsWith(prefix) ? prompt : `${prefix}${prompt}`.trimStart();
-          setPrompt(nextPrompt);
+          const nextPrompt = draft.startsWith(prefix) ? draft : `${prefix}${draft}`.trimStart();
+          chatDraft.set(nextPrompt);
           setTimeout(() => textareaRef.current?.focus(), 50);
         }}
         className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800/80 hover:text-white transition-all group"
@@ -952,11 +1510,11 @@ export function AiAssistantChat({
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans">
         <div className="flex items-center gap-2">
           <Icon icon={Bot} className="w-4 h-4 text-purple-400" />
-          <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">AI Assistant</span>
+          <span className="text-body font-semibold text-zinc-100 tracking-tight">AI Assistant</span>
           {indexStatus && (
             <div className="flex items-center gap-1.5 ml-1">
               {isIndexing ? (
-                <span className="flex items-center gap-1 text-[10px] text-accent bg-accent/10 px-2 py-0.5 rounded-full border border-accent/20 animate-pulse font-mono">
+                <span className="flex items-center gap-1 text-3xs text-accent bg-primary-action/10 px-2 py-0.5 rounded-full border border-accent/20 animate-pulse font-mono">
                   <Icon icon={RefreshCw} className="w-2.5 h-2.5 animate-spin" />
                   Indexing AST...
                 </span>
@@ -969,7 +1527,7 @@ export function AiAssistantChat({
 • Symbols indexed: ${indexStatus.totalSymbols}
 • Frameworks: ${indexStatus.profile?.frameworks?.join(", ") || "generic"}
 Click to re-index project.`}
-                  className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/30 hover:bg-emerald-900/40 px-2 py-0.5 rounded-full border border-emerald-800/40 transition-colors font-mono cursor-pointer"
+                  className="flex items-center gap-1 text-3xs text-emerald-400 bg-emerald-950/30 hover:bg-emerald-900/40 px-2 py-0.5 rounded-full border border-emerald-800/40 transition-colors font-mono cursor-pointer"
                 >
                   <Icon icon={Database} className="w-2.5 h-2.5" />
                   <span>{indexStatus.profile?.indexed_files ?? 0} files synced</span>
@@ -978,7 +1536,7 @@ Click to re-index project.`}
               <button
                   type="button"
                   onClick={onSyncIndex}
-                  className="text-[10px] text-amber-400 bg-amber-950/30 hover:bg-amber-900/40 px-2 py-0.5 rounded-full border border-amber-800/40 transition-colors font-mono cursor-pointer"
+                  className="text-3xs text-amber-400 bg-amber-950/30 hover:bg-amber-900/40 px-2 py-0.5 rounded-full border border-amber-800/40 transition-colors font-mono cursor-pointer"
                   title="Click to build AST symbol index"
                 >
                   Index AST
@@ -1024,7 +1582,7 @@ Click to re-index project.`}
       </div>
 
       {/* ── Main Scroll Area ────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-4 font-sans">
+      <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto p-4 font-sans">
         {/* ── 1. Chat Mode Content ──────────────────────────────────────── */}
         <>
           {/* Empty State / Welcome Screen */}
@@ -1038,17 +1596,17 @@ Click to re-index project.`}
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
                         <Icon icon={Folder} className="w-3 h-3 text-purple-400" />
-                        <span className="font-mono text-[11px]">{projectName}</span>
+                        <span className="font-mono text-2xs">{projectName}</span>
                       </div>
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300">
                         <Icon icon={GitBranch} className="w-3 h-3 text-emerald-400" />
-                        <span className="font-mono text-[11px]">{branch || "—"}</span>
+                        <span className="font-mono text-2xs">{branch || "—"}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-400">
                       <ProviderLogo providerId={effectiveProvider} className="w-3 h-3" />
-                      <span className="font-mono text-[11px] text-zinc-300">{effectiveModel}</span>
+                      <span className="font-mono text-2xs text-zinc-300">{effectiveModel}</span>
                     </div>
                   </div>
 
@@ -1088,7 +1646,7 @@ Click to re-index project.`}
                                 onClick={() => {
                                   handleSelectModel(bestVisionAlternative);
                                 }}
-                                className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-[11px] transition-colors cursor-pointer shrink-0 whitespace-nowrap flex items-center gap-1"
+                                className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-2xs transition-colors cursor-pointer shrink-0 whitespace-nowrap flex items-center gap-1"
                               >
                                 <span>Switch to {bestVisionAlternative.model}</span>
                                 <span>→</span>
@@ -1101,8 +1659,8 @@ Click to re-index project.`}
 
                     <textarea
                       ref={textareaRef}
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
+                      value={draft}
+                      onChange={(e) => chatDraft.set(e.target.value)}
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
@@ -1162,7 +1720,7 @@ Click to re-index project.`}
                             }`}
                             title={`Current mode: ${workflowMode.toUpperCase()} (Click to switch)`}
                           >
-                            <span className="font-sans text-[11px] font-medium capitalize">
+                            <span className="font-sans text-2xs font-medium capitalize">
                               {workflowMode === "chat" ? "Ask" : workflowMode === "plan" ? "Plan" : "Agent"}
                             </span>
                             <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 ml-0.5" />
@@ -1180,14 +1738,10 @@ Click to re-index project.`}
                               setIsModeMenuOpen(false);
                             }}
                             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 font-medium transition-all shadow-sm"
-                            title={
-                              selectedModelItem
-                                ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
-                                : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
-                            }
+                            title={modelTitle}
                           >
                             <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
-                            <span className="font-mono text-[11px]">{effectiveModel}</span>
+                            <span className="font-mono text-2xs">{effectiveModel}</span>
                             <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400" />
                           </button>
 
@@ -1198,11 +1752,11 @@ Click to re-index project.`}
                       <button
                         type="button"
                         onClick={() => handleSend()}
-                        disabled={!prompt.trim()}
+                        disabled={!draft.trim()}
                         className={`flex items-center justify-center w-8 h-8 rounded-xl transition-all shadow-sm ${
-                          prompt.trim()
+                          draft.trim()
                             ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20"
-                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                         }`}
                         title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
                       >
@@ -1256,7 +1810,7 @@ Click to re-index project.`}
 
                 {/* Quick Action Suggestions */}
                 <div className="space-y-2">
-                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider font-mono">
+                  <span className="text-3xs font-semibold text-zinc-400 uppercase tracking-wider font-mono">
                     Suggested Prompts
                   </span>
                   <div className="space-y-1.5">
@@ -1308,324 +1862,182 @@ Click to re-index project.`}
           )}
 
           {/* Conversation Messages */}
-          {(chatMessages.length > 0 || status === "running") && (
-            <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full space-y-4 py-2" : "space-y-4"}>
-              {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
-                >
-                  {/* Role Header with Model, Provider, Timestamp */}
-                  <div className={`flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {msg.role === "user" ? (
-                        <>
-                          <span className="font-semibold text-zinc-300">You</span>
-                          <Icon icon={User} className="w-3 h-3 text-zinc-400 shrink-0" />
-                          {msg.timestamp && (
-                            <span className="text-[9px] font-mono text-zinc-500 ml-1">
-                              {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {msg.provider ? (
-                            <ProviderLogo providerId={msg.provider} className="w-3.5 h-3.5 shrink-0" />
-                          ) : (
-                            <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                          )}
-                          <span className="font-semibold text-purple-300 font-mono text-[11px] truncate">
-                            {msg.model || "AI Assistant"}
-                          </span>
-                          {msg.timestamp && (
-                            <span className="text-[9px] font-mono text-zinc-500 ml-1">
-                              {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Message Bubble */}
-                  <div
-                    className={`max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed transition-all ${
-                      msg.role === "user"
-                        ? "bg-zinc-800/80 border border-zinc-700/60 text-zinc-100 rounded-tr-sm shadow-sm"
-                        : msg.error
-                        ? "bg-red-950/30 border border-red-500/30 text-red-200 rounded-tl-sm w-full"
-                        : "bg-zinc-900/90 border border-zinc-800/90 text-zinc-100 rounded-tl-sm w-full"
-                    }`}
-                  >
-                    {/* User Attached Images */}
-                    {msg.images && msg.images.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {msg.images.map((img, i) => (
-                          <img
-                            key={i}
-                            src={img}
-                            alt="Attachment"
-                            className="max-h-48 max-w-xs rounded-lg border border-zinc-700 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                            onClick={() => window.open(img, "_blank")}
-                          />
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Collapsible Model Thinking & Agent Steps (auto-collapsed when summary exists) */}
-                    {((msg.steps && msg.steps.length > 0) || Boolean(msg.thinking)) && (
-                      <ThinkingAccordion
-                        steps={msg.steps}
-                        thinking={msg.thinking}
-                        isLive={false}
-                        hasSummary={Boolean(msg.content && msg.content.trim())}
-                      />
-                    )}
-
-                    <FormattedMarkdown content={msg.content} isStreaming={msg.isStreaming} />
-
-                    {/* Actionable Error Recovery Card */}
-                    {msg.error && (
-                      <div className="mt-3 p-3 rounded-xl bg-zinc-900/95 border border-zinc-700/60 text-xs space-y-2.5 shadow-xl">
-                        {msg.errorType === "timeout" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-amber-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Generation Timed Out</span>
-                            </div>
-                            <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              The local model <strong>{msg.model || "qwen2.5-coder"}</strong> took longer than expected to process the request. Local 7B models can be slow under heavy context. Consider switching to a faster local model (e.g. <code>qwen2.5-coder:1.5b</code> or <code>3b</code>) or shortening the prompt.
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
-                              >
-                                Switch Model / Provider
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "offline" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-red-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
-                              <span>Provider Unreachable or Offline</span>
-                            </div>
-                            <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              Unable to connect to <strong>{msg.provider || selectedModelItem?.providerId || "the AI provider"}</strong>. If you are using local models, ensure the Ollama background daemon is running.
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
-                              >
-                                Configure Provider / Model
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  window.dispatchEvent(new CustomEvent("acsa:open-ollama-wizard"));
-                                }}
-                                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] transition-colors border border-zinc-700 cursor-pointer"
-                              >
-                                Start Ollama Wizard
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "api" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-red-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0" />
-                              <span>Provider API / Model Error</span>
-                            </div>
-                            <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
-                                `The AI provider returned an error while processing your request with ${msg.model || "the selected model"}.`}
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
-                              >
-                                Configure Model / API Key
-                              </button>
-                            </div>
-                          </>
-                        ) : msg.errorType === "syntax" ? (
-                          <>
-                            <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Verification Gauntlet Halted</span>
-                            </div>
-                            <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              The deterministic verification gauntlet caught syntax/linter issues or contradictions in the generated code and stopped safely without modifying disk files. Review the <strong>Output (Gauntlet)</strong> tab for diagnostic logs.
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                              <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
-                              <span>Task Execution Notice</span>
-                            </div>
-                            <p className="text-zinc-400 text-[11px] leading-relaxed">
-                              {msg.content?.replace(/^⚠️\s*\*\*Task Failed:\*\*\s*/i, "") ||
-                                "The task encountered an issue during execution. Check the output tab or console for details."}
-                            </p>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => openAiManagementDashboard()}
-                                className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] transition-colors border border-zinc-700 cursor-pointer"
-                              >
-                                Check AI Settings
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {/* Bottom Message Actions (Copy button positioned under message) */}
-                  {msg.content && (
-                    <div className={`mt-1 flex items-center ${msg.role === "user" ? "justify-end" : "justify-start"} px-1`}>
-                      <CopyMessageButton text={msg.content} />
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* Active Running Agent Assistant Turn */}
-              {status === "running" && (
-                <div className="flex flex-col items-start">
-                  <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-zinc-400 justify-start">
-                    {selectedModelItem?.providerId ? (
-                      <ProviderLogo providerId={selectedModelItem.providerId} className="w-3.5 h-3.5 shrink-0" />
-                    ) : (
-                      <Icon icon={Bot} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    )}
-                    <span className="font-semibold text-purple-300 font-mono text-[11px]">
-                      {selectedModelItem?.model || "ACSA Agent"}
-                    </span>
-                    <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono ml-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                      Working ({agentElapsedSeconds}s)
-                    </span>
-                  </div>
-
-                  <div className="max-w-[95%] p-3.5 rounded-2xl text-xs leading-relaxed bg-zinc-900/90 border border-purple-500/30 text-zinc-100 rounded-tl-sm w-full shadow-lg">
-                    {/* Live Thinking Accordion (auto-collapses when summary arrives) */}
-                    <ThinkingAccordion
-                      steps={agentSteps}
-                      thinking={streamingThought}
-                      isLive={true}
-                      hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
-                      elapsedSeconds={agentElapsedSeconds}
-                    />
-
-                    {/* Live Streaming Answer */}
-                    {streamingAnswer ? (
-                      <div className="mt-2.5 pt-2.5 border-t border-zinc-800/80">
-                        <FormattedMarkdown content={streamingAnswer} isStreaming={true} />
-                      </div>
-                    ) : (
-                      !streamingThought && (!agentSteps || agentSteps.length === 0) ? (
-                        <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
-                          <Icon icon={RefreshCw} className="w-3 h-3 animate-spin text-purple-400" />
-                          <span>Thinking through solution...</span>
-                        </div>
-                      ) : null
-                    )}
-
-                    {/* Live Permission Authorization Alert in Running Turn */}
-                    {pendingPermission && (
-                      <div className="mt-2.5 p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/40 flex items-center justify-between text-xs text-amber-300">
-                        <div className="flex items-center gap-2">
-                          <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-                          <span>Awaiting your authorization to run: <code className="font-mono bg-black/60 px-1.5 py-0.5 rounded text-amber-200">{pendingPermission.command}</code></span>
-                        </div>
-                        <span className="text-[10px] text-amber-400/80 font-mono shrink-0 ml-2">Action Required Below</span>
-                      </div>
-                    )}
-
-                    {/* Stop Generating Button & Active Step */}
-                    <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
-                      <span className="text-[11px] text-zinc-400 truncate max-w-[70%]">
-                        {agentSteps.length > 0
-                          ? `Step ${agentSteps.length}: ${agentSteps[agentSteps.length - 1].name}`
-                          : currentAgentPhase || "Initializing..."}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={onCancelPipeline}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-[11px] font-medium transition-colors border border-zinc-700/80 cursor-pointer shadow-sm shrink-0"
-                      >
-                        <Icon icon={Square} className="w-2.5 h-2.5 fill-red-400 text-red-400" />
-                        <span>Stop Generating</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Bottom Message Actions for Running Turn */}
-                  {streamingAnswer && (
-                    <div className="mt-1 flex items-center justify-start px-1">
-                      <CopyMessageButton text={streamingAnswer} />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+        <ChatTranscript
+          chatMessages={chatMessages}
+          isWide={isWide}
+          status={status}
+          streamingAnswer={streamingAnswer}
+          streamingThought={streamingThought}
+          agentSteps={agentSteps}
+          agentElapsedSeconds={agentElapsedSeconds}
+          currentAgentPhase={currentAgentPhase}
+          blockedOn={blockedOn}
+          turnChanges={turnChanges}
+          pendingQuestion={pendingQuestion}
+          selectedModelItem={selectedModelItem}
+          onReviewFile={onReviewFile}
+          onCancelPipeline={onCancelPipeline}
+          bottomRef={chatBottomRef}
+        />
         </>
-
-        <div ref={chatBottomRef} />
       </div>
 
       {/* ── Input Box & Controls (Only shown when not in empty Center Stage mode) ── */}
       {(!isWide || chatMessages.length > 0 || status === "running") && (
-        <div className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}>
+        <div
+          ref={composerRef}
+          className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}
+        >
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
-            {/* Interactive Action Approval Card (Sensitive Commands Gate) */}
-            {pendingPermission && (
-              <div className="mb-3 p-3.5 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs tracking-wider uppercase">
-                    <Icon icon={Shield} className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
-                    <span>Action Approval Required</span>
-                  </div>
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2.5 py-0.5 rounded-full font-mono border border-amber-500/30">
-                    Sensitive Command
-                  </span>
+            {/* The agent is blocked until this is answered. */}
+            {/* A question, not a permission request. The runtime's own
+                `request_user_input` carries options and free text, and the answer
+                goes back keyed by question id — rendered as an approval card it
+                read "APPROVAL NEEDED … $ item/tool/requestUserInput", which told
+                the user nothing and could not be answered correctly. */}
+            {pendingQuestion && pendingQuestion.questions.length > 0 && (
+              <div className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
+                <div className="flex items-center gap-2 text-purple-300 font-semibold text-2xs tracking-wider uppercase mb-2">
+                  <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-purple-300 shrink-0" />
+                  <span>The agent is asking</span>
                 </div>
-                <p className="text-xs text-zinc-300 mb-2.5 leading-relaxed">
-                  {pendingPermission.description || "The agent is requesting authorization to execute a sensitive command:"}
+                {pendingQuestion.questions.map((question) => (
+                  <div key={question.id} className="mb-3 last:mb-1">
+                    <p className="text-xs font-semibold text-zinc-100">{question.header}</p>
+                    <p className="text-2xs text-zinc-400 mt-0.5 mb-2 leading-relaxed">
+                      {question.question}
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {(question.options ?? []).map((option) => (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => answerQuestion(question.id, [option.label])}
+                          className="text-left px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 hover:border-purple-500/50 text-zinc-200 text-xs transition-colors cursor-pointer"
+                        >
+                          {option.label}
+                          {option.description ? (
+                            <span className="block text-3xs text-zinc-500 mt-0.5">
+                              {option.description}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                    {question.isOther && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const field = event.currentTarget.elements.namedItem(
+                            "answer",
+                          ) as HTMLInputElement | null;
+                          const value = field?.value.trim() ?? "";
+                          if (!value) return;
+                          if (field) field.value = "";
+                          answerQuestion(question.id, [value]);
+                        }}
+                        className="mt-2 flex items-center gap-2"
+                      >
+                        <input
+                          name="answer"
+                          type={question.isSecret ? "password" : "text"}
+                          placeholder="Or type your own answer…"
+                          className="flex-1 bg-black/50 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-purple-500/60"
+                        />
+                        <button
+                          type="submit"
+                          className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          Answer
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pendingApproval && (
+              <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
+                <div className="flex items-center gap-2 text-amber-400 font-semibold text-2xs tracking-wider uppercase mb-1.5">
+                  <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Approval needed</span>
+                </div>
+                <p className="text-xs text-zinc-300 mb-2 leading-relaxed">
+                  {pendingApproval.reason ||
+                    `The agent wants to ${approvalSummary(pendingApproval.method)} before it continues.`}
                 </p>
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-black/80 border border-zinc-800 font-mono text-xs text-emerald-400 overflow-x-auto select-all mb-3">
+                {/* Only when there is one. A file-change approval carries no
+                    command and no paths, so there is nothing honest to put here. */}
+                {pendingApproval.command ? (
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-black/80 border border-zinc-800 font-mono text-2xs text-emerald-400 overflow-x-auto select-all mb-2.5">
                   <Icon icon={Terminal} className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                   <span className="text-zinc-500 select-none">$</span>
-                  <span>{pendingPermission.command}</span>
+                  <span>{pendingApproval.command}</span>
                 </div>
-                <div className="flex items-center justify-end gap-2.5">
+                ) : null}
+                {/* A file-change approval names an item, not a command. Showing
+                    the diff is the difference between approving a change and
+                    approving a mystery — which is what the bare itemId gave. */}
+                {pendingApproval.changes && pendingApproval.changes.length > 0 ? (
+                  <div className="mb-2.5 space-y-1.5">
+                    {pendingApproval.changes.map((change) => (
+                      <div
+                        key={change.path}
+                        className="rounded-xl border border-zinc-800 bg-black/60 overflow-hidden"
+                      >
+                        <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-zinc-800">
+                          <span
+                            className={
+                              change.kind === "add"
+                                ? "text-3xs font-mono uppercase text-emerald-400"
+                                : change.kind === "delete"
+                                ? "text-3xs font-mono uppercase text-red-400"
+                                : "text-3xs font-mono uppercase text-amber-400"
+                            }
+                          >
+                            {change.kind}
+                          </span>
+                          <span
+                            className="text-2xs font-mono text-zinc-300 truncate"
+                            title={change.path}
+                          >
+                            {change.path}
+                          </span>
+                        </div>
+                        {change.diff ? (
+                          <pre className="max-h-40 overflow-auto px-2.5 py-1.5 text-3xs leading-relaxed text-zinc-400 whitespace-pre font-mono">
+                            {change.diff}
+                          </pre>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => void respondToPermission?.(pendingPermission.id, "rejected")}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer shadow-sm"
+                    onClick={() => void respondToApproval?.("decline")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer"
                   >
                     <Icon icon={X} className="w-3.5 h-3.5 text-red-400" />
-                    <span>Reject</span>
+                    <span>Decline</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => void respondToPermission?.(pendingPermission.id, "approved")}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg hover:shadow-amber-500/25 transition-all cursor-pointer"
+                    onClick={() => void respondToApproval?.("acceptForSession")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition-all border border-zinc-700 cursor-pointer"
+                  >
+                    <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Allow for session</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void respondToApproval?.("accept")}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-lg transition-all cursor-pointer"
                   >
                     <Icon icon={Check} className="w-3.5 h-3.5" />
-                    <span>Approve &amp; Run</span>
+                    <span>Approve &amp; run</span>
                   </button>
                 </div>
               </div>
@@ -1654,7 +2066,7 @@ Click to re-index project.`}
 
                   {/* Non-vision model indicator */}
                   {!isCurrentModelVisionCapable && (
-                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[11px] animate-in fade-in-0 duration-150">
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-2xs animate-in fade-in-0 duration-150">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <Icon icon={AlertCircle} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span className="truncate">
@@ -1667,7 +2079,7 @@ Click to re-index project.`}
                           onClick={() => {
                             handleSelectModel(bestVisionAlternative);
                           }}
-                          className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-[10px] transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                          className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white font-medium text-3xs transition-colors cursor-pointer shrink-0 whitespace-nowrap"
                         >
                           Switch to {bestVisionAlternative.model} →
                         </button>
@@ -1679,8 +2091,8 @@ Click to re-index project.`}
 
               <textarea
                 ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                value={draft}
+                onChange={(e) => chatDraft.set(e.target.value)}
                 onPaste={handlePaste}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -1700,7 +2112,7 @@ Click to re-index project.`}
               />
 
               {/* Bottom control strip inside card */}
-              <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-zinc-800/70 mt-1">
+              <div className="relative flex items-center justify-between gap-1.5 pt-2 border-t border-zinc-800/70 mt-1">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   {/* Add Context (+) Dropdown */}
                   <div className="relative shrink-0" ref={contextMenuRef}>
@@ -1740,7 +2152,7 @@ Click to re-index project.`}
                       }`}
                       title={`Current Mode: ${workflowMode.toUpperCase()} (Click to switch)`}
                     >
-                      <span className="font-sans text-[11px] font-medium capitalize">
+                      <span className="font-sans text-2xs font-medium capitalize">
                         {workflowMode === "chat" ? "Ask" : workflowMode === "plan" ? "Plan" : "Agent"}
                       </span>
                       <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 ml-0.5" />
@@ -1750,7 +2162,7 @@ Click to re-index project.`}
                   </div>
 
                   {/* Model Selector Dropdown Button */}
-                  <div className="relative min-w-0 max-w-[150px]" ref={menuRef}>
+                  <div className="relative min-w-0 flex-1" ref={menuRef}>
                     <button
                       type="button"
                       onClick={() => {
@@ -1758,20 +2170,15 @@ Click to re-index project.`}
                         setIsModeMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 hover:bg-zinc-800/80 border border-zinc-800/80 text-xs text-zinc-200 transition-colors"
-                      title={
-                        selectedModelItem
-                          ? `Cloud Brain: ${selectedModelItem.model} (Local Worker: ${localWorker})`
-                          : `Running on ${effectiveProvider}:${effectiveModel} (Local Worker: ${localWorker})`
-                      }
+                      title={modelTitle}
                     >
                       <ProviderLogo providerId={effectiveProvider} className="w-3.5 h-3.5 shrink-0" />
-                      <span className="font-mono text-[10px] truncate">
+                      <span className="font-mono text-3xs truncate">
                         {effectiveModel}
                       </span>
                       <Icon icon={ChevronDown} className="w-3 h-3 text-zinc-400 shrink-0 ml-auto" />
                     </button>
 
-                    {isModelMenuOpen && renderModelMenu(false)}
                   </div>
 
                 </div>
@@ -1791,11 +2198,11 @@ Click to re-index project.`}
                     <button
                       type="button"
                       onClick={() => handleSend()}
-                      disabled={!prompt.trim() && attachedImages.length === 0}
+                      disabled={!draft.trim() && attachedImages.length === 0}
                       className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all shadow-sm shrink-0 ${
-                        prompt.trim() || attachedImages.length > 0
+                        draft.trim() || attachedImages.length > 0
                           ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 cursor-pointer"
-                          : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-600 cursor-not-allowed"
+                          : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
                       }`}
                       title={workflowMode === "agent" ? "Run Agent (Enter)" : "Send (Enter)"}
                     >
@@ -1803,6 +2210,13 @@ Click to re-index project.`}
                     </button>
                   )}
                 </div>
+
+                {/* Anchored to the whole control strip rather than the pill. The
+                    pill wrapper is capped at 150px, so a 288px menu hung off the
+                    side of a narrow chat panel and was clipped — which is what
+                    "the picker UI is broken" was. Against the strip, `max-w` is a
+                    percentage of the composer and the menu always fits. */}
+                {isModelMenuOpen && renderModelMenu(false)}
               </div>
             </div>
           </div>
@@ -1876,7 +2290,7 @@ export function CopyMessageButton({
       type="button"
       onClick={handleCopy}
       title="Copy message to clipboard"
-      className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-all select-none cursor-pointer ${
+      className={`inline-flex items-center gap-1 text-3xs px-1.5 py-0.5 rounded transition-all select-none cursor-pointer ${
         copied
           ? "text-emerald-400 bg-emerald-950/40 border border-emerald-800/50"
           : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80 border border-transparent"
@@ -1885,12 +2299,12 @@ export function CopyMessageButton({
       {copied ? (
         <>
           <Icon icon={Check} className="w-3 h-3 text-emerald-400" />
-          <span className="font-medium text-[10px]">Copied</span>
+          <span className="font-medium text-3xs">Copied</span>
         </>
       ) : (
         <>
           <Icon icon={Copy} className="w-3 h-3" />
-          <span className="font-medium text-[10px]">Copy</span>
+          <span className="font-medium text-3xs">Copy</span>
         </>
       )}
     </button>
@@ -1940,14 +2354,65 @@ interface ThinkingAccordionProps {
   isLive?: boolean;
   hasSummary?: boolean;
   elapsedSeconds?: number;
+  /** The run is blocked on the user, so it is not thinking. */
+  blockedOn?: string;
+}
+
+/**
+ * "Edited N files  +X −Y", with a row per file and a Review on each.
+ *
+ * The answer to "should every write need approval?" is no — log it instead. On
+ * the message rather than only in live state, so it scrolls back with the
+ * transcript; a log you can only read once is not a log.
+ */
+function ChangeLogCard({
+  changes,
+  onReview,
+}: {
+  changes: { path: string; added: number; removed: number }[];
+  onReview?: (path: string) => Promise<void>;
+}) {
+  if (changes.length === 0) return null;
+  const added = changes.reduce((total, change) => total + change.added, 0);
+  const removed = changes.reduce((total, change) => total + change.removed, 0);
+
+  return (
+    <div className="mt-2 rounded-xl border border-zinc-800 bg-zinc-950/60 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
+        <span className="text-2xs text-zinc-300">
+          Edited {changes.length} {changes.length === 1 ? "file" : "files"}
+        </span>
+        <span className="flex items-center gap-3 font-mono text-2xs">
+          <span className="text-emerald-400">+{added}</span>
+          <span className="text-red-400">−{removed}</span>
+        </span>
+      </div>
+      {changes.map((change) => (
+        <button
+          key={change.path}
+          type="button"
+          onClick={() => void onReview?.(change.path)}
+          title={`Review ${change.path}`}
+          className="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left hover:bg-zinc-900/70 transition-colors cursor-pointer"
+        >
+          <span className="text-2xs font-mono text-zinc-400 truncate">{change.path}</span>
+          <span className="flex items-center gap-3 font-mono text-2xs shrink-0">
+            {change.added > 0 && <span className="text-emerald-400">+{change.added}</span>}
+            {change.removed > 0 && <span className="text-red-400">−{change.removed}</span>}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function ThinkingAccordion({
-  steps = [],
+  steps = NO_STEPS,
   thinking = "",
   isLive = false,
   hasSummary = false,
   elapsedSeconds = 0,
+  blockedOn = "",
 }: ThinkingAccordionProps) {
   // Auto-collapse if a summary or conclusion has been reached
   const [isOpen, setIsOpen] = useState(() => isLive && !hasSummary);
@@ -2005,12 +2470,23 @@ function ThinkingAccordion({
           />
           {isLive && !hasSummary ? (
             <div className="flex items-center gap-2 min-w-0">
-              <Icon icon={RefreshCw} className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
-              <span className="font-semibold text-purple-300 font-mono text-[11px]">
-                Thinking ({elapsedSeconds}s)…
+              {/* A blocked run is not thinking, and a spinner that keeps turning
+                  is what made a six-minute wait look like hard work. */}
+              <Icon
+                icon={blockedOn ? HelpCircle : RefreshCw}
+                className={`w-3 h-3 shrink-0 ${
+                  blockedOn ? "text-amber-400" : "text-purple-400 animate-spin"
+                }`}
+              />
+              <span
+                className={`font-semibold font-mono text-2xs ${
+                  blockedOn ? "text-amber-300" : "text-purple-300"
+                }`}
+              >
+                {blockedOn ? `Waiting for ${blockedOn} (${elapsedSeconds}s)` : `Thinking (${elapsedSeconds}s)…`}
               </span>
               {activeStep && (
-                <span className="text-[10px] text-zinc-400 truncate hidden sm:inline">
+                <span className="text-3xs text-zinc-400 truncate hidden sm:inline">
                   · {activeStep.name}
                 </span>
               )}
@@ -2018,15 +2494,15 @@ function ThinkingAccordion({
           ) : (
             <div className="flex items-center gap-2 min-w-0">
               <Icon icon={Sparkles} className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-              <span className="font-semibold text-zinc-300 font-mono text-[11px]">
+              <span className="font-semibold text-zinc-300 font-mono text-2xs">
                 {elapsedSeconds > 0
                   ? `Thought for ${elapsedSeconds}s`
                   : visibleSteps.length > 0
-                  ? "Execution & Verification"
+                  ? "What the agent did"
                   : "Model Reasoning"}
               </span>
               {visibleSteps.length > 0 && (
-                <span className="text-[10px] text-zinc-500 font-mono">
+                <span className="text-3xs text-zinc-500 font-mono">
                   ({completedCount}/{visibleSteps.length} {visibleSteps.length === 1 ? "step" : "steps"})
                 </span>
               )}
@@ -2034,7 +2510,7 @@ function ThinkingAccordion({
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-zinc-500 font-mono">
+        <div className="flex items-center gap-1.5 shrink-0 text-3xs text-zinc-500 font-mono">
           <span className="px-1.5 py-0.5 rounded bg-zinc-800/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors">
             {isOpen ? "Hide reasoning" : "View reasoning"}
           </span>
@@ -2047,7 +2523,7 @@ function ThinkingAccordion({
           {/* Actionable Steps Checklist (Tool calls, Syntax checks, Subagents) */}
           {visibleSteps.length > 0 && (
             <div className="space-y-1.5">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 font-mono mb-1">
+              <div className="text-3xs font-semibold uppercase tracking-wider text-zinc-500 font-mono mb-1">
                 Execution Steps
               </div>
               <div className="space-y-1 pl-1">
@@ -2060,7 +2536,7 @@ function ThinkingAccordion({
                   return (
                     <div
                       key={idx}
-                      className={`flex items-start gap-2 text-[11px] py-1 px-1.5 rounded transition-colors ${
+                      className={`flex items-start gap-2 text-2xs py-1 px-1.5 rounded transition-colors ${
                         isRunning
                           ? "bg-purple-950/20 text-purple-200"
                           : isSuccess
@@ -2080,7 +2556,7 @@ function ThinkingAccordion({
                         ) : (
                           <span className="inline-block w-2 h-2 rounded-full bg-zinc-700 mx-0.5" />
                         )}
-                        <span className={`px-1 py-0.5 text-[9px] font-mono uppercase font-semibold rounded border inline-flex items-center gap-1 ${category.color}`}>
+                        <span className={`px-1 py-0.5 text-4xs font-mono uppercase font-semibold rounded border inline-flex items-center gap-1 ${category.color}`}>
                           <Icon icon={category.icon} className="w-2.5 h-2.5" />
                           {category.label}
                         </span>
@@ -2090,7 +2566,7 @@ function ThinkingAccordion({
                           {step.name}
                         </span>
                         {step.detail && (
-                          <span className="text-[10px] text-zinc-400 ml-1.5 font-mono break-all">
+                          <span className="text-3xs text-zinc-400 ml-1.5 font-mono break-all">
                             — {step.detail}
                           </span>
                         )}
@@ -2105,10 +2581,10 @@ function ThinkingAccordion({
           {/* Model Thoughts / Streaming Reasoning */}
           {cleanedThought && (
             <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 font-mono">
+              <div className="text-3xs font-semibold uppercase tracking-wider text-zinc-500 font-mono">
                 Model Thoughts
               </div>
-              <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 text-[11px] font-mono text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+              <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 text-2xs font-mono text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
                 {cleanedThought}
                 {isLive && <span className="inline-block w-1.5 h-3 bg-purple-400 ml-1 animate-pulse align-middle" />}
               </div>
@@ -2121,7 +2597,20 @@ function ThinkingAccordion({
 }
 
 /* ── Formatted Markdown & Code Block Renderer ─────────────────────────── */
-function FormattedMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+/**
+ * Memoised on purpose. The composer's text lives above the whole workbench, so
+ * every keystroke re-renders this component for every message in the transcript;
+ * without the memo each one re-parsed its markdown and rebuilt its code blocks.
+ * Same on the streaming path, where the growing message used to re-render every
+ * code block it already had on each token.
+ */
+const FormattedMarkdown = memo(function FormattedMarkdown({
+  content,
+  isStreaming,
+}: {
+  content: string;
+  isStreaming?: boolean;
+}) {
   if (!content && isStreaming) {
     return (
       <div className="flex items-center gap-2 text-zinc-400 text-xs py-1">
@@ -2152,9 +2641,9 @@ function FormattedMarkdown({ content, isStreaming }: { content: string; isStream
       )}
     </div>
   );
-}
+});
 
-function FormattedParagraph({ text }: { text: string }) {
+const FormattedParagraph = memo(function FormattedParagraph({ text }: { text: string }) {
   const lines = text.split("\n");
 
   return (
@@ -2211,7 +2700,7 @@ function FormattedParagraph({ text }: { text: string }) {
       })}
     </div>
   );
-}
+});
 
 function renderInlineStyles(text: string) {
   // Support inline `code` and **bold**
@@ -2224,7 +2713,7 @@ function renderInlineStyles(text: string) {
           return (
             <code
               key={index}
-              className="px-1 py-0.5 rounded bg-zinc-800 text-purple-300 font-mono text-[11px]"
+              className="px-1 py-0.5 rounded bg-zinc-800 text-purple-300 font-mono text-2xs"
             >
               {token.slice(1, -1)}
             </code>
@@ -2243,7 +2732,7 @@ function renderInlineStyles(text: string) {
   );
 }
 
-function CodeBlock({ language, code }: { language: string; code: string }) {
+const CodeBlock = memo(function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -2255,13 +2744,13 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden my-2 font-mono text-[11px]">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden my-2 font-mono text-2xs">
       <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800/80 text-zinc-400">
-        <span className="text-[10px] font-semibold uppercase">{language}</span>
+        <span className="text-3xs font-semibold uppercase">{language}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition-colors"
+          className="flex items-center gap-1 text-3xs text-zinc-400 hover:text-white transition-colors"
         >
           {copied ? <Icon icon={Check} className="w-3 h-3 text-emerald-400" /> : <Icon icon={Copy} className="w-3 h-3" />}
           <span>{copied ? "Copied" : "Copy"}</span>
@@ -2272,6 +2761,6 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
       </pre>
     </div>
   );
-}
+});
 
 export default AiAssistantChat;

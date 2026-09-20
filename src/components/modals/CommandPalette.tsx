@@ -76,6 +76,10 @@ export function CommandPalette({
     : [];
 
   const activeListLength = isCommandMode ? filteredCommands.length : filteredFiles.length;
+  // Focus stays in the input (arrow keys move `selectedIndex`), so the input
+  // points at the active row with `aria-activedescendant`.
+  const optionId = (index: number) => `palette-option-${index}`;
+  const selectedId = activeListLength > 0 ? optionId(selectedIndex) : "";
 
   useEffect(() => {
     if (isOpen) {
@@ -114,11 +118,16 @@ export function CommandPalette({
 
   return (
     <div
-      onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-start justify-center pt-[10vh] p-4 select-none"
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-modal bg-black/60 backdrop-blur-[2px] flex items-start justify-center pt-[10vh] p-4 select-none"
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isCommandMode ? "Command palette" : "Go to file"}
         className="w-full max-w-xl bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 overflow-hidden flex flex-col text-xs animate-in fade-in zoom-in-95 duration-100"
       >
         {/* Search Input Bar */}
@@ -129,6 +138,10 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
+            role="combobox"
+            aria-expanded
+            aria-controls="command-palette-results"
+            aria-activedescendant={selectedId || undefined}
             placeholder={
               isCommandMode
                 ? "Type a command or '>' to run commands..."
@@ -139,7 +152,12 @@ export function CommandPalette({
         </div>
 
         {/* Results List */}
-        <div className="max-h-80 overflow-y-auto p-1 bg-[var(--vscode-panel-bg)] space-y-0.5">
+        <div
+          id="command-palette-results"
+          role="listbox"
+          aria-label={isCommandMode ? "Commands" : "Files"}
+          className="max-h-80 overflow-y-auto p-1 bg-[var(--vscode-panel-bg)] space-y-0.5"
+        >
           {activeListLength === 0 ? (
             <div className="p-6 text-center text-zinc-500 text-xs">
               No matching {isCommandMode ? "commands" : "files"} found.
@@ -149,12 +167,18 @@ export function CommandPalette({
               const isSelected = idx === selectedIndex;
               const CmdIcon = cmd.icon || Terminal;
               return (
-                <div
+                <button
+                  type="button"
                   key={cmd.id}
+                  id={optionId(idx)}
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={isSelected}
                   onClick={() => {
                     cmd.action();
                     onClose();
                   }}
+                  onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                     isSelected
                       ? "bg-sky-600 text-white font-medium"
@@ -175,7 +199,7 @@ export function CommandPalette({
 
                   {cmd.shortcut && (
                     <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                      className={`text-3xs font-mono px-1.5 py-0.5 rounded border ${
                         isSelected
                           ? "border-sky-400/50 bg-sky-700/50 text-sky-100"
                           : "border-zinc-700 bg-zinc-800 text-zinc-400"
@@ -184,19 +208,25 @@ export function CommandPalette({
                       {cmd.shortcut}
                     </span>
                   )}
-                </div>
+                </button>
               );
             })
           ) : (
             filteredFiles.map((file, idx) => {
               const isSelected = idx === selectedIndex;
               return (
-                <div
+                <button
+                  type="button"
                   key={file.path}
+                  id={optionId(idx)}
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={isSelected}
                   onClick={() => {
                     onOpenFile(file);
                     onClose();
                   }}
+                  onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                     isSelected
                       ? "bg-sky-600 text-white font-medium"
@@ -207,14 +237,14 @@ export function CommandPalette({
                     <Icon icon={FileText} className={`w-4 h-4 ${isSelected ? "text-white" : "text-sky-400"}`} />
                     <span className="font-medium text-xs truncate">{file.name}</span>
                     <span
-                      className={`text-[10px] truncate ${
+                      className={`text-3xs truncate ${
                         isSelected ? "text-sky-200" : "text-zinc-500"
                       }`}
                     >
                       {file.path}
                     </span>
                   </div>
-                </div>
+                </button>
               );
             })
           )}

@@ -8,6 +8,7 @@
  */
 
 import type * as MonacoType from "monaco-editor";
+import { aiFetch } from "./aiClient";
 /**
  * The fields editor AI calls actually need. Both the legacy `AISettings` blob
  * and the resolved editor config (which prefers a configured cloud provider)
@@ -109,7 +110,7 @@ export function registerAiInlineCompletions(
                 },
               ],
             });
-          } catch (err) {
+          } catch {
             resolve({ items: [] });
           } finally {
             if (activeAbortController === controller) {
@@ -293,7 +294,7 @@ export async function executeInlineEdit({
 
   // 1. Try server bridge /api/ai/inline-edit (supports all providers, avoids browser CORS)
   try {
-    const res = await fetch("/api/ai/inline-edit", {
+    const res = await aiFetch("/api/ai/inline-edit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -8,7 +8,7 @@
  * 4. Cmd+S / Ctrl+S keyboard shortcuts to save to physical disk.
  */
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import Editor, { OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
@@ -47,7 +47,14 @@ interface MonacoEditorContainerProps {
   projectRoot?: string;
 }
 
-export function MonacoEditorContainer({
+/**
+ * Memoised because this is the file an editor tab re-renders around: the whole
+ * workbench re-renders on a keystroke (the workbench context changes), and
+ * without this every *other* open editor would re-render its ~1000 lines of
+ * chrome too. Its props are primitives plus stable callbacks, so the comparison
+ * is cheap and only the tab that actually changed gets through.
+ */
+export const MonacoEditorContainer = memo(function MonacoEditorContainer({
   path,
   content,
   onChange,
@@ -69,6 +76,60 @@ export function MonacoEditorContainer({
   useEffect(() => {
     settingsRef.current = aiSettings;
   }, [aiSettings]);
+
+  /**
+   * Editor preferences from Settings. These were previously hardcoded here,
+   * which is why the Font and Code Style panes appeared to save values that
+   * changed nothing.
+   *
+   * Memoised because `@monaco-editor/react` re-applies `options` with
+   * `editor.updateOptions(...)` whenever the object identity changes — and an
+   * inline literal changes on every render, i.e. on every keystroke in this
+   * editor. Same options in, no work.
+   */
+  const editorOptions = useMemo(
+    () => ({
+      fontSize: aiSettings?.fontSize ?? 13,
+      lineHeight: aiSettings?.lineHeight ? Math.round(aiSettings.lineHeight * (aiSettings?.fontSize ?? 13)) : 0,
+      fontLigatures: aiSettings?.enableLigatures ?? true,
+      fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
+      lineNumbers: "on" as const,
+      renderWhitespace: "selection" as const,
+      renderLineHighlight: "all" as const,
+      renderLineHighlightOnlyWhenFocus: false,
+      tabSize: aiSettings?.tabSize ?? 4,
+      insertSpaces: aiSettings?.insertSpaces ?? true,
+      wordWrap: aiSettings?.wordWrap ? ("on" as const) : ("off" as const),
+      automaticLayout: true,
+      scrollBeyondLastLine: false,
+      minimap: { enabled: true, maxColumn: 80 },
+      bracketPairColorization: { enabled: true },
+      guides: { bracketPairs: true, indentation: true },
+      inlineSuggest: { enabled: true },
+      suggest: {
+        preview: true,
+        showMethods: true,
+        showFunctions: true,
+        showConstructors: true,
+        showFields: true,
+        showVariables: true,
+        showClasses: true,
+        showStructs: true,
+        showInterfaces: true,
+        showModules: true,
+        showProperties: true,
+      },
+      padding: { top: 8, bottom: 8 },
+    }),
+    [
+      aiSettings?.fontSize,
+      aiSettings?.lineHeight,
+      aiSettings?.enableLigatures,
+      aiSettings?.tabSize,
+      aiSettings?.insertSpaces,
+      aiSettings?.wordWrap,
+    ]
+  );
 
   // Apply editor preferences live, so changing them in Settings takes effect
   // immediately instead of on the next time a file is opened.
@@ -539,7 +600,9 @@ export function MonacoEditorContainer({
       });
 
     });
-  }, [reviewIssues, expandedFindings, collapsedZoneHeightRef]);
+    // `collapsedZoneHeightRef` is a ref: its identity never changes, so it was
+    // never doing anything in this list.
+  }, [reviewIssues, expandedFindings]);
 
   /**
    * Measures the cards Monaco has actually laid out and records their height.
@@ -656,7 +719,6 @@ export function MonacoEditorContainer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInlinePromptOpen]);
 
   // Drop stale findings and markers when the editor switches files.
@@ -738,7 +800,7 @@ export function MonacoEditorContainer({
   return (
     <div className="relative h-full w-full bg-workbench overflow-hidden">
       {/* ── AI Review Controls ──────────────────────────────────────── */}
-      <div className="absolute top-2 right-3 z-40 flex items-center gap-2">
+      <div className="absolute top-2 right-3 z-raised flex items-center gap-2">
         <button
           type="button"
           onClick={handleReviewFile}
@@ -748,7 +810,7 @@ export function MonacoEditorContainer({
               ? "Review this file for bugs, errors and refactor opportunities"
               : "This file type is not reviewable"
           }
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-2xs font-medium bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-200 backdrop-blur-sm transition-colors disabled:opacity-40"
         >
           {isReviewing ? (
             <span className="w-3 h-3 rounded-full border border-zinc-300 border-t-transparent animate-spin" />
@@ -759,7 +821,7 @@ export function MonacoEditorContainer({
         </button>
         {!isReviewing && reviewModel && (
           <span
-            className="px-1.5 py-1 rounded-md text-[10px] font-mono bg-zinc-800/85 border border-zinc-700/70 text-zinc-400"
+            className="px-1.5 py-1 rounded-md text-3xs font-mono bg-zinc-800/85 border border-zinc-700/70 text-zinc-400"
             title={`Review ran on ${reviewModel}`}
           >
             {reviewModel.split("/").pop()}
@@ -774,7 +836,7 @@ export function MonacoEditorContainer({
               revealFinding(reviewIssues[index]?.line, index);
               setFindingCursor((cursor) => cursor + 1);
             }}
-            className="px-1.5 py-1 rounded-md text-[11px] font-mono bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 backdrop-blur-sm transition-colors"
+            className="px-1.5 py-1 rounded-md text-2xs font-mono bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 backdrop-blur-sm transition-colors"
           >
             {reviewIssues.length} ↓
           </button>
@@ -784,7 +846,7 @@ export function MonacoEditorContainer({
             type="button"
             onClick={clearReview}
             title="Clear all review findings"
-            className="px-2 py-1 rounded-md text-[11px] bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
+            className="px-2 py-1 rounded-md text-2xs bg-zinc-800/85 hover:bg-zinc-700 border border-zinc-700/70 text-zinc-300"
           >
             Clear
           </button>
@@ -794,7 +856,7 @@ export function MonacoEditorContainer({
       {/* ── Review status (errors / notes) ───────────────────────── */}
       {(reviewError || reviewNote) && (
         <div
-          className={`absolute top-11 right-3 z-40 max-w-[320px] px-2.5 py-1.5 rounded-md text-[11px] leading-snug backdrop-blur-sm border ${
+          className={`absolute top-11 right-3 z-editor max-w-[320px] px-2.5 py-1.5 rounded-md text-2xs leading-snug backdrop-blur-sm border ${
             reviewError
               ? "bg-red-500/10 border-red-500/30 text-red-300"
               : "bg-amber-500/10 border-amber-500/30 text-amber-300"
@@ -826,7 +888,7 @@ export function MonacoEditorContainer({
                 title={expanded ? "Collapse" : "Expand"}
               >
                 <span
-                  className={`text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${
+                  className={`text-4xs font-mono px-1 py-0.5 rounded shrink-0 ${
                     issue.severity === "error"
                       ? "bg-red-500/25 text-red-300"
                       : issue.severity === "warning"
@@ -836,8 +898,8 @@ export function MonacoEditorContainer({
                 >
                   {issue.severity}
                 </span>
-                <span className="text-[10px] text-zinc-500 font-mono shrink-0">L{issue.line}</span>
-                <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-zinc-200">
+                <span className="text-3xs text-zinc-500 font-mono shrink-0">L{issue.line}</span>
+                <span className="flex-1 min-w-0 truncate text-2xs font-medium text-zinc-200">
                   {issue.title}
                 </span>
                 <Icon
@@ -867,12 +929,12 @@ export function MonacoEditorContainer({
               {expanded && (
                 <div className="px-2.5 pb-2 space-y-1.5 border-t border-white/[0.06] pt-1.5">
                   {issue.detail && (
-                    <p className="text-[11px] text-zinc-400 leading-snug whitespace-pre-wrap m-0">
+                    <p className="text-2xs text-zinc-400 leading-snug whitespace-pre-wrap m-0">
                       {issue.detail}
                     </p>
                   )}
                   {issue.suggestion && (
-                    <p className="text-[11px] text-emerald-300/90 leading-snug whitespace-pre-wrap m-0">
+                    <p className="text-2xs text-emerald-300/90 leading-snug whitespace-pre-wrap m-0">
                       Fix: {issue.suggestion}
                     </p>
                   )}
@@ -881,7 +943,7 @@ export function MonacoEditorContainer({
                       type="button"
                       disabled={fixingIndex !== null}
                       onClick={() => handleFixIssue(issue, index)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-3xs font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
                     >
                       <Icon icon={Sparkles} size="xs" />
                       {fixingIndex === index ? "Fixing…" : "Fix with AI"}
@@ -889,7 +951,7 @@ export function MonacoEditorContainer({
                     <button
                       type="button"
                       onClick={() => dismissFinding(index)}
-                      className="px-2 py-0.5 rounded text-[10px] bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
+                      className="px-2 py-0.5 rounded text-3xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
                     >
                       Dismiss
                     </button>
@@ -905,22 +967,22 @@ export function MonacoEditorContainer({
 
       {/* Click-away backdrop so the inline prompt can always be dismissed */}
       {isInlinePromptOpen && (
-        <div className="absolute inset-0 z-40" onMouseDown={closeInlinePrompt} />
+        <div role="presentation" className="absolute inset-0 z-raised" onMouseDown={closeInlinePrompt} />
       )}
 
       {/* Floating Cmd+K Inline Edit Overlay */}
       {isInlinePromptOpen && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[540px] max-w-[92%] bg-[#18181b]/95 backdrop-blur-xl border border-purple-500/50 rounded-xl shadow-2xl p-2.5 z-editor animate-in fade-in-0 zoom-in-95 duration-150">
           <div className="flex items-center justify-between mb-1.5 px-1">
             <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
               <span>✨</span>
               <span>ACSA Inline Edit</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-mono">
+              <span className="px-1.5 py-0.5 rounded text-3xs bg-purple-500/20 text-purple-300 font-mono">
                 {resolveEditorAiConfig(settingsRef.current).model || "Active AI"}
               </span>
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500 font-mono">Cmd+K</span>
+              <span className="text-3xs text-zinc-500 font-mono">Cmd+K</span>
               <button
                 type="button"
                 onClick={closeInlinePrompt}
@@ -948,6 +1010,8 @@ export function MonacoEditorContainer({
               }}
               placeholder="Describe changes or ask AI to edit code... (Enter to apply, Esc to cancel)"
               className="flex-1 bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-purple-500 transition-colors"
+              // Cmd+K opened this box; the caret belongs in it.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
             />
             <button
@@ -968,7 +1032,7 @@ export function MonacoEditorContainer({
             </button>
           </div>
           {inlineError && (
-            <div className="mt-1.5 flex items-start gap-1.5 px-1 text-[11px] text-amber-300">
+            <div className="mt-1.5 flex items-start gap-1.5 px-1 text-2xs text-amber-300">
               <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
               <span className="leading-snug">{inlineError}</span>
             </div>
@@ -989,45 +1053,10 @@ export function MonacoEditorContainer({
         }}
         onChange={(val) => onChange(val || "")}
         onMount={handleEditorDidMount}
-        options={{
-          // Editor preferences from Settings. These were previously hardcoded
-          // here, which is why the Font and Code Style panes appeared to save
-          // values that changed nothing.
-          fontSize: aiSettings?.fontSize ?? 13,
-          lineHeight: aiSettings?.lineHeight ? Math.round((aiSettings.lineHeight) * (aiSettings?.fontSize ?? 13)) : 0,
-          fontLigatures: aiSettings?.enableLigatures ?? true,
-          fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
-          lineNumbers: "on",
-          renderWhitespace: "selection",
-          renderLineHighlight: "all",
-          renderLineHighlightOnlyWhenFocus: false,
-          tabSize: aiSettings?.tabSize ?? 4,
-          insertSpaces: aiSettings?.insertSpaces ?? true,
-          wordWrap: aiSettings?.wordWrap ? "on" : "off",
-          automaticLayout: true,
-          scrollBeyondLastLine: false,
-          minimap: { enabled: true, maxColumn: 80 },
-          bracketPairColorization: { enabled: true },
-          guides: { bracketPairs: true, indentation: true },
-          inlineSuggest: { enabled: true },
-          suggest: {
-            preview: true,
-            showMethods: true,
-            showFunctions: true,
-            showConstructors: true,
-            showFields: true,
-            showVariables: true,
-            showClasses: true,
-            showStructs: true,
-            showInterfaces: true,
-            showModules: true,
-            showProperties: true,
-          },
-          padding: { top: 8, bottom: 8 },
-        }}
+        options={editorOptions}
       />
     </div>
   );
-}
+});
 
 export default MonacoEditorContainer;

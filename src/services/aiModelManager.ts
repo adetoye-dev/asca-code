@@ -342,6 +342,20 @@ export function loadAllProviders(): Record<AIProviderId, AIProviderConfig> {
  * as secrets) and then deleted. Until it is deleted the key is still sitting in
  * the browser, so the removal is the point of the exercise, not a tidy-up.
  */
+let hydration: Promise<void> | null = null;
+
+/**
+ * Await the registry being hydrated, running it at most once.
+ *
+ * Both the workbench and the startup model probe need a hydrated registry, and
+ * calling `hydrateProviders()` directly from each raced the one-time
+ * localStorage migration. Everything that needs the registry should await this.
+ */
+export function ensureProvidersHydrated(): Promise<void> {
+  if (!hydration) hydration = hydrateProviders();
+  return hydration;
+}
+
 export async function hydrateProviders(): Promise<void> {
   const merged = cloneInitialProviders();
   delete (merged as any).deterministic;
@@ -726,49 +740,78 @@ export function addCustomModelToProvider(
  * - Auto-selects the optimal local code worker based on capability ranking.
  * - Dispatches 'acsa:models-updated' event to notify UI components.
  */
+/** Whether a model name and an installed tag refer to the same model. */
+function modelMatches(installed: string, wanted: string): boolean {
+  if (!installed || !wanted) return false;
+  return (
+    installed === wanted ||
+    installed === `${wanted}:latest` ||
+    wanted === `${installed}:latest` ||
+    installed.startsWith(`${wanted}:`) ||
+    wanted.startsWith(`${installed}:`)
+  );
+}
+
+/** Forget the saved chat model. Used when the model it names no longer exists. */
+export function clearActiveSelectedModel(): void {
+  selectedModelCache = null;
+  void appStore.setSetting("selected_model", null).catch(() => {});
+  notifyModelsUpdated();
+}
+
+/**
+ * Reconcile the Ollama provider with what is actually installed.
+ *
+ * The list is the daemon's, not ours: models get deleted outside the app, and a
+ * registry that only ever grew showed them forever — which is exactly what was
+ * reported. Everything else here follows from the new list: `selectedModel`
+ * cannot name something that is gone, and a *saved* chat selection pointing at a
+ * deleted model is cleared, because the agent resolves its model from that and
+ * would otherwise hand a missing model to the runtime.
+ *
+ * Written through `saveProviderConfig`, which updates the in-memory registry and
+ * the provider row. The previous version mutated the clone `loadAllProviders`
+ * returns and wrote localStorage, so the next read put the deleted models back.
+ */
 export function syncOllamaModels(
   installedModels: string[],
   activeModel?: string
 ): Record<AIProviderId, AIProviderConfig> {
   const all = loadAllProviders();
-  if (all.ollama) {
-    const cleanInstalled = Array.from(new Set(installedModels.filter(Boolean)));
-    all.ollama.availableModels = cleanInstalled;
-    all.ollama.isConnected = cleanInstalled.length > 0;
+  if (!all.ollama) return all;
 
-    const bestWorker = autoSelectBestLocalWorker(cleanInstalled);
-    if (bestWorker) {
-      setAutoSelectedLocalWorker(bestWorker);
-    }
+  const cleanInstalled = Array.from(new Set(installedModels.filter(Boolean)));
+  const current = all.ollama.selectedModel || "";
+  const bestWorker = autoSelectBestLocalWorker(cleanInstalled);
 
-    if (activeModel && cleanInstalled.some((m) => m === activeModel || m.startsWith(`${activeModel}:`))) {
-      all.ollama.selectedModel = activeModel;
-    } else {
-      const current = all.ollama.selectedModel || "";
-      const currentExists = cleanInstalled.some(
-        (m) =>
-          m === current ||
-          m === `${current}:latest` ||
-          current === `${m}:latest` ||
-          m.startsWith(`${current}:`) ||
-          current.startsWith(`${m}:`)
-      );
-      if (currentExists) {
-        all.ollama.selectedModel = current;
-      } else if (bestWorker) {
-        all.ollama.selectedModel = bestWorker;
-      } else if (cleanInstalled.length > 0) {
-        all.ollama.selectedModel = cleanInstalled[0];
-      }
-    }
+  let selectedModel = current;
+  if (activeModel && cleanInstalled.some((m) => modelMatches(m, activeModel))) {
+    selectedModel = activeModel;
+  } else if (cleanInstalled.some((m) => modelMatches(m, current))) {
+    selectedModel = current;
+  } else if (bestWorker) {
+    selectedModel = bestWorker;
+  } else if (cleanInstalled.length > 0) {
+    selectedModel = cleanInstalled[0];
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("acsa:models-updated"));
-    }
-  } catch {}
-  return all;
+
+  if (bestWorker) setAutoSelectedLocalWorker(bestWorker);
+
+  const saved = getActiveSelectedModel();
+  if (
+    saved &&
+    saved.providerId === "ollama" &&
+    !cleanInstalled.some((m) => modelMatches(m, saved.model))
+  ) {
+    clearActiveSelectedModel();
+  }
+
+  return saveProviderConfig({
+    ...all.ollama,
+    availableModels: cleanInstalled,
+    isConnected: cleanInstalled.length > 0,
+    selectedModel,
+  });
 }
 
 export interface ConfiguredModelItem {
@@ -781,10 +824,15 @@ export interface ConfiguredModelItem {
 }
 
 /**
- * Returns available Orchestrator Brains for user selection.
- * Defaults to configured cloud models only (local models are autonomously managed as workers).
+ * Every model the user can run the agent on — cloud, plus local when asked.
+ *
+ * Local models used to be hidden here on the theory that they were "workers"
+ * driven by a background orchestrator. That orchestrator is gone, and on its own
+ * a local model cannot run tools at all: Ollama's Responses API drops tool
+ * definitions, so the run would read and reply and never act. That is fixed by
+ * `core-engine/responses_adapter.py`, which is why they belong in this list.
  */
-export function getConfiguredModelsList(includeLocal: boolean = false): ConfiguredModelItem[] {
+export function getConfiguredModelsList(includeLocal: boolean = true): ConfiguredModelItem[] {
   const all = loadAllProviders();
   const list: ConfiguredModelItem[] = [];
 
@@ -793,8 +841,12 @@ export function getConfiguredModelsList(includeLocal: boolean = false): Configur
     if ((p.id as string) === "deterministic") continue;
 
     if (p.category === "cloud") {
-      // Cloud providers: only show if user configured an API key
-      if (p.apiKey && p.apiKey.trim().length > 3) {
+      // "Has a key" is `isConnected`, which the registry derives server-side from
+      // whether a key exists. It is NOT `apiKey`: credentials are write-only across
+      // the API, so that field is always empty by design and gating on it hid every
+      // configured cloud model — which is why chat refused to start with "no local AI
+      // model is installed or selected" while the dashboard showed DeepSeek connected.
+      if (p.isConnected) {
         const rawModels = p.availableModels && p.availableModels.length > 0
           ? p.availableModels
           : [p.selectedModel];
@@ -818,7 +870,7 @@ export function getConfiguredModelsList(includeLocal: boolean = false): Configur
           for (const m of p.availableModels) {
             list.push({
               providerId: p.id,
-              providerName: p.availableModels.length > 1 ? `Ollama (${m})` : "Ollama (Local)",
+              providerName: "Ollama (on this machine)",
               model: m,
               speedBadge: p.speedBadge || "Fast",
               isDefault: p.isDefault && p.selectedModel === m,
@@ -830,7 +882,10 @@ export function getConfiguredModelsList(includeLocal: boolean = false): Configur
     }
   }
 
-  return list;
+  // Cloud first, then local. The registry lists `ollama` first, so without this
+  // the menu opens on a row of small local models and buries the hosted ones.
+  // `sort` is stable, so the order inside each group is the registry's.
+  return list.sort((a, b) => (a.category === b.category ? 0 : a.category === "cloud" ? -1 : 1));
 }
 
 export const SELECTED_MODEL_KEY = "acsa_active_selected_model_v2";
@@ -841,16 +896,18 @@ export interface StoredSelectedModel {
 }
 
 /**
- * Persists the user's explicitly selected model across reloads, panel open/closes, and sessions.
- * Chat models are strictly Cloud Brain models; local models are managed by the background orchestrator.
+ * Persists the user's explicitly selected model across reloads, panel opens and
+ * sessions.
+ *
+ * A local model is allowed here. It used to be refused — "background workers must
+ * never be saved as the chat model" — but the background orchestrator that
+ * managed them no longer exists, and the tool adapter makes a local model a real
+ * agent: it edits files and runs commands. Refusing it left the cheap path
+ * unreachable from the UI.
  */
 export function saveActiveSelectedModel(providerId: AIProviderId, model: string): void {
   if (!providerId || !model) return;
   const all = loadAllProviders();
-  if (all[providerId]?.category === "local" || providerId === "ollama") {
-    // Local models are background workers and must never be saved as the chat model selector choice
-    return;
-  }
   selectedModelCache = { providerId, model };
   void appStore.setSetting("selected_model", { providerId, model }).catch(() => {});
   if (all[providerId]) {
@@ -873,22 +930,17 @@ export function saveActiveSelectedModel(providerId: AIProviderId, model: string)
 export function getActiveSelectedModel(): StoredSelectedModel | null {
   const parsed = selectedModelCache ?? null;
   if (!parsed || !parsed.providerId || !parsed.model) return null;
-  const pid = parsed.providerId as AIProviderId;
-  // A local model must never pollute the chat selector, even if an older build
-  // stored one.
-  if (loadAllProviders()[pid]?.category === "local" || pid === "ollama") {
-    selectedModelCache = null;
-    void appStore.setSetting("selected_model", null).catch(() => {});
-    return null;
-  }
+  // A stored local model used to be erased here — and written back as `null`, so
+  // the choice could not survive a relaunch. That was the other half of the guard
+  // that kept local models out of the agent; see `saveActiveSelectedModel`.
   return parsed;
 }
 
 /**
- * Resolves the active model item, guaranteeing that user-selected models persist across page reloads.
- * By default (includeLocal = false), only cloud models are considered.
+ * Resolves the active model item, so a user's pick survives a page reload.
+ * Local models count by default; see `getConfiguredModelsList`.
  */
-export function resolveInitialSelectedModel(includeLocal: boolean = false): ConfiguredModelItem | null {
+export function resolveInitialSelectedModel(includeLocal: boolean = true): ConfiguredModelItem | null {
   const list = getConfiguredModelsList(includeLocal);
   const saved = getActiveSelectedModel();
 
@@ -902,12 +954,19 @@ export function resolveInitialSelectedModel(includeLocal: boolean = false): Conf
     if (byName) return byName;
   }
 
-  // 3. Fallback to default configured item
-  const defaultItem = list.find((m) => m.isDefault);
-  if (defaultItem) return defaultItem;
+  // 3. Nothing chosen yet: prefer a cloud default, then any cloud model, and only
+  // then a local one. Without this the local provider wins by accident — it is
+  // first in the registry and carries `isDefault: true` — so a user who had
+  // configured DeepSeek would silently start running their agent on a small model
+  // that happens to be on disk. Local stays a deliberate choice, and the fallback
+  // for a machine with nothing else, which is where it was before.
+  const cloudDefault = list.find((m) => m.isDefault && m.category === "cloud");
+  if (cloudDefault) return cloudDefault;
+  const anyCloud = list.find((m) => m.category === "cloud");
+  if (anyCloud) return anyCloud;
 
-  // 4. Fallback to first available model in list
-  return list[0] || null;
+  // 4. No cloud model at all: a local model is the only model.
+  return list.find((m) => m.isDefault) || list[0] || null;
 }
 
 /**

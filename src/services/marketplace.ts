@@ -8,6 +8,8 @@
  *    .acsa/mcp.json, consumable by the engine's MCP client.
  */
 
+import { marketplaceFetch } from "./marketplaceClient";
+
 export type MarketplaceKind = "skill" | "mcp";
 export type MarketplaceDomain =
   | "coding"
@@ -549,7 +551,7 @@ export async function installSkill(
     return { ok: false, error: "Not a skill" };
   }
   try {
-    const res = await fetch("/api/skills/import", {
+    const res = await marketplaceFetch("/api/skills/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -580,7 +582,7 @@ export async function installMcpServer(
       config.args = [`${root}/core-engine/mcp_servers/workspace_server.py`];
       config.env = { ...(config.env || {}), ACSA_MCP_ROOT: projectRoot };
     }
-    const res = await fetch("/api/mcp/servers", {
+    const res = await marketplaceFetch("/api/mcp/servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: item.id, config, projectRoot }),
@@ -597,7 +599,7 @@ export async function removeMcpServer(
   projectRoot: string
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch("/api/mcp/servers/remove", {
+    const res = await marketplaceFetch("/api/mcp/servers/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, projectRoot }),
@@ -613,7 +615,7 @@ export async function listMcpServers(
   projectRoot: string
 ): Promise<Record<string, McpServerConfig>> {
   try {
-    const res = await fetch(`/api/mcp/servers?projectRoot=${encodeURIComponent(projectRoot)}`);
+    const res = await marketplaceFetch(`/api/mcp/servers?projectRoot=${encodeURIComponent(projectRoot)}`);
     if (!res.ok) return {};
     const data = await res.json();
     return data.servers || {};
@@ -627,7 +629,7 @@ export async function listMcpTools(
   projectRoot: string
 ): Promise<{ ok: boolean; tools: McpToolInfo[]; error?: string }> {
   try {
-    const res = await fetch("/api/mcp/tools", {
+    const res = await marketplaceFetch("/api/mcp/tools", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, projectRoot }),

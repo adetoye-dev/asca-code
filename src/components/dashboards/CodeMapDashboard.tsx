@@ -36,6 +36,7 @@ import {
 import { CodeMapGraph } from "./CodeMapGraph";
 import { streamChatCompletion } from "../../services/aiChatService";
 import { getAutoSelectedLocalWorker, resolveEditorAiConfig } from "../../services/aiModelManager";
+import { readTextFile } from "../../services/fileAccess";
 import type { AISettings } from "../SettingsModal";
 import {
   fetchBlastRadius,
@@ -228,12 +229,7 @@ export function CodeMapDashboard({
       try {
         let source = "";
         try {
-          const res = await fetch("/api/fs/read", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectRoot, filePath: entry.path }),
-          });
-          if (res.ok) source = (await res.json()).content || "";
+          source = await readTextFile(entry.path, projectRoot);
         } catch {
           /* index facts alone are still enough to explain the role */
         }
@@ -328,12 +324,16 @@ export function CodeMapDashboard({
       className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-white/[0.05] transition-colors group"
     >
       <div className="flex items-center gap-1.5 min-w-0">
-        <span className={`text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${kindTone(symbol.kind)}`}>
+        <span className={`text-4xs font-mono px-1 py-0.5 rounded shrink-0 ${kindTone(symbol.kind)}`}>
           {symbol.kind || "symbol"}
         </span>
+        {/* Left as an arbitrary value on purpose: `text-xs` is 12px *and* sets a
+            16px line-height, so swapping it here would quietly change the row's
+            height. Line-heights belong with the type scale decisions, not with a
+            rename that promises to change nothing. */}
         <span className="text-[12px] text-zinc-200 font-mono truncate">{symbol.name}</span>
       </div>
-      <div className="flex items-center gap-1 mt-0.5 text-[10px] text-zinc-500 font-mono min-w-0">
+      <div className="flex items-center gap-1 mt-0.5 text-3xs text-zinc-500 font-mono min-w-0">
         {showFile && (
           <>
             <Icon icon={FileCode2} className="w-2.5 h-2.5 shrink-0" />
@@ -344,7 +344,7 @@ export function CodeMapDashboard({
         <span className="shrink-0">L{symbol.start_line}</span>
       </div>
       {symbol.signature && (
-        <div className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">{symbol.signature}</div>
+        <div className="text-3xs text-zinc-500 font-mono truncate mt-0.5">{symbol.signature}</div>
       )}
     </button>
   );
@@ -363,12 +363,12 @@ export function CodeMapDashboard({
                     <Icon icon={ArrowLeft} className="w-3.5 h-3.5" />
                   </button>
                   <FileIcon fileName={selectedEntry.path} className="w-4 h-4 shrink-0" />
-                  <span className="text-[13px] font-medium text-zinc-100 font-mono truncate">
+                  <span className="text-body font-medium text-zinc-100 font-mono truncate">
                     {selectedEntry.path}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                <div className="flex items-center gap-2 flex-wrap text-2xs">
                   <Chip label="lines" value={selectedEntry.lines} />
                   <Chip label="symbols" value={selectedEntry.symbolCount} />
                   <Chip label="imports" value={selectedImportCount} />
@@ -389,8 +389,8 @@ export function CodeMapDashboard({
                   <ul className="space-y-1 px-1 py-0.5">
                     {(graph ? describeFileRole(selectedEntry, graph, entrypoints) : []).map(
                       (line) => (
-                        <li key={line} className="flex items-start gap-1.5 text-[11px] text-zinc-300">
-                          <span className="text-zinc-600 mt-[1px]">•</span>
+                        <li key={line} className="flex items-start gap-1.5 text-2xs text-zinc-300">
+                          <span className="text-zinc-500 mt-[1px]">•</span>
                           <span className="leading-snug">{line}</span>
                         </li>
                       )
@@ -398,11 +398,11 @@ export function CodeMapDashboard({
                   </ul>
                   <div className="mt-2 pt-2 border-t border-hairline">
                     {aiSummary ? (
-                      <p className="text-[11px] text-zinc-400 leading-relaxed whitespace-pre-wrap px-1">
+                      <p className="text-2xs text-zinc-400 leading-relaxed whitespace-pre-wrap px-1">
                         {aiSummary}
                       </p>
                     ) : explainError ? (
-                      <div className="flex items-start gap-1.5 px-1 text-[11px] text-red-300">
+                      <div className="flex items-start gap-1.5 px-1 text-2xs text-red-300">
                         <Icon icon={AlertCircle} className="w-3 h-3 shrink-0 mt-0.5" />
                         <span className="leading-snug">{explainError}</span>
                       </div>
@@ -411,7 +411,7 @@ export function CodeMapDashboard({
                       type="button"
                       onClick={() => explainFile(selectedEntry)}
                       disabled={isExplaining}
-                      className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-purple-600/80 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
+                      className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-3xs font-semibold bg-purple-600/80 hover:bg-purple-500 disabled:opacity-50 text-white transition-colors"
                       title="Ask the active model to explain this file's purpose"
                     >
                       <Icon icon={Sparkles} className="w-3 h-3" />
@@ -421,9 +421,9 @@ export function CodeMapDashboard({
                 </Card>
 
                 <Card title={`Symbols (${outline.length})`}>
-                  {isLoadingFile && <div className="text-[11px] text-zinc-500 px-1">Loading…</div>}
+                  {isLoadingFile && <div className="text-2xs text-zinc-500 px-1">Loading…</div>}
                   {!isLoadingFile && outline.length === 0 && (
-                    <div className="text-[11px] text-zinc-500 px-1">
+                    <div className="text-2xs text-zinc-500 px-1">
                       No top-level symbols indexed in this file.
                     </div>
                   )}
@@ -432,7 +432,7 @@ export function CodeMapDashboard({
 
                 <Card title={`Blast radius — ${dependents.length} file(s) affected by a change`}>
                   {dependents.length === 0 ? (
-                    <div className="text-[11px] text-zinc-500 px-1">
+                    <div className="text-2xs text-zinc-500 px-1">
                       Nothing depends on this file (transitively) — safe to change in isolation.
                     </div>
                   ) : (
@@ -446,10 +446,10 @@ export function CodeMapDashboard({
                         >
                           <Icon icon={CornerDownRight} className="w-3 h-3 text-zinc-500 shrink-0" />
                           <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                          <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                             {dep}
                           </span>
-                          <span className="text-[10px] text-zinc-600 font-mono shrink-0">
+                          <span className="text-3xs text-zinc-500 font-mono shrink-0">
                             {dirname(dep) || "."}
                           </span>
                         </button>
@@ -460,7 +460,7 @@ export function CodeMapDashboard({
 
                 <Card title={`Imports ${selectedImportCount} file(s)`}>
                   {(graph?.importsOf.get(selectedEntry.path) || []).length === 0 ? (
-                    <div className="text-[11px] text-zinc-500 px-1">
+                    <div className="text-2xs text-zinc-500 px-1">
                       Nothing project-local is imported here.
                     </div>
                   ) : (
@@ -474,7 +474,7 @@ export function CodeMapDashboard({
                         >
                           <Icon icon={ArrowDownToLine} className="w-3 h-3 text-zinc-500 shrink-0" />
                           <FileIcon fileName={dep} className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                          <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                             {dep}
                           </span>
                         </button>
@@ -487,11 +487,11 @@ export function CodeMapDashboard({
               <>
                 <Card title="Architecture">
                   {!indexMap && !error && (
-                    <div className="text-[11px] text-zinc-500 px-1">No index loaded.</div>
+                    <div className="text-2xs text-zinc-500 px-1">No index loaded.</div>
                   )}
                   {indexMap && (
                     <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-2xs">
                         <Meta label="Archetype" value={indexMap.architecture.archetype || "—"} />
                         <Meta label="Mode" value={indexMap.architecture.mode || "—"} />
                         <Meta label="Scale tier" value={indexMap.architecture.scaleTier || "—"} />
@@ -524,7 +524,7 @@ export function CodeMapDashboard({
                       </div>
                       {indexMap.architecture.entrypoints.length > 0 && (
                         <div>
-                          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+                          <div className="text-3xs uppercase tracking-wide text-zinc-500 mb-1">
                             Entrypoints
                           </div>
                           <div className="flex flex-wrap gap-1.5">
@@ -533,7 +533,7 @@ export function CodeMapDashboard({
                                 key={ep}
                                 type="button"
                                 onClick={() => onOpenFile(ep, 1)}
-                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono hover:bg-emerald-500/20 transition-colors"
+                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-2xs font-mono hover:bg-emerald-500/20 transition-colors"
                               >
                                 {ep}
                               </button>
@@ -549,7 +549,7 @@ export function CodeMapDashboard({
                   <Card title="Landmarks">
                     <div className="space-y-2">
                       {landmarks.map(([key, value]) => (
-                        <div key={key} className="text-[11px]">
+                        <div key={key} className="text-2xs">
                           <span className="text-zinc-500 font-mono">{key.replace(/_/g, " ")}</span>
                           <div className="flex flex-wrap gap-1.5 mt-1">
                             {String(value)
@@ -562,14 +562,14 @@ export function CodeMapDashboard({
                                     key={item}
                                     type="button"
                                     onClick={() => setSelectedFile(item)}
-                                    className="px-2 py-0.5 rounded-md bg-zinc-800/70 border border-zinc-700/60 text-zinc-300 text-[10px] font-mono hover:bg-zinc-700 transition-colors"
+                                    className="px-2 py-0.5 rounded-md bg-zinc-800/70 border border-zinc-700/60 text-zinc-300 text-3xs font-mono hover:bg-zinc-700 transition-colors"
                                   >
                                     {item}
                                   </button>
                                 ) : (
                                   <span
                                     key={item}
-                                    className="px-2 py-0.5 rounded-md bg-zinc-900/60 border border-zinc-800 text-zinc-500 text-[10px] font-mono"
+                                    className="px-2 py-0.5 rounded-md bg-zinc-900/60 border border-zinc-800 text-zinc-500 text-3xs font-mono"
                                   >
                                     {item}
                                   </span>
@@ -593,13 +593,13 @@ export function CodeMapDashboard({
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-white/[0.05] transition-colors"
                         >
                           <FileIcon fileName={hub.path} className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                          <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                             {hub.path}
                           </span>
-                          <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                          <span className="text-3xs text-zinc-500 font-mono shrink-0">
                             {hub.imports} imports
                           </span>
-                          <span className="text-[10px] text-amber-300/90 font-mono shrink-0 w-[74px] text-right">
+                          <span className="text-3xs text-amber-300/90 font-mono shrink-0 w-[74px] text-right">
                             {hub.dependents} importers
                           </span>
                         </button>
@@ -610,7 +610,7 @@ export function CodeMapDashboard({
 
                 {!indexMap && error && (
                   <Card title="Getting started">
-                    <div className="text-[11px] text-zinc-400 leading-relaxed px-1">
+                    <div className="text-2xs text-zinc-400 leading-relaxed px-1">
                       The code map is built from the AST symbol index in{" "}
                       <span className="font-mono text-zinc-300">.acsa/index.json</span>. Run{" "}
                       <span className="font-mono text-zinc-300">Re-index</span> above to generate it for{" "}
@@ -626,7 +626,7 @@ export function CodeMapDashboard({
   return (
     <div className="h-full w-full flex flex-col bg-canvas text-zinc-200 font-sans select-none overflow-hidden">
       {/* ── Index status strip ─────────────────────────────────────────── */}
-      <div className="shrink-0 border-b border-hairline px-4 py-2 flex items-center gap-2 flex-wrap text-[11px]">
+      <div className="shrink-0 border-b border-hairline px-4 py-2 flex items-center gap-2 flex-wrap text-2xs">
         <span className="inline-flex items-center gap-1.5 text-zinc-400">
           <Icon icon={Network} className="w-3.5 h-3.5 text-purple-300" />
           <span className="font-medium text-zinc-200">{projectName || "project"}</span>
@@ -652,7 +652,7 @@ export function CodeMapDashboard({
               key={option}
               type="button"
               onClick={() => setLens(option)}
-              className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2.5 py-0.5 rounded text-2xs font-medium transition-colors ${
                 lens === option
                   ? "bg-zinc-700/80 text-zinc-100"
                   : "text-zinc-400 hover:text-zinc-200"
@@ -676,7 +676,7 @@ export function CodeMapDashboard({
 
       <div className="flex-1 min-h-0 flex">
         {/* ── Left: search + file index ─────────────────────────────────── */}
-        <div className="w-[330px] shrink-0 border-r border-hairline flex flex-col min-h-0">
+        <div className="w-[clamp(230px,24%,330px)] shrink-0 border-r border-hairline flex flex-col min-h-0">
           <div className="p-3 border-b border-hairline">
             <div className="relative">
               <Icon
@@ -696,13 +696,13 @@ export function CodeMapDashboard({
 
           <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
             {error && (
-              <div className="flex items-start gap-2 p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-[11px] text-red-300">
+              <div className="flex items-start gap-2 p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-2xs text-red-300">
                 <Icon icon={AlertCircle} className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>{error}</span>
               </div>
             )}
             {isLoading && !indexMap && !error && (
-              <div className="p-3 text-[11px] text-zinc-500">Building code map…</div>
+              <div className="p-3 text-2xs text-zinc-500">Building code map…</div>
             )}
 
             {/* Map lens: the clusters Louvain found, each toggleable. */}
@@ -712,7 +712,7 @@ export function CodeMapDashboard({
                   <Icon icon={Waypoints} className="w-3 h-3 inline -mt-0.5 mr-1" />
                   Communities ({architecture.communities.length})
                 </SectionLabel>
-                <div className="px-2 pb-1 text-[10px] text-zinc-500 leading-snug">
+                <div className="px-2 pb-1 text-3xs text-zinc-500 leading-snug">
                   Files clustered by dependency. Toggle to isolate a subsystem.
                 </div>
                 {architecture.communities.map((community) => {
@@ -738,10 +738,10 @@ export function CodeMapDashboard({
                         className="w-2.5 h-2.5 rounded-sm shrink-0 border border-white/10"
                         style={{ background: hidden ? "transparent" : community.color }}
                       />
-                      <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                      <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                         {community.label}
                       </span>
-                      <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                      <span className="text-3xs text-zinc-500 font-mono shrink-0">
                         {community.count}
                       </span>
                     </button>
@@ -751,7 +751,7 @@ export function CodeMapDashboard({
                   <button
                     type="button"
                     onClick={() => setFocusNeighborhood((prev) => !prev)}
-                    className={`mt-2 w-full px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
+                    className={`mt-2 w-full px-2 py-1.5 rounded-lg text-2xs border transition-colors ${
                       focusNeighborhood
                         ? "border-purple-500/50 bg-purple-500/10 text-purple-200"
                         : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
@@ -769,7 +769,7 @@ export function CodeMapDashboard({
                   Symbols {results.length > 0 && `(${results.length})`}
                 </SectionLabel>
                 {!isSearching && results.length === 0 && (
-                  <div className="px-2 py-1 text-[11px] text-zinc-500">No symbols matched.</div>
+                  <div className="px-2 py-1 text-2xs text-zinc-500">No symbols matched.</div>
                 )}
                 {results.slice(0, 60).map((s) => renderSymbolRow(s, true))}
                 {fileMatches.length > 0 && (
@@ -785,10 +785,10 @@ export function CodeMapDashboard({
                         }`}
                       >
                         <FileIcon fileName={f.path} className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                        <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                           {f.path}
                         </span>
-                        <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                        <span className="text-3xs text-zinc-500 font-mono shrink-0">
                           {f.symbolCount}
                         </span>
                       </button>
@@ -815,10 +815,10 @@ export function CodeMapDashboard({
                     title={`${hub.dependents} file(s) import this · it imports ${hub.imports}`}
                   >
                     <FileIcon fileName={hub.path} className="w-3.5 h-3.5 shrink-0" />
-                    <span className="text-[11px] text-zinc-300 font-mono truncate flex-1">
+                    <span className="text-2xs text-zinc-300 font-mono truncate flex-1">
                       {hub.path}
                     </span>
-                    <span className="text-[10px] text-amber-300/90 font-mono shrink-0">
+                    <span className="text-3xs text-amber-300/90 font-mono shrink-0">
                       {hub.dependents} ←
                     </span>
                   </button>
@@ -841,10 +841,10 @@ export function CodeMapDashboard({
                       }`}
                     >
                       <FileIcon fileName={f.path} className="w-3.5 h-3.5 shrink-0" />
-                      <span className="text-[11px] text-zinc-400 font-mono truncate flex-1">
+                      <span className="text-2xs text-zinc-400 font-mono truncate flex-1">
                         {f.path}
                       </span>
-                      <span className="text-[10px] text-zinc-600 font-mono shrink-0">
+                      <span className="text-3xs text-zinc-500 font-mono shrink-0">
                         {f.symbolCount}
                       </span>
                     </button>
@@ -871,14 +871,14 @@ export function CodeMapDashboard({
                 depthFocus={focusNeighborhood ? neighborhood : null}
               />
             ) : (
-              <div className="h-full w-full rounded-xl border border-hairline bg-[#0d0d10] flex items-center justify-center text-[11px] text-zinc-500">
+              <div className="h-full w-full rounded-xl border border-hairline bg-[#0d0d10] flex items-center justify-center text-2xs text-zinc-500">
                 {isLoading ? "Building code map…" : "No resolvable dependencies to graph yet."}
               </div>
             )}
             </div>
 
             {selectedFile && (
-              <div className="absolute top-3 right-3 bottom-3 w-[340px] z-10 overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
+              <div className="absolute top-3 right-3 bottom-3 w-[clamp(240px,28%,340px)] z-popover overflow-y-auto rounded-xl border border-hairline bg-[#141416]/96 backdrop-blur-md shadow-2xl p-4 space-y-4">
                 {detailsPane}
               </div>
             )}
@@ -915,7 +915,7 @@ function Chip({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wide text-zinc-500 sticky top-0 bg-canvas/95 backdrop-blur-sm z-10">
+    <div className="px-2 pt-3 pb-1 text-3xs uppercase tracking-wide text-zinc-500 sticky top-0 bg-canvas/95 backdrop-blur-sm z-popover">
       {children}
     </div>
   );
@@ -924,7 +924,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl bg-workbench border border-hairline overflow-hidden">
-      <div className="px-3 py-2 border-b border-hairline text-[11px] font-semibold text-zinc-300">
+      <div className="px-3 py-2 border-b border-hairline text-2xs font-semibold text-zinc-300">
         {title}
       </div>
       <div className="p-2">{children}</div>
@@ -935,7 +935,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="text-3xs uppercase tracking-wide text-zinc-500">{label}</div>
       <div className="text-zinc-300 font-mono break-words" title={value}>
         {value}
       </div>

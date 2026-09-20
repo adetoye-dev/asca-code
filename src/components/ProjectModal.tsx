@@ -5,14 +5,15 @@
  * into a real physical folder on disk.
  */
 
-import React, { useState } from "react";
-import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { Search, Globe, FolderPlus, Zap, Database, Code2, Server, X, AlertCircle } from "lucide-react";
 import { Icon } from "./ui/Icon";
+import { useDialogA11y } from "../hooks/useDialogA11y";
 
 interface ProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateProject: (name: string, template: string, parentDir?: string) => void;
+  onCreateProject: (name: string, template: string, parentDir?: string) => void | Promise<void>;
   onPickFolder?: () => Promise<string | null>;
 }
 
@@ -20,7 +21,7 @@ const TEMPLATES = [
   {
     id: "nextjs",
     name: "Next.js 15 App Router",
-    description: "Production fullstack React 19 app with TypeScript, Tailwind CSS, App Directory, and server components.",
+    description: "Production fullstack React 19 app with TypeScript, Tailwind CSS v4, App Directory, and server components.",
     icon: Globe,
     badge: "Fullstack",
     files: ["app/page.tsx", "app/layout.tsx", "package.json"],
@@ -28,7 +29,7 @@ const TEMPLATES = [
   {
     id: "vite-react",
     name: "Vite React + TypeScript",
-    description: "Ultra-fast frontend SPA with React 18, strict TypeScript, Tailwind CSS, and lightning HMR.",
+    description: "Ultra-fast frontend SPA with React 19, strict TypeScript, Tailwind CSS v4, and lightning HMR.",
     icon: Code2,
     badge: "Frontend",
     files: ["src/App.tsx", "vite.config.ts", "package.json"],
@@ -44,7 +45,7 @@ const TEMPLATES = [
   {
     id: "supabase",
     name: "Supabase Fullstack Starter",
-    description: "Express backend pre-configured with @supabase/supabase-js client, auth endpoints, and .env.example.",
+    description: "Express backend with a @supabase/supabase-js client, a health check, and .env.example.",
     icon: Database,
     badge: "BaaS",
     files: ["src/server.js", "src/supabaseClient.js", ".env.example"],
@@ -76,6 +77,13 @@ export function ProjectModal({
   const [projectName, setProjectName] = useState("");
   const [parentDir, setParentDir] = useState("~/AcsaProjects");
   const [selectedTemplate, setSelectedTemplate] = useState("nextjs");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Tab stays in the dialog, Escape closes it, focus returns to whatever opened
+  // it. None of that existed: Escape did nothing and Tab walked out behind it.
+  useDialogA11y(dialogRef, onClose, isOpen);
 
   if (!isOpen) return null;
 
@@ -88,17 +96,36 @@ export function ProjectModal({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = projectName.trim().replace(/\s+/g, "-").toLowerCase();
-    if (!clean) return;
-    onCreateProject(clean, selectedTemplate, parentDir.trim());
-    setProjectName("");
-    onClose();
+    if (!clean || creating) return;
+
+    setError(null);
+    setCreating(true);
+    try {
+      await onCreateProject(clean, selectedTemplate, parentDir.trim());
+      setProjectName("");
+      onClose();
+    } catch (err) {
+      // Stay open, with the input intact. This used to close first and then
+      // raise an alert, which discarded the name the user had just typed and
+      // the path that actually needed fixing — and an alert on its own says
+      // nothing about which field is wrong.
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 select-none">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create a new project"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 select-none"
+    >
       <div className="w-full max-w-lg bg-modal/95 backdrop-blur-xl border border-hairline rounded-modal shadow-elevation-3 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
@@ -108,7 +135,7 @@ export function ProjectModal({
             </div>
             <div>
               <h2 className="text-sm font-bold text-zinc-100">Create New Project on Disk</h2>
-              <p className="text-[11px] text-zinc-400">
+              <p className="text-2xs text-zinc-400">
                 Scaffold a new project in a real physical directory on your machine.
               </p>
             </div>
@@ -116,6 +143,8 @@ export function ProjectModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
+            title="Close"
             className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg"
           >
             <Icon icon={X} className="w-4 h-4" />
@@ -126,10 +155,13 @@ export function ProjectModal({
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Project Name Input */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="projectmodal-project-name-1" className="text-xs font-semibold text-zinc-300">
               Project Name
             </label>
-            <input
+            <input id="projectmodal-project-name-1"
+              // Focus lands in the first field of a dialog the user just opened,
+              // which is what the ARIA authoring practices recommend.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               type="text"
               placeholder="e.g. user-auth-service"
@@ -141,11 +173,11 @@ export function ProjectModal({
 
           {/* Destination Folder Location */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="projectmodal-save-inside-directory-2" className="text-xs font-semibold text-zinc-300">
               Save Inside Directory
             </label>
             <div className="flex items-center gap-2">
-              <input
+              <input id="projectmodal-save-inside-directory-2"
                 type="text"
                 placeholder="e.g. ~/Desktop or /Users/.../Projects"
                 value={parentDir}
@@ -165,16 +197,19 @@ export function ProjectModal({
 
           {/* Template Picker */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-zinc-300">
+            {/* A group of template buttons, not a form control: a heading. */}
+            <p className="text-xs font-semibold text-zinc-300">
               Select Architecture Template
-            </label>
+            </p>
             <div className="grid grid-cols-1 gap-2">
               {TEMPLATES.map((tmpl) => {
                 const isSelected = selectedTemplate === tmpl.id;
                 const Icon = tmpl.icon;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={tmpl.id}
+                    aria-pressed={isSelected}
                     onClick={() => setSelectedTemplate(tmpl.id)}
                     className={`flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${
                       isSelected
@@ -200,24 +235,33 @@ export function ProjectModal({
                           {tmpl.files.map((f) => (
                             <span
                               key={f}
-                              className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono"
+                              className="text-3xs px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono"
                             >
                               {f}
                             </span>
                           ))}
                         </div>
                       </div>
-                      <p className="text-[11px] text-zinc-500 mt-0.5 leading-normal">
+                      <p className="text-2xs text-zinc-500 mt-0.5 leading-normal">
                         {tmpl.description}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
           </div>
 
           {/* Actions */}
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-950/30 px-3 py-2 text-2xs leading-relaxed text-red-200"
+            >
+              <Icon icon={AlertCircle} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" />
+              <span className="break-words">{error}</span>
+            </div>
+          )}
           <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
@@ -228,14 +272,15 @@ export function ProjectModal({
             </button>
             <button
               type="submit"
-              disabled={!projectName.trim()}
+              disabled={!projectName.trim() || creating}
+              aria-busy={creating}
               className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-lg transition-all ${
-                projectName.trim()
+                projectName.trim() && !creating
                   ? "bg-primary-action hover:bg-primary-action cursor-pointer shadow-sm"
                   : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
               }`}
             >
-              Scaffold Real Files
+              {creating ? "Scaffolding…" : "Scaffold Real Files"}
             </button>
           </div>
         </form>

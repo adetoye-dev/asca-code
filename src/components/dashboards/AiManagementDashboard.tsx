@@ -36,6 +36,7 @@ import {
   type OllamaStatus,
   type OllamaProgressEvent,
 } from "../../services/ollamaSetup";
+import { aiFetch } from "../../services/aiClient";
 
 interface AiManagementDashboardProps {
   onModelSettingsChanged?: () => void;
@@ -70,6 +71,13 @@ export function AiManagementDashboard({
 
   const activeProvider = providers[selectedId] || providers.ollama;
 
+  // The registry's `isConnected` for the local provider is a static default: only
+  // cloud providers have it recomputed from a stored key. Trusting it here made
+  // the header claim "Connected & Verified" directly above a panel reading "Not
+  // installed". Derive the local provider's state from the live probe instead.
+  const activeConnected =
+    activeProvider.id === "ollama" ? ollamaStatus?.running === true : activeProvider.isConnected;
+
   // Sync inputs when selected provider changes
   useEffect(() => {
     if (activeProvider) {
@@ -93,6 +101,10 @@ export function AiManagementDashboard({
         }
       }).catch(() => {});
     }
+    // Keyed on which provider is selected. Depending on `activeProvider` would
+    // re-enter: the Ollama branch calls `setProviders`, which produces a new
+    // provider object, which would run this again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const handleStartOllama = async () => {
@@ -219,7 +231,7 @@ export function AiManagementDashboard({
     setTestResult(null);
 
     try {
-      const res = await fetch("/api/ai/test-connection", {
+      const res = await aiFetch("/api/ai/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -300,7 +312,7 @@ export function AiManagementDashboard({
   return (
     <>
     <div className="h-full w-full bg-workbench text-zinc-200 p-4 md:p-6 font-sans select-none overflow-hidden flex flex-col">
-      <div className="max-w-6xl w-full mx-auto h-full flex flex-col min-h-0 space-y-4">
+      <div className="w-full max-w-[clamp(48rem,88vw,96rem)] mx-auto h-full flex flex-col min-h-0 space-y-4">
         {/* ── Top Header Toolbar ────────────────────────────────────────── */}
         <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
           <div>
@@ -332,7 +344,7 @@ export function AiManagementDashboard({
           <div className="w-full md:w-64 lg:w-72 shrink-0 h-full overflow-y-auto border-b md:border-b-0 md:border-r border-zinc-800/80 p-3 space-y-4 bg-workbench/60">
             {/* Group 1: Local Engines */}
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold text-zinc-400 uppercase tracking-wider">
                 <Icon icon={Zap} className="w-3 h-3 text-emerald-400" />
                 <span>Local Engines (Offline)</span>
               </div>
@@ -356,7 +368,7 @@ export function AiManagementDashboard({
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold">{p.name}</div>
-                          <div className="truncate text-[10px] text-zinc-500 font-mono">
+                          <div className="truncate text-3xs text-zinc-500 font-mono">
                             {p.selectedModel || (p.isConnected ? "Active" : "Offline")}
                           </div>
                         </div>
@@ -382,7 +394,7 @@ export function AiManagementDashboard({
 
             {/* Group 2: Cloud LLMs */}
             <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold text-zinc-400 uppercase tracking-wider">
                 <Icon icon={Globe} className="w-3 h-3 text-purple-400" />
                 <span>Cloud LLM APIs</span>
               </div>
@@ -406,7 +418,7 @@ export function AiManagementDashboard({
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold">{p.name}</div>
-                          <div className="truncate text-[10px] text-zinc-500 font-mono">{p.selectedModel}</div>
+                          <div className="truncate text-3xs text-zinc-500 font-mono">{p.selectedModel}</div>
                         </div>
                       </div>
 
@@ -439,18 +451,18 @@ export function AiManagementDashboard({
                   <div>
                     <div className="flex items-center gap-2.5">
                       <h2 className="text-lg font-bold text-white tracking-tight">{activeProvider.name}</h2>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                      <span className="px-2 py-0.5 rounded-full text-3xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
                         {activeProvider.category === "local" ? "Local Engine" : "Cloud LLM"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-1">
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          activeProvider.isConnected ? "bg-emerald-400" : "bg-zinc-600"
+                          activeConnected ? "bg-emerald-400" : "bg-zinc-600"
                         }`}
                       />
-                      <span className="text-[11px] font-mono text-zinc-400 font-medium">
-                        {activeProvider.isConnected
+                      <span className="text-2xs font-mono text-zinc-400 font-medium">
+                        {activeConnected
                           ? "Connected & Verified"
                           : activeProvider.category === "local"
                           ? "Offline / Not Running"
@@ -487,7 +499,7 @@ export function AiManagementDashboard({
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-zinc-200">Ollama Daemon Service</span>
                         {ollamaStatus?.running && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
+                          <span className="px-2 py-0.5 rounded-full text-3xs font-mono font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
                             Port 11434 · Ready
                           </span>
                         )}
@@ -498,10 +510,11 @@ export function AiManagementDashboard({
                           <Icon icon={Loader2} className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
                         ) : (
                           <span
+                            title={ollamaStatus.error || undefined}
                             className={`flex items-center gap-1.5 text-xs font-mono font-semibold ${
                               ollamaStatus.running
                                 ? "text-emerald-400"
-                                : ollamaStatus.installed
+                                : ollamaStatus.error || ollamaStatus.installed
                                   ? "text-amber-400"
                                   : "text-red-400"
                             }`}
@@ -510,23 +523,25 @@ export function AiManagementDashboard({
                               className={`w-2 h-2 rounded-full ${
                                 ollamaStatus.running
                                   ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
-                                  : ollamaStatus.installed
+                                  : ollamaStatus.error || ollamaStatus.installed
                                     ? "bg-amber-400"
                                     : "bg-red-400"
                               }`}
                             />
                             {ollamaStatus.running
                               ? "Running"
-                              : ollamaStatus.installed
-                                ? "Stopped"
-                                : "Not installed"}
+                              : ollamaStatus.error
+                                ? "Detection unavailable"
+                                : ollamaStatus.installed
+                                  ? "Stopped"
+                                  : "Not installed"}
                           </span>
                         )}
                       </div>
                     </div>
 
                     {ollamaStatus?.totalRamGb ? (
-                      <div className="text-[11px] text-zinc-400 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-zinc-800/60 font-mono">
+                      <div className="text-2xs text-zinc-400 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-zinc-800/60 font-mono">
                         <span>Hardware: <strong className="text-zinc-200 font-semibold">{ollamaStatus.totalRamGb} GB RAM</strong></span>
                         <span>Recommended Default: <strong className="text-purple-300 font-semibold">{ollamaStatus.recommendedModel}</strong></span>
                       </div>
@@ -566,7 +581,7 @@ export function AiManagementDashboard({
                           Installed Local Models ({ollamaStatus?.models.length || 0})
                         </h3>
                       </div>
-                      <span className="text-[11px] text-zinc-500 font-mono">100% offline on this machine</span>
+                      <span className="text-2xs text-zinc-500 font-mono">100% offline on this machine</span>
                     </div>
 
                     {ollamaStatus && ollamaStatus.models.length > 0 ? (
@@ -606,12 +621,12 @@ export function AiManagementDashboard({
                                       {meta.name}
                                     </span>
                                     {isActive && (
-                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider shrink-0">
+                                      <span className="px-1.5 py-0.5 rounded text-4xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider shrink-0">
                                         Active
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-[11px] text-zinc-400 font-mono truncate mt-0.5" title={m}>
+                                  <p className="text-2xs text-zinc-400 font-mono truncate mt-0.5" title={m}>
                                     {m}
                                   </p>
                                 </div>
@@ -637,7 +652,7 @@ export function AiManagementDashboard({
                               <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800/60">
                                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                                   {meta.size && (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-medium bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 whitespace-nowrap">
+                                    <span className="px-2 py-0.5 rounded-md text-3xs font-mono font-medium bg-zinc-800/80 text-zinc-300 border border-zinc-700/50 whitespace-nowrap">
                                       {meta.size}
                                     </span>
                                   )}
@@ -648,7 +663,7 @@ export function AiManagementDashboard({
                                         e.stopPropagation();
                                         setOpenSpecsModelTag(openSpecsModelTag === m ? null : m);
                                       }}
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 border border-purple-800/40 hover:border-purple-600/50 transition-colors whitespace-nowrap cursor-pointer"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-3xs font-medium bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 border border-purple-800/40 hover:border-purple-600/50 transition-colors whitespace-nowrap cursor-pointer"
                                       title="Click to view verified Ollama capabilities & GGUF hardware specs"
                                     >
                                       <span>{meta.category}</span>
@@ -683,33 +698,32 @@ export function AiManagementDashboard({
                                 <>
                                   {/* Backdrop to dismiss when clicking outside */}
                                   <div
-                                    className="fixed inset-0 z-40"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenSpecsModelTag(null);
-                                    }}
+                                    role="presentation"
+                                    className="fixed inset-0 z-scrim"
+                                    onClick={() => setOpenSpecsModelTag(null)}
                                   />
 
                                   {/* Popover Card */}
                                   <div
-                                    className={`absolute z-50 bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
+                                    role="dialog"
+                                    aria-label="Model specification"
+                                    className={`absolute z-popover bottom-[48px] w-72 max-w-[calc(100vw-3rem)] p-3 rounded-xl bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/80 shadow-2xl text-left space-y-2.5 animate-in fade-in zoom-in-95 duration-100 ${
                                       index % 2 === 1
                                         ? "sm:right-3.5 sm:left-auto left-3.5"
                                         : "left-3.5"
                                     }`}
-                                    onClick={(e) => e.stopPropagation()}
                                   >
                                     <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
                                       <div className="flex items-center gap-1.5">
                                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                        <span className="text-[11px] font-semibold text-zinc-200">Verified GGUF Specs</span>
+                                        <span className="text-2xs font-semibold text-zinc-200">Verified GGUF Specs</span>
                                       </div>
-                                      <span className="text-[10px] text-zinc-500 font-mono">Ollama Source</span>
+                                      <span className="text-3xs text-zinc-500 font-mono">Ollama Source</span>
                                     </div>
 
                                     {/* Runtime Capabilities Section */}
                                     <div className="space-y-1">
-                                      <div className="text-[9px] uppercase tracking-wider font-bold text-zinc-400">
+                                      <div className="text-4xs uppercase tracking-wider font-bold text-zinc-400">
                                         Runtime Capabilities
                                       </div>
                                       <div className="flex flex-wrap gap-1 pt-0.5">
@@ -717,20 +731,20 @@ export function AiManagementDashboard({
                                           meta.capabilities.map((cap) => (
                                             <span
                                               key={cap}
-                                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800/90 text-zinc-300 border border-zinc-700/60 flex items-center gap-1"
+                                              className="px-1.5 py-0.5 rounded text-3xs font-medium bg-zinc-800/90 text-zinc-300 border border-zinc-700/60 flex items-center gap-1"
                                             >
                                               <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
                                               {cap}
                                             </span>
                                           ))
                                         ) : (
-                                          <span className="text-[10px] text-zinc-500 italic">Standard generation</span>
+                                          <span className="text-3xs text-zinc-500 italic">Standard generation</span>
                                         )}
                                       </div>
                                     </div>
 
                                     {/* Hardware & Parameter Specs */}
-                                    <div className="space-y-1 pt-1 border-t border-zinc-800/80 text-[11px]">
+                                    <div className="space-y-1 pt-1 border-t border-zinc-800/80 text-2xs">
                                       <div className="flex justify-between text-zinc-400">
                                         <span>Context Limit:</span>
                                         <span className="font-mono text-zinc-200">{meta.contextLengthFormatted || "Standard"}</span>
@@ -750,7 +764,7 @@ export function AiManagementDashboard({
                                     </div>
 
                                     {/* Capability Explanation */}
-                                    <div className="p-2 rounded-lg bg-zinc-950/60 border border-zinc-800/60 text-[10px] text-zinc-400 leading-relaxed">
+                                    <div className="p-2 rounded-lg bg-zinc-950/60 border border-zinc-800/60 text-3xs text-zinc-400 leading-relaxed">
                                       {meta.strength}
                                     </div>
                                   </div>
@@ -763,7 +777,7 @@ export function AiManagementDashboard({
                     ) : (
                       <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center space-y-1">
                         <p className="text-xs text-zinc-400">No models currently downloaded to Ollama.</p>
-                        <p className="text-[11px] text-zinc-500">Pick a recommended model below to download it locally.</p>
+                        <p className="text-2xs text-zinc-500">Pick a recommended model below to download it locally.</p>
                       </div>
                     )}
                   </div>
@@ -816,7 +830,7 @@ export function AiManagementDashboard({
                             <Icon icon={Download} className="w-3.5 h-3.5 text-purple-400" />
                             Download Additional Models
                           </h3>
-                          <p className="text-[11px] text-zinc-400 mt-0.5">
+                          <p className="text-2xs text-zinc-400 mt-0.5">
                             High-performance local models optimized for code completion, refactoring, and AI conversation.
                           </p>
                         </div>
@@ -835,23 +849,23 @@ export function AiManagementDashboard({
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
                                         <h4 className="text-xs font-bold text-zinc-100">{item.name}</h4>
-                                        <div className="font-mono text-[10px] text-purple-300 mt-0.5">{item.tag}</div>
+                                        <div className="font-mono text-3xs text-purple-300 mt-0.5">{item.tag}</div>
                                       </div>
                                       <div className="flex flex-col items-end gap-1">
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                                        <span className="px-1.5 py-0.5 rounded text-4xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/60">
                                           {item.size}
                                         </span>
-                                        <span className="text-[9px] text-zinc-500 font-mono">{item.recommendedRam}</span>
+                                        <span className="text-4xs text-zinc-500 font-mono">{item.recommendedRam}</span>
                                       </div>
                                     </div>
 
-                                    <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                                    <p className="text-2xs text-zinc-400 mt-2 leading-relaxed">
                                       {item.description}
                                     </p>
                                   </div>
 
                                   <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
-                                    <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                                    <span className="text-3xs text-zinc-500 font-mono uppercase tracking-wider">
                                       {item.category}
                                     </span>
 
@@ -884,7 +898,7 @@ export function AiManagementDashboard({
 
                         {/* 5. Custom Model Tag Input Field */}
                         <div className="pt-3 border-t border-zinc-800/80">
-                          <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
+                          <label htmlFor="aimanagementdashboard-pull-custom-model-by-tag-1" className="text-xs font-semibold text-zinc-300 block mb-1.5">
                             Pull Custom Model by Tag
                           </label>
                           <form
@@ -897,13 +911,13 @@ export function AiManagementDashboard({
                             }}
                             className="flex items-center gap-2"
                           >
-                            <input
+                            <input id="aimanagementdashboard-pull-custom-model-by-tag-1"
                               type="text"
                               value={customModelTag}
                               onChange={(e) => setCustomModelTag(e.target.value)}
                               placeholder="e.g. llama3.2:1b, starcoder2:3b, deepseek-r1:14b..."
                               disabled={!!pullingModelTag}
-                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
                             />
                             <button
                               type="submit"
@@ -914,7 +928,7 @@ export function AiManagementDashboard({
                               <span>Pull Model</span>
                             </button>
                           </form>
-                          <p className="text-[10px] text-zinc-500 mt-1">
+                          <p className="text-3xs text-zinc-500 mt-1">
                             Supports any model tag from the official{" "}
                             <a
                               href="https://ollama.com/library"
@@ -936,13 +950,13 @@ export function AiManagementDashboard({
                   {/* Model Selection Dropdown */}
                   <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold text-zinc-300">Active Model</label>
+                        <label htmlFor="aimanagementdashboard-active-model-2" className="text-xs font-semibold text-zinc-300">Active Model</label>
                         {activeProvider.category === "cloud" && (
                           <button
                             type="button"
                             disabled={isTesting}
                             onClick={handleTestConnection}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-purple-300 hover:text-purple-100 bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs font-semibold text-purple-300 hover:text-purple-100 bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 rounded-lg transition-colors shadow-sm disabled:opacity-50"
                             title="Query live provider endpoint with your API key to fetch newest models"
                           >
                             <Icon icon={RefreshCw} className={`w-3 h-3 ${isTesting ? "animate-spin text-purple-400" : ""}`} />
@@ -959,7 +973,7 @@ export function AiManagementDashboard({
                         const modelsToShow = displayModels.length > 0 ? displayModels : activeProvider.availableModels;
 
                         return (
-                          <select
+                          <select id="aimanagementdashboard-active-model-2"
                             value={selectedModel}
                             onChange={(e) => {
                               setSelectedModel(e.target.value);
@@ -983,12 +997,12 @@ export function AiManagementDashboard({
                             onSubmit={handleAddCustomModel}
                             className="flex items-center gap-2"
                           >
-                            <input
+                            <input id="aimanagementdashboard-api-key-secret-token-stored-in-the-app-3"
                               type="text"
                               value={customCloudModel}
                               onChange={(e) => setCustomCloudModel(e.target.value)}
                               placeholder="Or enter custom model ID (e.g. gpt-5, claude-3-7-sonnet-2026, deepseek-v3)..."
-                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                             />
                             <button
                               type="submit"
@@ -998,13 +1012,13 @@ export function AiManagementDashboard({
                               Add Model
                             </button>
                           </form>
-                          <p className="text-[10px] text-zinc-500 mt-1">
+                          <p className="text-3xs text-zinc-500 mt-1">
                             Type any custom model ID to bypass defaults and use unlisted or fine-tuned model weights.
                           </p>
                         </div>
                       )}
 
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-2xs text-zinc-500">
                         Powers inline completions, code suggestions, syntax repair, and AI assistant conversations.
                       </p>
                   </div>
@@ -1012,20 +1026,20 @@ export function AiManagementDashboard({
                   {/* API Key Input (if cloud provider) */}
                   {activeProvider.category === "cloud" ? (
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                      <label htmlFor="aimanagementdashboard-api-key-secret-token-stored-in-the-app-3" className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                         <span>API Key / Secret Token</span>
-                        <span className="text-[11px] text-zinc-500 font-normal">
-                          Stored in browser local storage on this device
+                        <span className="text-2xs text-zinc-500 font-normal">
+                          Stored in the app database on this device — never read back into the page
                         </span>
                       </label>
                       <div className="flex items-center gap-2">
                         <div className="relative flex-1">
-                          <input
+                          <input id="aimanagementdashboard-base-url-endpoint-classname-text-1-4"
                             type={showApiKey ? "text" : "password"}
                             value={apiKeyInput}
                             onChange={(e) => setApiKeyInput(e.target.value)}
                             placeholder="sk-••••••••••••••••••••••••"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                           />
                           <button
                             type="button"
@@ -1050,7 +1064,7 @@ export function AiManagementDashboard({
                       <Icon icon={ShieldCheck} className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                       <div>
                         <div className="font-semibold text-white">100% Offline & Private</div>
-                        <p className="text-[11px] text-emerald-300/80 mt-0.5">
+                        <p className="text-2xs text-emerald-300/80 mt-0.5">
                           This model runs locally on your machine. Zero network traffic, zero third-party telemetry, zero API keys required.
                         </p>
                       </div>
@@ -1061,7 +1075,7 @@ export function AiManagementDashboard({
 
               {/* Base URL / Endpoint */}
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                <label htmlFor="aimanagementdashboard-base-url-endpoint-classname-text-1-4" className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                   <span>Base URL / Endpoint</span>
                   <button
                     type="button"
@@ -1069,7 +1083,7 @@ export function AiManagementDashboard({
                       setBaseUrlInput(activeProvider.baseUrl);
                       handleSaveProvider(selectedModel, activeProvider.baseUrl);
                     }}
-                    className="text-[11px] text-purple-400 hover:underline"
+                    className="text-2xs text-purple-400 hover:underline"
                   >
                     Reset default
                   </button>
@@ -1079,7 +1093,7 @@ export function AiManagementDashboard({
                   value={baseUrlInput}
                   onChange={(e) => setBaseUrlInput(e.target.value)}
                   placeholder="https://api..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 transition-colors"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                 />
               </div>
 
@@ -1110,8 +1124,8 @@ export function AiManagementDashboard({
                   </button>
                 </div>
                 {activeProvider.category === "cloud" && (
-                  <p className="text-[10px] text-zinc-500">
-                    API keys are stored locally in this browser and are used by the agent, editor review and inline edit.
+                  <p className="text-3xs text-zinc-500">
+                    API keys are stored in the app database on this device and used by the agent, editor review and inline edit. They are write-only across the app's own API: the page can set or clear a key and ask whether one exists, but never receives the value.
                   </p>
                 )}
 
@@ -1141,7 +1155,7 @@ export function AiManagementDashboard({
             {/* Bottom Status Callout */}
             <div className="pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400">
               <span>{activeProvider.availableModels.length} models available for {activeProvider.name}</span>
-              <span className="font-mono text-[11px] text-zinc-500">ID: {activeProvider.id}</span>
+              <span className="font-mono text-2xs text-zinc-500">ID: {activeProvider.id}</span>
             </div>
           </div>
         </div>

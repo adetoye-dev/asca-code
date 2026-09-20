@@ -1,13 +1,12 @@
 import { GitBranch, Activity, FileCode, Cpu, HardDrive, Database, RefreshCw } from "lucide-react";
 import { Icon } from "../ui/Icon";
-import type { SystemMetrics } from "../TelemetryScorecard";
 import type { ProjectIndexState } from "../../hooks/usePipeline";
+import { useSystemMetrics } from "../../hooks/useSystemMetrics";
 
 export interface StatusBarProps {
   gitBranch: string;
   encoding?: string;
   cursorPosition?: string;
-  metrics?: SystemMetrics | null;
   indexStatus?: ProjectIndexState;
   isIndexing?: boolean;
   onSyncIndex?: () => void;
@@ -17,11 +16,13 @@ export function StatusBar({
   gitBranch,
   encoding = "UTF-8",
   cursorPosition = "Ln 1, Col 1",
-  metrics,
   indexStatus,
   isIndexing = false,
   onSyncIndex,
 }: StatusBarProps) {
+  // Fetched here rather than handed down: see hooks/useSystemMetrics.ts for why a
+  // host metric should not re-render the workbench three times a second.
+  const metrics = useSystemMetrics();
   const formatMetric = (value?: number) => value === undefined ? "--" : `${Math.round(value)}%`;
 
   return (
@@ -44,7 +45,7 @@ export function StatusBar({
         {isIndexing ? (
           <div className="flex items-center space-x-1.5 text-accent animate-pulse" title="AST Code Indexing in progress...">
             <Icon icon={RefreshCw} className="w-3.5 h-3.5 animate-spin text-accent" />
-            <span className="font-mono text-[11px]">Indexing AST...</span>
+            <span className="font-mono text-2xs">Indexing AST...</span>
           </div>
         ) : indexStatus?.indexed ? (
           <button
@@ -58,7 +59,7 @@ export function StatusBar({
 Click to re-index project.`}
           >
             <Icon icon={Database} className="w-3.5 h-3.5 text-muted group-hover:scale-110 transition-transform" />
-            <span className="group-hover:underline font-mono text-[11px]">{indexStatus.profile?.indexed_files ?? 0} files synced</span>
+            <span className="group-hover:underline font-mono text-2xs">{indexStatus.profile?.indexed_files ?? 0} files synced</span>
           </button>
         ) : (
           <button
@@ -68,7 +69,7 @@ Click to re-index project.`}
             title="Click to build AST symbol index for instant code intelligence"
           >
             <Icon icon={Database} className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Index Project</span>
+            <span className="text-2xs">Index Project</span>
           </button>
         )}
       </div>

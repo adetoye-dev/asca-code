@@ -3,10 +3,10 @@
  *
  * Full developer-grade layout integrating:
  * 1. Titlebar: Project picker, Quick Open file search bar, Layout toggles (Sidebar/Panel), Theme picker, Telemetry.
- * 2. Activity Bar: Explorer, Monitoring, Model Manager, Autonomous Agent Dock, Extensions & Themes.
+ * 2. Activity Bar: Explorer, Monitoring, Model Manager, Agent Dock, Marketplace & Themes.
  * 3. Primary Sidebar: Mounts the active activity bar view (toggleable via Cmd+B).
  * 4. Main Stage (Dockview): Multi-tab Monaco editor with split panes & Diff inspector.
- * 5. Dedicated Bottom Panel: Tabbed dock housing Interactive Shell (Xterm.js), Gauntlet Output, and Problems (toggleable via Cmd+J / Ctrl+`).
+ * 5. Dedicated Bottom Panel: Tabbed dock housing the interactive shell, the run's output, and problems.
  * 6. Status Bar: Branch name, encoding, language, theme, and gate status.
  * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
  */
@@ -16,7 +16,6 @@ import {
   DockviewReact,
   DockviewReadyEvent,
   DockviewApi,
-  IDockviewPanelProps,
   IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
@@ -25,11 +24,13 @@ import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
 
-import { AssetPreview } from "../editor/AssetPreview";
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { DockviewWatermark } from "./DockviewWatermark";
 import { ProjectSetupCard } from "./ProjectSetupCard";
+import { WORKBENCH_PANELS } from "./WorkbenchPanels";
+import { WorkbenchProvider, type WorkbenchLive } from "./WorkbenchContext";
+import { SurfaceFallback } from "../ui/SurfaceFallback";
 import {
   fetchProjectStatus,
   runInProjectTerminal,
@@ -39,6 +40,7 @@ import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
 import { SearchSidebar } from "../sidebar/SearchSidebar";
 import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
 import { MarketplaceSidebar } from "../sidebar/MarketplaceSidebar";
+import { UpdateButton } from "./UpdateButton";
 import { VersionControlDropdown } from "./VersionControlDropdown";
 import { CloneModal } from "../modals/CloneModal";
 import { ProjectModal } from "../ProjectModal";
@@ -48,25 +50,26 @@ import { CommandPalette, CommandItem } from "../modals/CommandPalette";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { AiAssistantChat } from "../dashboards/AiAssistantChat";
 import { getDefaultProvider } from "../../services/aiModelManager";
-import { applyGlobalWorkbenchTheme } from "../../services/themeManager";
+import {
+  applyAccent,
+  applyGlobalWorkbenchTheme,
+  DEFAULT_ACCENT,
+} from "../../services/themeManager";
 import { systemMetricsService } from "../../services/systemMetricsService";
+import { chatDraft } from "../../services/chatDraft";
 import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WITH_OLLAMA } from "../../services/ollamaSetup";
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
+import { gitFetch } from "../../services/gitClient";
 
-type SidebarTab = "explorer" | "search" | "sourceControl" | "extensions";
+type SidebarTab = "explorer" | "search" | "sourceControl";
 
 const SPECIAL_PANELS = ["dock_diff", "diff_"];
 
 /* ── Lazily-loaded heavy surfaces ─────────────────────────────────────────
    Monaco (~1.5 MB) and the terminal/graph stacks dominate the bundle but are
    not needed to paint the workbench. Splitting them keeps first paint cheap;
-   each defers until the surface is actually opened. */
-const MonacoEditorContainer = lazy(() =>
-  import("../editor/MonacoEditorContainer").then((m) => ({ default: m.MonacoEditorContainer }))
-);
-const MonacoDiffContainer = lazy(() =>
-  import("../editor/MonacoDiffContainer").then((m) => ({ default: m.MonacoDiffContainer }))
-);
+   each defers until the surface is actually opened. The dockview panels that
+   pull in Monaco live in WorkbenchPanels.tsx and split it there. */
 const BottomPanel = lazy(() =>
   import("../panels/BottomPanel").then((m) => ({ default: m.BottomPanel }))
 );
@@ -80,26 +83,21 @@ const CodeMapDashboard = lazy(() =>
   import("../dashboards/CodeMapDashboard").then((m) => ({ default: m.CodeMapDashboard }))
 );
 
-/** Fallback shown while a lazily-loaded surface chunk arrives. */
-const SurfaceFallback = ({ label }: { label: string }) => (
-  <div className="h-full w-full flex items-center justify-center text-zinc-500 text-xs bg-[var(--vscode-editor-bg)]">
-    Loading {label}…
-  </div>
-);
-
 /** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
-type FullPageId = "monitor" | "aiManager" | "codeMap";
+type FullPageId = "monitor" | "aiManager" | "codeMap" | "marketplace";
 
 const FULL_PAGE_TITLES: Record<FullPageId, string> = {
   monitor: "Host Health & Performance",
   aiManager: "AI Models & Providers",
   codeMap: "Code Map",
+  marketplace: "Marketplace",
 };
 
 const FULL_PAGE_ICONS: Record<FullPageId, typeof Cpu> = {
   monitor: Activity,
   aiManager: Cpu,
   codeMap: Network,
+  marketplace: Package,
 };
 
 /**
@@ -195,21 +193,26 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     indexStatus,
     isIndexing,
     syncIndex,
-    prompt,
-    setPrompt,
     status,
-    orchestrationResult,
     activityLog,
-    systemMetrics,
     runPipeline,
     cancelPipeline,
     clearLog,
     isTauriAvailable,
     streamingAnswer,
     streamingThought,
+    failureDetail,
+    noFileChanges,
+    waitingForUser,
+    pendingApproval,
+    pendingQuestion,
+    respondToQuestion,
+    turnChanges,
+    openDiff,
+    reviewDiff,
+    clearReviewDiff,
+    respondToApproval,
     agentSteps,
-    pendingPermission,
-    respondToPermission,
   } = pipeline;
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
@@ -241,7 +244,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const delta = moveEvent.clientX - startX;
-      const newWidth = Math.max(180, Math.min(500, startWidth + delta));
+      // Bound by the window as well as a fixed ceiling: 500px is fine on a
+      // desktop and most of a small window.
+      const ceiling = Math.max(180, Math.min(500, Math.round(window.innerWidth * 0.4)));
+      const newWidth = Math.max(180, Math.min(ceiling, startWidth + delta));
       setSidebarWidth(newWidth);
       sidebarWidthRef.current = newWidth;
     };
@@ -276,7 +282,17 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [themeId, setThemeId] = useState<string>(
     () => (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_theme") || "github-dark" : "github-dark")
   );
-  const [settingsModalTab, setSettingsModalTab] = useState<string>("agents");
+  // Orthogonal to the theme: one theme ships, but the accent is the brand
+  // decision, and seeing it in the real workbench beats reading hex codes.
+  const [accentId, setAccentId] = useState<string>(
+    () =>
+      (typeof window !== "undefined" ? localStorage.getItem("acsa_ide_accent") : null) ||
+      DEFAULT_ACCENT,
+  );
+  // Must name a section that exists in SETTINGS_TREE. It said "agents", which
+  // matches nothing, so opening Settings landed on an empty pane — the whole
+  // dialog looked broken until you happened to click a nav item.
+  const [settingsModalTab, setSettingsModalTab] = useState<string>("agent");
   const [searchInitialReplace, setSearchInitialReplace] = useState(false);
   const [targetEditorLine, setTargetEditorLine] = useState<{
     path: string;
@@ -329,7 +345,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   }, [setIsSettingsModalOpen]);
 
   const openSettings = useCallback(() => {
-    setSettingsModalTab("agents");
+    setSettingsModalTab("agent");
     setIsSettingsModalOpen(true);
   }, [setIsSettingsModalOpen]);
 
@@ -343,9 +359,19 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     }
   }, [themeId]);
 
+  // Applied the same way the theme is: effect, persisted, so a relaunch keeps it.
+  useEffect(() => {
+    applyAccent(accentId);
+    try {
+      localStorage.setItem("acsa_ide_accent", accentId);
+    } catch {
+      // Ignore localStorage write failures
+    }
+  }, [accentId]);
+
   const refreshBranch = useCallback(async () => {
     try {
-      const res = await fetch("/api/git/status", {
+      const res = await gitFetch("/api/git/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: activeProject.path }),
@@ -400,6 +426,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const openMonitorTab = () => openFullPage("monitor");
   const openAiManagerTab = () => openFullPage("aiManager");
   const openCodeMapTab = () => openFullPage("codeMap");
+  const openMarketplaceTab = () => openFullPage("marketplace");
 
   const openAiChatTab = () => {
     // Mutual exclusivity: close right panel when opening center stage tab
@@ -416,6 +443,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     };
     window.addEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
     return () => window.removeEventListener(EVENT_OPEN_AI_MANAGEMENT, handleOpenAiManager);
+    // Subscribed once, on purpose: this is a global event bus. `openAiManagerTab`
+    // only calls stable state setters, so there is nothing to re-subscribe for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Listen for Programmatic Start Coding with Ollama Requests ─────────────
@@ -583,7 +613,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTabPath, saveFile]);
+  }, [activeTabPath, saveFile, isCenterChatOpen, setIsSettingsModalOpen]);
 
   // Escape closes the topmost full-surface overlay (chat / full page).
   useEffect(() => {
@@ -679,10 +709,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "agent.run",
-      title: "Autonomous Agent: Execute & Verify Task",
+      title: "Agent: Execute & Verify Task",
       category: "Agent",
       icon: Bot,
-      action: () => runPipeline(),
+      // "Whatever is in the composer": the chat owns that text now, so it is read
+      // from its store rather than plumbed through the pipeline as state.
+      action: () => runPipeline(chatDraft.get()),
     },
     {
       id: "view.explorer",
@@ -783,10 +815,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       title: "Show Marketplace: Skills, Tools & MCP Servers",
       category: "View",
       icon: Package,
-      action: () => {
-        setActiveSidebarTab("extensions");
-        setIsSidebarOpen(true);
-      },
+      action: openMarketplaceTab,
     },
   ];
 
@@ -794,8 +823,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // Rendered as an overlay above the editor grid (see the center-stage render
   // below), so it is a normal React child and always receives fresh props.
   const centerChatProps = {
-    prompt,
-    setPrompt,
     status,
     activityLog,
     projectRoot: activeProject.path,
@@ -830,16 +857,15 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     isWide: true,
     activeAiSettings: aiSettings,
     selectedContext: activeTabPath ? { path: activeTabPath, code: selectedCode } : null,
-    failureDetail: orchestrationResult?.error_detail,
-    orchestrationResult,
     indexStatus,
     isIndexing,
     onSyncIndex: syncIndex,
     streamingAnswer,
     streamingThought,
     agentSteps,
-    pendingPermission,
-    respondToPermission,
+    failureDetail,
+    pendingApproval,
+    respondToApproval,
     onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
       // Leave full canvas and dock the assistant back to the side tool window.
@@ -848,94 +874,80 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
   };
 
-  const components = {
-    // Asset Preview Tab
-    assetPreview: (props: IDockviewPanelProps<{ filePath: string; isTauri: boolean; projectRoot?: string }>) => (
-      <AssetPreview {...props} />
-    ),
-    // Monaco Code Editor Tab
-    editor: (props: IDockviewPanelProps<{ filePath: string }>) => {
-      const tab = openTabs.find((t) => t.path === props.params.filePath);
-      if (!tab) {
-        return (
-          <div className="h-full w-full flex items-center justify-center text-zinc-500 text-xs bg-[var(--vscode-editor-bg)]">
-            File closed
-          </div>
-        );
-      }
-      return (
-        <Suspense fallback={<SurfaceFallback label="editor" />}>
-          <MonacoEditorContainer
-            path={tab.path}
-            content={tab.content}
-            onChange={(newVal) => updateTabContent(tab.path, newVal)}
-            onSave={saveFile}
-            aiSettings={aiSettings}
-            themeId={themeId}
-            targetLine={targetEditorLine?.path === tab.path ? targetEditorLine.line : undefined}
-            targetColumn={targetEditorLine?.path === tab.path ? targetEditorLine.column : undefined}
-            revealTrigger={targetEditorLine?.path === tab.path ? targetEditorLine.ts : undefined}
-            onSelectionChange={setSelectedCode}
-            projectRoot={activeProject.path}
-          />
-        </Suspense>
-      );
-    },
+  // The empty-state panel flickered on every keystroke in the chat composer.
+  // Cause: `watermarkComponent` was an inline arrow, and dockview treats it as a
+  // component *type* — so each render produced a new type, React unmounted the
+  // old one and mounted a new one, and the panel rebuilt itself. The prompt text
+  // lives above this component (it is a prop of the assistant, which lives in
+  // this layout), so every character typed re-rendered the whole workbench.
+  //
+  // These handlers are setState calls and nothing else, so their identities are
+  // stable for the life of the layout; the memo then only changes when the setup
+  // card's own data does, which is when the panel should change.
+  const openFilePalette = useCallback(() => {
+    setPaletteMode("file");
+    setIsCommandPaletteOpen(true);
+  }, []);
+  const openCommandPalette = useCallback(() => {
+    setPaletteMode("command");
+    setIsCommandPaletteOpen(true);
+  }, []);
+  const toggleSidebarFromWatermark = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev);
+  }, []);
+  const toggleTerminalFromWatermark = useCallback(() => {
+    setIsBottomPanelOpen((prev) => !prev);
+  }, []);
+  const toggleAiFromWatermark = useCallback(() => {
+    setIsCenterChatOpen(false);
+    setIsRightPanelOpen((prev) => !prev);
+  }, []);
 
-    // Monaco Diff Viewer Tab
-    diff: (props: IDockviewPanelProps<{ filePath?: string; originalContent?: string; modifiedContent?: string; isGit?: boolean }>) => {
-      const isGit = props.params?.isGit;
-      const original = isGit ? (props.params?.originalContent ?? "") : "";
-      const modified = isGit ? (props.params?.modifiedContent ?? "") : currentDiff;
-      const path = isGit ? (props.params?.filePath ?? "git.diff") : "patch.diff";
+  // The live state that dockview panel components read.
+  //
+  // Dockview keeps the component function it was given when a panel is created,
+  // so a panel can only ever see current workbench state through context — see
+  // WorkbenchContext.tsx. Memoised on its contents so an unrelated re-render
+  // (typing in the chat composer, say) does not re-render every open panel.
+  const live: WorkbenchLive = useMemo(
+    () => ({
+      openTabs,
+      updateTabContent,
+      saveFile,
+      aiSettings,
+      themeId,
+      targetEditorLine,
+      onSelectionChange: setSelectedCode,
+      projectRoot: activeProject.path,
+      isTauriAvailable,
+      currentDiff,
+      setCurrentDiff,
+      applyPatchToTab,
+      refreshProjectFiles,
+      refreshBranch,
+    }),
+    [
+      openTabs,
+      updateTabContent,
+      saveFile,
+      aiSettings,
+      themeId,
+      targetEditorLine,
+      setSelectedCode,
+      activeProject.path,
+      isTauriAvailable,
+      currentDiff,
+      setCurrentDiff,
+      applyPatchToTab,
+      refreshProjectFiles,
+      refreshBranch,
+    ]
+  );
 
-      return (
-        <Suspense fallback={<SurfaceFallback label="diff viewer" />}>
-        <MonacoDiffContainer
-          originalContent={original}
-          modifiedContent={modified}
-          filePath={path}
-          onAccept={async () => {
-            if (path && path !== "patch.diff" && path !== "git.diff") {
-              try {
-                if (isTauriAvailable) {
-                  const { invoke } = await import("@tauri-apps/api/core");
-                  await invoke("write_file_content", {
-                    filePath: path,
-                    content: modified,
-                    projectRoot: activeProject.path,
-                  });
-                } else {
-                  await fetch("/api/fs/write", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      filePath: path,
-                      content: modified,
-                      projectRoot: activeProject.path,
-                    }),
-                  });
-                }
-                applyPatchToTab(path, modified);
-              } catch (err) {
-                console.error("Failed to write accepted patch to disk:", err);
-              }
-            }
-            props.api.close();
-            setCurrentDiff("");
-            refreshProjectFiles();
-            refreshBranch();
-          }}
-          onReject={() => {
-            props.api.close();
-            setCurrentDiff("");
-          }}
-        />
-        </Suspense>
-      );
-    },
-
-  };
+  // `components` used to be rebuilt here on every render, with an inline arrow
+  // per panel type. Dockview treats each new arrow as a new component *type*, so
+  // every render re-registered the factory — which re-runs updateOptions and a
+  // full layout pass on each keystroke. WORKBENCH_PANELS is a module constant.
 
   // ── Initialize Default Dockview Layout ────────────────────────────────────
   const onReady = useCallback((event: DockviewReadyEvent) => {
@@ -965,7 +977,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         closeTab(panel.id);
       }
     });
-  }, [openTabs, selectTab, closeTab, refreshBranch, refreshProjectFiles]);
+  }, [
+    openTabs,
+    selectTab,
+    closeTab,
+    activeProject.path,
+    isTauriAvailable,
+  ]);
 
   // Synchronize open tabs with Dockview panels
   useEffect(() => {
@@ -999,7 +1017,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         panel.api.setActive();
       }
     }
-  }, [openTabs, activeTabPath]);
+  }, [openTabs, activeTabPath, activeProject.path, isTauriAvailable]);
 
   // Isolate project state: close all previous project tabs & diffs when switching project
   useEffect(() => {
@@ -1018,6 +1036,30 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     }
     setCurrentDiff("");
   }, [activeProject.path, setCurrentDiff]);
+
+  // The change card's "Review". The two sides come from the engine — HEAD versus
+  // the working tree — so the existing viewer shows a real side-by-side instead
+  // of the file's content against an empty left pane.
+  useEffect(() => {
+    const api = dockviewApiRef.current;
+    if (!api || !reviewDiff) return;
+
+    const panelId = "dock_review";
+    const existing = api.getPanel(panelId);
+    if (existing) api.removePanel(existing);
+    api.addPanel({
+      id: panelId,
+      component: "diff",
+      title: reviewDiff.filePath.split(/[\\/]/).pop() || "Diff",
+      params: {
+        filePath: reviewDiff.filePath,
+        originalContent: reviewDiff.originalContent,
+        modifiedContent: reviewDiff.modifiedContent,
+        isGit: true,
+      },
+    });
+    clearReviewDiff();
+  }, [reviewDiff, clearReviewDiff]);
 
   // Open Diff tab when agent generates a diff
   useEffect(() => {
@@ -1088,6 +1130,42 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     [activeProject.path, refreshProjectStatus]
   );
 
+  // Stable identity, so the empty-state panel is not rebuilt on every render.
+  // `watermarkComponent` was an inline arrow, and dockview treats it as a
+  // component *type*: a new identity per render meant React unmounted the old
+  // one and mounted a new one. The prompt text lives above this layout, so every
+  // keystroke in the chat composer re-rendered the workbench and the panel
+  // flickered. The handlers below are setState calls, so their identities do not
+  // change; this memo only changes when the setup card's own data does.
+  const watermarkComponent = useMemo(
+    () => () => (
+      <DockviewWatermark
+        onOpenFile={openFilePalette}
+        onOpenCommands={openCommandPalette}
+        onToggleSidebar={toggleSidebarFromWatermark}
+        onToggleTerminal={toggleTerminalFromWatermark}
+        onToggleAi={toggleAiFromWatermark}
+        setupSlot={
+          <ProjectSetupCard
+            status={projectStatus}
+            busyCommand={setupBusyCommand}
+            onRun={runSetupCommand}
+          />
+        }
+      />
+    ),
+    [
+      openFilePalette,
+      openCommandPalette,
+      toggleSidebarFromWatermark,
+      toggleTerminalFromWatermark,
+      toggleAiFromWatermark,
+      projectStatus,
+      setupBusyCommand,
+      runSetupCommand,
+    ],
+  );
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--vscode-sidebar-bg)] text-[var(--vscode-editor-fg)] select-none">
       {/* ── Top IDE Titlebar (Clean, Uncluttered, JetBrains / VS Code Modern UI) ── */}
@@ -1096,7 +1174,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-2 pr-1">
             <IdeBrandLogo className="w-5 h-5 shrink-0" />
-            <span className="font-semibold tracking-tight text-zinc-100 text-[13px] flex items-center gap-1 font-sans">
+            <span className="font-semibold tracking-tight text-zinc-100 text-body flex items-center gap-1 font-sans">
               ACSA <span className="text-zinc-400 font-medium">Code</span>
             </span>
           </div>
@@ -1123,7 +1201,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         </div>
 
         {/* Center: Command Palette / Omnibar Trigger */}
-        <div
+        <button
+          type="button"
+          aria-label="Search files or run a command"
           onClick={() => setIsCommandPaletteOpen(true)}
           className="flex-1 max-w-xl mx-4 h-7 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 rounded-lg px-2.5 flex items-center justify-between cursor-pointer transition-colors shadow-sm group"
         >
@@ -1133,10 +1213,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               {activeProject ? `${activeProject.name} — Search files (Cmd+P)` : "Search files (Cmd+P)"}
             </span>
           </div>
-          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
+          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-3xs font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
             ⌘P
           </kbd>
-        </div>
+        </button>
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
@@ -1189,13 +1269,17 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
             <span>Chat</span>
           </button>
+
+          {/* Appears only when there is a newer release, and installs only on a
+              click. See services/appUpdater.ts for the policy. */}
+          <UpdateButton />
         </div>
       </header>
 
       {/* ── Main Workbench Body ──────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden relative">
         {/* Activity Bar (VS Code Vertical Strip) */}
-        <aside className="w-11 bg-[var(--vscode-activitybar-bg)] border-r border-[var(--vscode-border)] flex flex-col items-center py-2 gap-2.5 shrink-0 z-10">
+        <aside className="w-11 bg-[var(--vscode-activitybar-bg)] border-r border-[var(--vscode-border)] flex flex-col items-center py-2 gap-2.5 shrink-0 z-raised">
           {/* Explorer Tab */}
           <button
             type="button"
@@ -1262,10 +1346,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
 
 
-          {/* Verification Gauntlet & Host Telemetry (Opens Full Page Dashboard) */}
           <button
             type="button"
-            title="Verification Gauntlet & Host Telemetry (Opens Full Page)"
+            title="Host Health & Performance (Opens Full Page)"
             onClick={openMonitorTab}
             className={`p-2 rounded-lg transition-all ${
               fullPage === "monitor"
@@ -1308,16 +1391,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           <button
             type="button"
             title="Marketplace: Skills, Tools & MCP Servers (Cmd+Shift+X)"
-            onClick={() => {
-              if (activeSidebarTab === "extensions" && isSidebarOpen) {
-                setIsSidebarOpen(false);
-              } else {
-                setActiveSidebarTab("extensions");
-                setIsSidebarOpen(true);
-              }
-            }}
+            onClick={openMarketplaceTab}
             className={`p-2 rounded-lg transition-all ${
-              activeSidebarTab === "extensions" && isSidebarOpen
+              fullPage === "marketplace"
                 ? "bg-white/10 text-white rounded-md"
                 : "text-zinc-400 hover:text-zinc-100"
             }`}
@@ -1341,7 +1417,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         {/* Primary Sidebar Area */}
         <aside
           style={{ width: isSidebarOpen ? `${sidebarWidth}px` : 0 }}
-          className={`relative border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
+          className={`relative max-w-[40%] border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
             isSidebarOpen ? "" : "hidden"
           }`}
         >
@@ -1382,14 +1458,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             />
           )}
 
-          {activeSidebarTab === "extensions" && (
-            <MarketplaceSidebar projectRoot={activeProject.path} />
-          )}
-
           {/* Draggable Resize Handle */}
+          {/* Pointer-only: there is no keyboard equivalent, and the panel is
+              fully usable at its default width. Marked presentational so it is
+              not announced as an interactive control it is not. */}
           <div
+            role="presentation"
             onMouseDown={startResizingSidebar}
-            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-20 select-none ${
+            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-dock select-none ${
               isResizingSidebar ? "bg-zinc-500" : ""
             }`}
             title="Drag to resize sidebar"
@@ -1401,46 +1477,28 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           {/* Dockview Editors & Diff Surface */}
           <div className="flex-1 w-full overflow-hidden relative">
             <TabChromeContext.Provider value={tabChrome}>
+            {/* Panels read current state through this: dockview froze the
+                component it was handed at panel creation, so a closure would
+                never see a file change. See WorkbenchContext.tsx. */}
+            <WorkbenchProvider value={live}>
             <DockviewReact
-              components={components}
+              components={WORKBENCH_PANELS}
               defaultTabComponent={DockviewCustomTab}
-              watermarkComponent={() => (
-                <DockviewWatermark
-                  onOpenFile={() => {
-                    setPaletteMode("file");
-                    setIsCommandPaletteOpen(true);
-                  }}
-                  onOpenCommands={() => {
-                    setPaletteMode("command");
-                    setIsCommandPaletteOpen(true);
-                  }}
-                  onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-                  onToggleTerminal={() => setIsBottomPanelOpen((prev) => !prev)}
-                  onToggleAi={() => {
-                    setIsCenterChatOpen(false);
-                    setIsRightPanelOpen((prev) => !prev);
-                  }}
-                  setupSlot={
-                    <ProjectSetupCard
-                      status={projectStatus}
-                      busyCommand={setupBusyCommand}
-                      onRun={runSetupCommand}
-                    />
-                  }
-                />
-              )}
+              watermarkComponent={watermarkComponent}
               onReady={onReady}
               className="dockview-theme-dark h-full w-full"
             />
+            </WorkbenchProvider>
             </TabChromeContext.Provider>
 
             {/* Full-Canvas AI Assistant — a true overlay with no dockview tab
                 chrome. Only one assistant surface is ever mounted: opening this
-                closes the side dock and vice versa. z-50 keeps it above the
-                editor's own floating chrome (Review button etc.); global modals
-                render later in the DOM at the same level, so they stay on top. */}
+                closes the side dock and vice versa. `z-overlay` keeps it above the
+                editor's own floating chrome (Review button etc.) and — deliberately —
+                *below* `z-popover`, so a titlebar dropdown still lands on top of it
+                rather than being clipped by it. */}
             {isCenterChatOpen && (
-              <div className="absolute inset-0 z-50 bg-[#141416]">
+              <div className="absolute inset-0 z-overlay bg-[#141416]">
                 <AiAssistantChat {...centerChatProps} />
               </div>
             )}
@@ -1448,11 +1506,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             {/* Full-page surfaces (Host Health, AI Models, Code Map). Rendered
                 as overlays for the same reason as the chat: no tab chrome. */}
             {fullPage && (
-              <div className="absolute inset-0 z-50 bg-[#141416] flex flex-col">
+              <div className="absolute inset-0 z-overlay bg-[#141416] flex flex-col">
                 <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
                   <div className="flex items-center gap-2">
                     <Icon icon={FULL_PAGE_ICONS[fullPage]} className="w-4 h-4 text-zinc-300" />
-                    <span className="text-[13px] font-semibold text-zinc-100 tracking-tight">
+                    <span className="text-body font-semibold text-zinc-100 tracking-tight">
                       {FULL_PAGE_TITLES[fullPage]}
                     </span>
                   </div>
@@ -1469,7 +1527,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                   <Suspense fallback={<SurfaceFallback label={FULL_PAGE_TITLES[fullPage]} />}>
                   {fullPage === "monitor" && (
                     <PerformanceDashboard
-                      systemMetrics={systemMetrics}
+                      projectRoot={activeProject.path}
                       onRefreshMetrics={() => {
                         refreshBranch();
                         systemMetricsService.fetchMetrics();
@@ -1489,6 +1547,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                         });
                       }}
                     />
+                  )}
+                  {fullPage === "marketplace" && (
+                    // A centred column rather than the full width: this was a
+                    // sidebar, and stretched across a wide monitor its rows read
+                    // as a spreadsheet.
+                    <div className="h-full w-full max-w-[clamp(40rem,86vw,90rem)] mx-auto">
+                      <MarketplaceSidebar projectRoot={activeProject.path} />
+                    </div>
                   )}
                   {fullPage === "codeMap" && (
                     <CodeMapDashboard
@@ -1516,7 +1582,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             activityLog={activityLog}
             onClearLog={clearLog}
             status={status}
-            orchestrationResult={orchestrationResult}
             terminalFontSize={aiSettings?.terminalFontSize ?? 13}
           />
           </Suspense>
@@ -1524,10 +1589,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
         {isRightPanelOpen && (
-          <aside className="w-[410px] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-10 shadow-2xl">
+          <aside className="w-[clamp(300px,30vw,520px)] max-w-[48%] border-l border-[var(--vscode-border)] bg-workbench flex flex-col h-full shrink-0 overflow-hidden z-raised shadow-2xl">
             <AiAssistantChat
-              prompt={prompt}
-              setPrompt={setPrompt}
               status={status}
               activityLog={activityLog}
               projectRoot={activeProject.path}
@@ -1550,16 +1613,21 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               isWide={false}
               activeAiSettings={aiSettings}
               selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
-              failureDetail={orchestrationResult?.error_detail}
-              orchestrationResult={orchestrationResult}
-              indexStatus={indexStatus}
+                indexStatus={indexStatus}
               isIndexing={isIndexing}
               onSyncIndex={syncIndex}
               streamingAnswer={streamingAnswer}
               streamingThought={streamingThought}
               agentSteps={agentSteps}
-              pendingPermission={pendingPermission}
-              respondToPermission={respondToPermission}
+              failureDetail={failureDetail}
+              noFileChanges={noFileChanges}
+              waitingForUser={waitingForUser}
+              pendingApproval={pendingApproval}
+              respondToApproval={respondToApproval}
+              pendingQuestion={pendingQuestion}
+              respondToQuestion={respondToQuestion}
+              turnChanges={turnChanges}
+              onReviewFile={openDiff}
             />
           </aside>
         )}
@@ -1568,7 +1636,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
       <StatusBar
         gitBranch={gitBranch}
-        metrics={systemMetrics}
         indexStatus={indexStatus}
         isIndexing={isIndexing}
         onSyncIndex={syncIndex}
@@ -1605,12 +1672,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             onSave={setAiSettings}
             themeId={themeId}
             onApplyTheme={setThemeId}
+            accentId={accentId}
+            onApplyAccent={setAccentId}
             initialTab={settingsModalTab}
             projectName={activeProject?.name || "Practice"}
-            onOpenMarketplace={() => {
-              setActiveSidebarTab("extensions");
-              setIsSidebarOpen(true);
-            }}
+            onOpenMarketplace={openMarketplaceTab}
           />
         )}
       </ErrorBoundary>

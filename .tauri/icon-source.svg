@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Source artwork for the desktop app icon. `npx tauri icon .tauri/icon-source.svg`
-     regenerates .tauri/icons/. macOS wants a full-bleed rounded square with no
-     transparency, so the glyph sits on a squircle plate here, while the runtime
-     logo (public/logos/acsa.svg) stays a transparent mark like every other brand
-     in public/logos/. -->
+     regenerates .tauri/icons/. macOS wants a rounded-square plate rather than a
+     transparent glyph, so the mark sits on the squircle here, while the runtime
+     logo (public/logos/acsa.svg) stays transparent like every other brand in
+     public/logos/.
+
+     Apex: an apex on a plane. Two flat tones rather than a translucent plate —
+     opacity is what made the plane a smudge at 16px, which is a size the Finder
+     list and the Dock both use, while a value contrast survives any size. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <defs>
-    <linearGradient id="acsa-mark" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#38bdf8"/>
-      <stop offset="1" stop-color="#a855f7"/>
-    </linearGradient>
-  </defs>
+  <title>ACSA Code</title>
   <rect x="100" y="100" width="824" height="824" rx="185" fill="#0B0B0D"/>
-  <path fill="url(#acsa-mark)" fill-rule="evenodd" transform="translate(153.6 153.6) scale(0.7)" d="M512 150 L914 874 L738 874 L667 712 L357 712 L286 874 L110 874 Z M512 360 L619 604 L405 604 Z"/>
+  <g transform="translate(112.6 129.8) scale(0.78)">
+    <!-- The plane: solid, so it holds its shape instead of fading. -->
+    <path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+    <!-- The A: one filled path, so the counter and the leg gap stay open at any size. -->
+    <path fill="#eef2ff" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/>
+  </g>
 </svg>

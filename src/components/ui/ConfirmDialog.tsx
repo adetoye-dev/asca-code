@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import { AlertTriangle, HelpCircle } from "lucide-react";
 import { Icon } from "./Icon";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 
 export interface ConfirmDialogProps {
   isOpen: boolean;
@@ -26,28 +27,14 @@ export function ConfirmDialog({
   isDestructive = true,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) {
-      previouslyFocusedRef.current?.focus();
-      previouslyFocusedRef.current = null;
-      return;
-    }
-
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
-    dialogRef.current?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onCancel]);
+  // Escape, focus-in and focus-restore were hand-rolled here; the Tab trap was
+  // missing from every dialog, so they now all share one implementation.
+  useDialogA11y(dialogRef, onCancel, isOpen);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150">
       <div
         ref={dialogRef}
         tabIndex={-1}
@@ -75,7 +62,7 @@ export function ConfirmDialog({
             </div>
             {detail && (
               <div
-                className="mt-2.5 px-2.5 py-1.5 bg-black/40 border border-white/5 rounded-lg text-[11px] font-mono text-zinc-300 truncate max-w-full select-all"
+                className="mt-2.5 px-2.5 py-1.5 bg-black/40 border border-white/5 rounded-lg text-2xs font-mono text-zinc-300 truncate max-w-full select-all"
                 title={detail}
               >
                 {detail}

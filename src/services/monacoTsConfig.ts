@@ -14,6 +14,8 @@
  * can never satisfy. Authoritative type checking remains `npm run typecheck`.
  */
 
+import { readTextFile } from "./fileAccess";
+
 /** Declaration files Monaco cannot discover but that real code depends on. */
 const EXTRA_LIBS = [
   "node_modules/vite/client.d.ts",
@@ -95,15 +97,9 @@ async function loadAmbientTypes(
 ): Promise<void> {
   for (const libPath of EXTRA_LIBS) {
     try {
-      const res = await fetch("/api/fs/read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePath: libPath, projectRoot }),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data?.content) {
-        typescript.typescriptDefaults.addExtraLib(data.content, libPath);
+      const content = await readTextFile(libPath, projectRoot);
+      if (content) {
+        typescript.typescriptDefaults.addExtraLib(content, libPath);
       }
     } catch {
       // Best effort: a missing lib just means slightly less resolution.

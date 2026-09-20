@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- ACSA Code mark: a geometric "A" cut as a single filled path so the counter
-     and the crossbar stay open at every size. Hand-authored vector — the
-     previous asset was a 300 KB bitmap trace that rendered as an empty box. -->
+<!-- ACSA Code mark: "Apex" — an apex on a plane. Hand-authored vector.
+
+     Two flat tones, not a gradient. The mark is rendered as small as 16px in the
+     titlebar and the activity bar, and at that size a gradient flattens while a
+     value contrast does not. The plane is solid for the same reason: an earlier
+     version at 45% opacity turned into a smudge below 32px.
+
+     The A is one filled path so its counter and leg gap stay open at any size. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ACSA Code">
   <title>ACSA Code</title>
-  <defs>
-    <linearGradient id="acsa-mark" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#38bdf8"/>
-      <stop offset="1" stop-color="#a855f7"/>
-    </linearGradient>
-  </defs>
-  <path fill="url(#acsa-mark)" fill-rule="evenodd" d="M512 150 L914 874 L738 874 L667 712 L357 712 L286 874 L110 874 Z M512 360 L619 604 L405 604 Z"/>
+  <path fill="#6366f1" d="M512 884 L944 668 L512 452 L80 668 Z"/>
+  <path fill="#eef2ff" fill-rule="evenodd" d="M512 96 L784 700 L628 700 L512 452 L396 700 L240 700 Z"/>
 </svg>

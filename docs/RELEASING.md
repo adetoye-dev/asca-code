@@ -19,7 +19,7 @@ Verify a build before shipping:
 scripts/build_engine_sidecar.sh
 cd .tauri
 ../node_modules/.bin/tauri build --bundles app
-ls "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-engine"
+ls "target/release/bundle/macos/ACSA Code.app/Contents/Resources/engine/acsa-engine/acsa-engine"
 "target/release/bundle/macos/ACSA Code.app/Contents/MacOS/acsa-code" &
 # expect: [ACSA Code] started. Engine dir: ".../Contents/Resources/core-engine"
 ```
@@ -50,18 +50,76 @@ The engine is frozen into a single binary and shipped as a Tauri sidecar, so the
 app needs no interpreter on the user's machine.
 
 ```bash
-scripts/build_engine_sidecar.sh        # -> .tauri/binaries/acsa-engine-<triple>
+scripts/build_engine_sidecar.sh        # -> .tauri/engine/acsa-engine/acsa-engine
 ```
 
-`acsa-engine` exposes the subcommands the app spawns (`manager`, `db`, `index`,
-`pty`); `bundle.externalBin` ships it and Tauri strips the triple suffix when
-bundling. Both the Rust commands and the development bridge prefer it and fall
-back to `python3 <entry point>` for a source checkout. CI rebuilds it and asserts
-each subcommand answers.
+`acsa-engine` exposes the subcommands the app spawns (`db`, `index`, `indexer`,
+`git`, `pty`, `ollama`, `skills`, `mcp`, `ai`); `bundle.resources` ships the
+on-dir tree and the Rust command and the development bridge both resolve it,
+falling back to `python3 core-engine/acsa_engine.py` for a source checkout.
+`acsa-engine selftest` imports every subcommand, and CI asserts it answers — the
+dispatcher loads its entry points dynamically, so a missing import would
+otherwise only fail when that subcommand is used.
 
 Rebuild it whenever the engine changes — the bundled copy is what users run.
 
-## 3. Sign and notarise — **[configured; needs an Apple Developer account]**
+## 3. Sign and notarise — **[works; needs the notary credentials to finish]**
+
+### Signed build without waiting for CI
+
+The certificate is already in this machine's keychain, and `bundle.macOS.signingIdentity`
+is `null`, so a plain `tauri build` produces an **ad-hoc** signature — which is
+invalid (it does not seal resources) and is what Gatekeeper complains about.
+Name the identity explicitly:
+
+```bash
+# 1. what is actually available
+security find-identity -v -p codesigning
+
+# 2. build with it
+cd .tauri && APPLE_SIGNING_IDENTITY="Developer ID Application: NAME (TEAMID)" \
+  npx tauri build --bundles app
+
+# 3. sign what Tauri left behind, and re-seal — see scripts/sign_bundle.sh
+cd .. && ACSA_NO_TIMESTAMP=1 \
+  APPLE_SIGNING_IDENTITY="Developer ID Application: NAME (TEAMID)" scripts/sign_bundle.sh
+```
+
+Step 3 is the one that is easy to miss. Tauri signs the app and the `externalBin`
+sidecars, but a resource **directory** is copied verbatim, so the frozen engine
+and its embedded libpython stay ad-hoc signed while everything around them gets a
+Developer ID. Locally that still runs — an ad-hoc binary carries no
+hardened-runtime flag, so nothing enforces library validation on it — but Apple
+will not notarise a bundle containing code that is not signed with the same
+Developer ID.
+
+Verify with:
+
+```bash
+APP=".tauri/target/release/bundle/macos/ACSA Code.app"
+codesign -dv "$APP" | grep TeamIdentifier          # TFNTZSW82U
+codesign -dv "$APP/Contents/Resources/engine/acsa-engine/acsa-engine" | grep TeamIdentifier
+codesign --verify --deep --strict --verbose=2 "$APP"
+spctl -a -vv "$APP"                                 # "Unnotarized Developer ID" until step 4
+"$APP/Contents/Resources/engine/acsa-engine/acsa-engine" selftest
+```
+
+`ACSA_NO_TIMESTAMP=1` uses `--timestamp=none`, which is valid but not notarisable;
+CI uses a real secure timestamp.
+
+### Why there is no disk image
+
+`tauri build --bundles app,dmg` looks tidier and is wrong: the DMG bundler
+rebuilds the app and then **consumes** it (verified — after a `--bundles dmg` run
+the loose `.app` is gone), so the nested signing is thrown away and the image
+ships an app Apple rejects. The release ships a zip of the signed, notarised,
+stapled `.app` instead. A disk image can be added later by building it from the
+*stapled* app with `hdiutil`, after notarisation.
+
+### In CI
+
+`release.yml` builds the app, runs `scripts/sign_bundle.sh`, then notarises the
+zip and staples the app.
 
 Unsigned builds are quarantined by Gatekeeper on other people's Macs, so this is
 the step between "it builds" and "someone else can install it".
@@ -230,12 +288,14 @@ Read the result against <https://developer.apple.com/system-status/>:
 Windows build. The shape is the same: an Authenticode certificate, then
 `signtool` over the `nsis` installer.
 
-## 4. Auto-updates — **[blocked: needs a signing key and a release host]**
+## 4. Auto-updates — **[wired; needs one published release to prove]**
 
-Nothing is wired up: `bundle.createUpdaterArtifacts` is `false` and
-`tauri-plugin-updater` is not a dependency. Do not flip the flag alone — Tauri
-refuses to build updater artifacts without a signing key, so enabling it without
-step 4a breaks `tauri build` for everyone.
+Implemented, and not yet exercised. `tauri-plugin-updater` is a dependency, the
+app checks on launch (default on, switchable in **Settings → About**), and the
+titlebar shows a button when a release exists. What has never happened is an
+actual update, because no release has been published carrying a manifest.
+
+Still to do: put the private key in a repo secret, then push a tag.
 
 ### 4a. Generate the update signing key
 
@@ -310,3 +370,30 @@ if (update) {
 4. Launch the `.app` and confirm the engine resolves from `Contents/Resources`.
 5. Notarise and staple, upload the artifact + `.sig`, publish `latest.json`.
 6. Install the *previous* version and confirm it updates to the new one.
+
+### The publish step is manual, and silence here looks exactly like success
+
+`.github/workflows/release.yml` creates the release with `draft: true`, so pushing
+a tag **does not ship anything**. The workflow goes green, the tag exists, the
+assets are attached — and the app still sees the previous version, because
+`/releases/latest/download/latest.json` skips drafts and GitHub serves the older
+one, and because draft assets are not publicly downloadable at all. That was
+`v0.2.1`: a green run, a 112 MB signed bundle that nobody could fetch, and a
+manifest still advertising `0.2.0`.
+
+After every tag push, publish the draft:
+
+```bash
+gh release edit vX.Y.Z --repo adetoye-dev/asca-code --draft=false
+```
+
+Then confirm the manifest that the app actually reads, not just the one in the
+release:
+
+```bash
+curl -sL https://github.com/adetoye-dev/asca-code/releases/latest/download/latest.json | head -3
+```
+
+Expect the new version. `/latest/` sits behind a CDN, so for a minute or two
+after publishing it can still answer with the previous release — re-check before
+concluding anything is broken.

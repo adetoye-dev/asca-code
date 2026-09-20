@@ -6,6 +6,86 @@
  * the local Deterministic AST engine.
  */
 
+import { DESKTOP_REQUIRED_MESSAGE, hasIpc } from "./engineBridge";
+
+/**
+ * Stream a reply through the app's own IPC channel.
+ *
+ * The engine writes NDJSON frames (`{delta}` … `{done}`) and the Rust side forwards
+ * each line as an `ai:frame` event, so the three payload shapes the SSE reader
+ * handled below are unchanged — only the transport differs.
+ */
+async function streamViaIpc(params: any): Promise<void> {
+  const { provider, model, messages, images, projectRoot, baseUrl, apiKey, signal, onDelta, onDone, onError } = params;
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+
+  let finished = false;
+  let unlisten: Array<() => void> = [];
+  const cleanup = () => {
+    unlisten.forEach((off) => off());
+    unlisten = [];
+  };
+  const abort = () => {
+    if (!finished) invoke("chat_cancel").catch(() => {});
+  };
+  signal?.addEventListener?.("abort", abort);
+
+  try {
+    unlisten.push(
+      await listen<string>("ai:exit", (event) => {
+        if (finished) return;
+        finished = true;
+        // The engine always sends its own final frame on success, so reaching here
+        // first means it died — and stderr is the only explanation available.
+        if (event.payload) onError(String(event.payload));
+        else if (signal?.aborted) onDone({ aborted: true });
+        else onError("The assistant stopped before finishing.");
+        cleanup();
+      }),
+    );
+    unlisten.push(
+      await listen<{ line: string }>("ai:frame", (event) => {
+        if (finished) return;
+        try {
+          const frame = JSON.parse(event.payload.line);
+          if (frame.error) {
+            finished = true;
+            onError(frame.error);
+            cleanup();
+            return;
+          }
+          if (frame.delta) onDelta(frame.delta);
+          if (frame.done) {
+            finished = true;
+            onDone(frame);
+            cleanup();
+          }
+        } catch {
+          /* a partial or non-JSON line carries nothing to show */
+        }
+      }),
+    );
+
+    await invoke("chat_stream", {
+      payload: JSON.stringify({ provider, model, messages, images, projectRoot, baseUrl, apiKey }),
+    });
+  } catch (err: any) {
+    if (!finished) {
+      finished = true;
+      // `invoke` rejects with the raw string from Rust's `Err(..)`, which has no
+      // `.message` — reading only that replaced the real reason with a generic one
+      // and made this undiagnosable.
+      onError(
+        typeof err === "string" ? err : err?.message || "Failed to communicate with the assistant.",
+      );
+    }
+    cleanup();
+  } finally {
+    signal?.removeEventListener?.("abort", abort);
+  }
+}
+
 export interface AgentStep {
   id?: string;
   name: string;
@@ -26,7 +106,14 @@ export interface ChatMessage {
   steps?: AgentStep[];
   error?: boolean;
   errorType?: "offline" | "timeout" | "syntax" | "api" | "general";
-  diffPreview?: string;
+  /**
+   * Files this turn changed, with line counts — the change log.
+   *
+   * Stored on the message so it survives: it answers "what did it just do?" live,
+   * and "what did it do an hour ago?" when you scroll back. Replaces a
+   * `diffPreview` field that nothing ever read or wrote.
+   */
+  changes?: { path: string; added: number; removed: number }[];
 }
 
 export interface StreamChatParams {
@@ -56,79 +143,13 @@ export async function streamChatCompletion({
   onDone,
   onError,
 }: StreamChatParams): Promise<void> {
-  try {
-    const res = await fetch("/api/ai/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider,
-        model,
-        messages,
-        images,
-        projectRoot,
-        baseUrl,
-        apiKey,
-      }),
-      signal,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      onError(`Server returned HTTP ${res.status}: ${errText || res.statusText}`);
-      return;
-    }
-
-    if (!res.body) {
-      onError("No response stream body received.");
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-
-      for (const part of parts) {
-        const line = part.replace(/^data: /, "").trim();
-        if (!line) continue;
-        try {
-          const payload = JSON.parse(line) as {
-            delta?: string;
-            done?: boolean;
-            error?: string;
-            [key: string]: any;
-          };
-
-          if (payload.error) {
-            onError(payload.error);
-            return;
-          }
-
-          if (payload.delta) {
-            onDelta(payload.delta);
-          }
-
-          if (payload.done) {
-            onDone(payload);
-            return;
-          }
-        } catch {}
-      }
-    }
-
-    onDone();
-  } catch (err: any) {
-    if (err.name === "AbortError") {
-      onDone({ aborted: true });
-      return;
-    }
-    onError(err.message || "Failed to communicate with AI chat service.");
+  // The packaged app has no dev server; prefer the app's own channel when it exists.
+  if (hasIpc()) {
+    await streamViaIpc({ provider, model, messages, images, projectRoot, baseUrl, apiKey, signal, onDelta, onDone, onError });
+    return;
   }
+
+  // No desktop shell: `chat_stream` is how a reply arrives, and there is no
+  // fallback transport any more.
+  onError(DESKTOP_REQUIRED_MESSAGE);
 }

@@ -9,6 +9,61 @@
  */
 
 :root {
+  /* ── The palette the UI actually renders ──
+   *
+   * These are Tailwind's `zinc` and `purple` values, written down once. The
+   * component tree uses those class names — `text-zinc-400`, `border-purple-500/60`
+   * — and Tailwind resolves them through these variables (see `tailwind.config.js`,
+   * where they go through the same `token()` helper as the semantic layer so the
+   * `/opacity` form still resolves).
+   *
+   * Why it matters: the semantic tokens above were an *aspirational* palette —
+   * `--text-muted` is `#717188`, while the UI renders `text-zinc-400`, which is
+   * `#a1a1aa`. Nothing was reading them, so the app had ~1700 colour literals and
+   * the theme engine changed variables no screen consumed. Repointing these is
+   * now a one-file change, which is what makes the identity work cheap instead of
+   * another sweep.
+   */
+  --neutral-50:  #fafafa;
+  --neutral-100: #f4f4f5;
+  --neutral-200: #e4e4e7;
+  --neutral-300: #d4d4d8;
+  --neutral-400: #a1a1aa;
+  /*
+   * Lightened from Tailwind's #71717a. Measured with `scripts/check_contrast.mjs`:
+   * that value is 3.67:1 on a card, and the dense type scale is 9–11px, which
+   * needs 4.5:1. #8a8a8f reaches 5.16:1 on the lightest surface the app paints
+   * text on, so `text-zinc-500` — the app's muted text, used 165 times — passes.
+   */
+  --neutral-500: #8a8a8f;
+  --neutral-600: #52525b;
+  --neutral-700: #3f3f46;
+  --neutral-800: #27272a;
+  --neutral-900: #18181b;
+  --neutral-950: #09090b;
+
+  /* ── The accent ramp ──
+   *
+   * These are what every `purple-*` class resolves to, and they are the app's
+   * accent whatever hue that happens to be — so they are named for the role, not
+   * the colour. `applyAccent()` overwrites them per the user's choice in
+   * Settings → Appearance; indigo is the shipped default.
+   *
+   * (The class names still say `purple`. Renaming those is the same deferred job
+   * as the greys: it belongs with a decided palette, not before one.)
+   */
+  --accent-50:  #eef2ff;
+  --accent-100: #e0e7ff;
+  --accent-200: #c7d2fe;
+  --accent-300: #a5b4fc;
+  --accent-400: #818cf8;
+  --accent-500: #6366f1;
+  --accent-600: #4f46e5;
+  --accent-700: #4338ca;
+  --accent-800: #3730a3;
+  --accent-900: #312e81;
+  --accent-950: #1e1b4b;
+
   /* ── Apple Obsidian Dark Slate Palette ── */
   --obsidian-950: #09090b; /* Deepest canvas floor */
   --obsidian-900: #0f0f12; /* Workbench ground */

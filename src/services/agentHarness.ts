@@ -1,15 +1,12 @@
 /**
- * agentHarness.ts — Project Code-Intelligence Index (frontend bridge)
+ * agentHarness.ts — Project code-intelligence index (frontend client).
  *
- * Thin client for the engine's AST symbol index. The agent's actual tool
- * surface (search_symbols, get_file_outline, get_blast_radius, read_code_slice,
- * apply_patch, run_gauntlet, run_terminal_command) is owned by the Python
- * engine (`core-engine/agent_tools.py`) and driven from `agent_loop.py`; this
- * module only syncs/reports index status for the UI.
- *
- * Progressive Context Disclosure (compact symbol outlines instead of whole
- * files) and automatic project scale-tier detection live engine-side.
+ * Thin client for the engine's AST symbol index (`core-engine/indexer_cli.py`,
+ * backed by `data-map/project_indexer.py`). It syncs the index and reports its
+ * status, which is what the code map and the symbol search render.
  */
+
+import { indexerFetch } from "./indexerClient";
 
 export interface ProjectIndexProfile {
   scale_tier: "micro" | "standard" | "enterprise";
@@ -70,7 +67,7 @@ export interface IndexMap {
  */
 export async function syncProjectIndex(projectRoot: string): Promise<IndexSyncResult | null> {
   try {
-    const res = await fetch("/api/indexer/sync", {
+    const res = await indexerFetch("/api/indexer/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectRoot }),
@@ -93,7 +90,7 @@ export async function getIndexStatus(projectRoot = ""): Promise<{
   profile: ProjectIndexProfile | null;
 }> {
   try {
-    const res = await fetch(`/api/indexer/status?projectRoot=${encodeURIComponent(projectRoot)}`);
+    const res = await indexerFetch(`/api/indexer/status?projectRoot=${encodeURIComponent(projectRoot)}`);
     if (res.ok) {
       return await res.json();
     }
@@ -106,7 +103,7 @@ export async function getIndexStatus(projectRoot = ""): Promise<{
  */
 export async function fetchIndexMap(projectRoot: string): Promise<IndexMap | null> {
   try {
-    const res = await fetch(`/api/indexer/map?projectRoot=${encodeURIComponent(projectRoot)}`);
+    const res = await indexerFetch(`/api/indexer/map?projectRoot=${encodeURIComponent(projectRoot)}`);
     if (res.ok) {
       const data = await res.json();
       if (data?.indexed) return data as IndexMap;
@@ -126,7 +123,7 @@ export async function searchIndexSymbols(
   projectRoot: string
 ): Promise<IndexSymbol[]> {
   try {
-    const res = await fetch("/api/indexer/symbols", {
+    const res = await indexerFetch("/api/indexer/symbols", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectRoot, query }),
@@ -149,7 +146,7 @@ export async function fetchFileOutline(
   projectRoot: string
 ): Promise<IndexSymbol[]> {
   try {
-    const res = await fetch("/api/indexer/symbols", {
+    const res = await indexerFetch("/api/indexer/symbols", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectRoot, file }),
@@ -172,7 +169,7 @@ export async function fetchBlastRadius(
   projectRoot: string
 ): Promise<string[]> {
   try {
-    const res = await fetch("/api/indexer/blast-radius", {
+    const res = await indexerFetch("/api/indexer/blast-radius", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectRoot, filePath }),

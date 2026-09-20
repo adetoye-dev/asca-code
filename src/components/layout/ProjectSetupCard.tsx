@@ -28,10 +28,15 @@ export const ProjectSetupCard: React.FC<ProjectSetupCardProps> = ({ status, busy
 
   const actions: SetupAction[] = [];
   if (status.needsInstall) {
-    actions.push({ label: "Install dependencies", command: "npm install", icon: Download, primary: true });
+    actions.push({
+      label: `Install dependencies (${status.manager})`,
+      command: status.installCommand || "npm install",
+      icon: Download,
+      primary: true,
+    });
   } else {
-    if (status.scripts.dev) actions.push({ label: "Run dev server", command: "npm run dev", icon: Play, primary: true });
-    if (status.scripts.build) actions.push({ label: "Build", command: "npm run build", icon: Hammer });
+    if (status.devCommand) actions.push({ label: "Run dev server", command: status.devCommand, icon: Play, primary: true });
+    if (status.buildCommand) actions.push({ label: "Build", command: status.buildCommand, icon: Hammer });
   }
   if (!actions.length) return null;
 
@@ -39,10 +44,10 @@ export const ProjectSetupCard: React.FC<ProjectSetupCardProps> = ({ status, busy
 
   return (
     <div className="w-72 max-w-full mb-5 rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
-      <div className="text-[11px] font-semibold text-zinc-300 mb-1">
+      <div className="text-2xs font-semibold text-zinc-300 mb-1">
         {status.needsInstall ? "This project needs its dependencies installed" : "This project is ready to run"}
       </div>
-      <p className="text-[11px] leading-relaxed text-zinc-500 mb-3">
+      <p className="text-2xs leading-relaxed text-zinc-500 mb-3">
         {status.needsInstall
           ? "It was just scaffolded, so the packages it depends on are not downloaded yet. Nothing will run until they are."
           : "Dependencies are installed. Start the dev server to see your project in the browser."}
@@ -64,12 +69,12 @@ export const ProjectSetupCard: React.FC<ProjectSetupCardProps> = ({ status, busy
             >
               <Icon icon={isBusy ? Loader2 : action.icon} className={`w-3.5 h-3.5 ${isBusy ? "animate-spin" : ""}`} />
               <span>{isBusy ? `${action.label}…` : action.label}</span>
-              <code className="ml-auto text-[10px] font-mono opacity-60">{action.command}</code>
+              <code className="ml-auto text-3xs font-mono opacity-60">{action.command}</code>
             </button>
           );
         })}
       </div>
-      <p className="text-[10px] text-zinc-600 mt-2">
+      <p className="text-3xs text-zinc-500 mt-2">
         Runs in the terminal below so you can watch the output.
       </p>
     </div>

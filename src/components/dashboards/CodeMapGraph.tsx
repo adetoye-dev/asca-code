@@ -276,33 +276,33 @@ export function CodeMapGraph({
       {hover && (
         <div
           ref={tooltipRef}
-          className="pointer-events-none absolute left-0 top-0 z-10 max-w-[300px] rounded-lg border border-zinc-700/80 bg-[#16161a]/95 px-2.5 py-2 shadow-xl backdrop-blur-sm"
+          className="pointer-events-none absolute left-0 top-0 z-raised max-w-[300px] rounded-lg border border-zinc-700/80 bg-[#16161a]/95 px-2.5 py-2 shadow-xl backdrop-blur-sm"
         >
           <div className="flex items-center gap-1.5">
             <span
               className="w-2 h-2 rounded-full shrink-0"
               style={{ background: hover.node.color }}
             />
-            <span className="text-[11px] font-mono text-zinc-100 truncate">
+            <span className="text-2xs font-mono text-zinc-100 truncate">
               {hover.node.path}
             </span>
           </div>
-          <div className="mt-1 text-[10px] text-zinc-400 font-mono">
+          <div className="mt-1 text-3xs text-zinc-400 font-mono">
             {hover.node.language || "unknown"} · {hover.node.lines} lines ·{" "}
             {hover.node.symbols} symbols
           </div>
-          <div className="text-[10px] text-zinc-400 font-mono">
+          <div className="text-3xs text-zinc-400 font-mono">
             {hover.node.dependents} importer(s) · imports {hover.node.imports}
           </div>
           {hover.node.isEntrypoint && (
-            <div className="mt-0.5 text-[10px] text-amber-300">Application entry point</div>
+            <div className="mt-0.5 text-3xs text-amber-300">Application entry point</div>
           )}
-          <div className="mt-1 text-[10px] text-zinc-500">Click for details</div>
+          <div className="mt-1 text-3xs text-zinc-500">Click for details</div>
         </div>
       )}
 
       {/* Legend / controls hint */}
-      <div className="pointer-events-none absolute bottom-2 left-2 text-[10px] text-zinc-500 font-mono">
+      <div className="pointer-events-none absolute bottom-2 left-2 text-3xs text-zinc-500 font-mono">
         drag to pan · scroll to zoom · click a file for its role
       </div>
     </div>

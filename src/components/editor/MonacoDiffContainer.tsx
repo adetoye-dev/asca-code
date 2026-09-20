@@ -5,7 +5,7 @@
  * Allows developers to review autonomous agent patches with exact VS Code diff decorations.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import "../../monacoSetup";
 import { Check, X, Menu } from "lucide-react";
@@ -28,6 +28,25 @@ export function MonacoDiffContainer({
   onReject,
 }: MonacoDiffContainerProps) {
   const [renderSideBySide, setRenderSideBySide] = useState(true);
+
+  /**
+   * Memoised for the same reason as the editor's: an inline literal changes
+   * identity on every render, and `@monaco-editor/react` answers that with
+   * `editor.updateOptions(...)` every time.
+   */
+  const diffOptions = useMemo(
+    () => ({
+      renderSideBySide,
+      fontSize: 13,
+      fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
+      lineNumbers: "on" as const,
+      automaticLayout: true,
+      scrollBeyondLastLine: false,
+      readOnly: true,
+      minimap: { enabled: false },
+    }),
+    [renderSideBySide]
+  );
 
   const getLanguage = (path: string): string => {
     if (path.endsWith(".py")) return "python";
@@ -105,16 +124,7 @@ export function MonacoDiffContainer({
           beforeMount={(monaco) => {
             applyMonacoTheme(monaco, "github-dark");
           }}
-          options={{
-            renderSideBySide,
-            fontSize: 13,
-            fontFamily: "var(--ide-font-family, 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace)",
-            lineNumbers: "on",
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            readOnly: true,
-            minimap: { enabled: false },
-          }}
+          options={diffOptions}
         />
       </div>
     </div>

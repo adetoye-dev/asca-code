@@ -127,55 +127,37 @@ def _cmd_chat_clear(p: dict) -> Any:
 
 
 def _cmd_usage_record(p: dict) -> Any:
+    # Both spellings are accepted: the review/inline-edit paths sent snake_case
+    # while this read camelCase, so every one of those calls was recorded as 0
+    # tokens and $0.00 — a silent hole in the ledger.
+    def pick(*names: str, default: Any = 0) -> Any:
+        for name in names:
+            if p.get(name) is not None:
+                return p[name]
+        return default
+
     app_db.record_usage(
         provider=str(p.get("provider") or ""),
         model=str(p.get("model") or ""),
-        prompt_tokens=int(p.get("promptTokens") or 0),
-        completion_tokens=int(p.get("completionTokens") or 0),
-        latency_ms=float(p.get("latencyMs") or 0),
-        cost_usd=float(p.get("costUsd") or 0),
-        project_path=p.get("projectPath"),
+        prompt_tokens=int(pick("promptTokens", "prompt_tokens")),
+        completion_tokens=int(pick("completionTokens", "completion_tokens")),
+        latency_ms=float(pick("latencyMs", "latency_ms")),
+        cost_usd=(
+            float(pick("costUsd", "cost_usd"))
+            if ("costUsd" in p or "cost_usd" in p)
+            else None
+        ),
+        project_path=pick("projectPath", "project_path", default=None),
     )
     return True
 
 
 def _cmd_usage_summary(p: dict) -> Any:
-    return app_db.usage_summary(p.get("projectPath"), float(p.get("sinceTs") or 0))
-
-
-def _cmd_auth_register(p: dict) -> Any:
-    return app_db.create_account(
-        str(p.get("email") or ""), str(p.get("password") or ""), p.get("displayName")
+    return app_db.usage_summary(
+        p.get("projectPath") or p.get("project_path"),
+        float(p.get("sinceTs") or p.get("since_ts") or 0),
+        int(p.get("days") or 14),
     )
-
-
-def _cmd_auth_login(p: dict) -> Any:
-    account = app_db.verify_login(str(p.get("email") or ""), str(p.get("password") or ""))
-    if not account:
-        raise ValueError("invalid email or password")
-    token = app_db.create_session(account["id"])
-    return {"account": account, "token": token}
-
-
-def _cmd_auth_me(p: dict) -> Any:
-    return app_db.validate_session(str(p.get("token") or ""))
-
-
-def _cmd_auth_logout(p: dict) -> Any:
-    app_db.revoke_session(str(p.get("token") or ""))
-    return True
-
-
-def _cmd_auth_change_password(p: dict) -> Any:
-    return app_db.change_password(
-        str(p.get("accountId") or ""),
-        str(p.get("currentPassword") or ""),
-        str(p.get("newPassword") or ""),
-    )
-
-
-def _cmd_accounts_list(_: dict) -> Any:
-    return app_db.list_accounts()
 
 
 def _cmd_info(_: dict) -> Any:
@@ -203,12 +185,6 @@ COMMANDS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "chat.clear": _cmd_chat_clear,
     "usage.record": _cmd_usage_record,
     "usage.summary": _cmd_usage_summary,
-    "auth.register": _cmd_auth_register,
-    "auth.login": _cmd_auth_login,
-    "auth.me": _cmd_auth_me,
-    "auth.logout": _cmd_auth_logout,
-    "auth.changePassword": _cmd_auth_change_password,
-    "accounts.list": _cmd_accounts_list,
 }
 
 

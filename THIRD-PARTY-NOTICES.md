@@ -16,6 +16,7 @@ distributed and is therefore not listed.
 - **@monaco-editor/react** 4.7.0 — MIT — [github.com/suren-atoyan/monaco-react](https://github.com/suren-atoyan/monaco-react)
 - **@tauri-apps/api** 2.11.1 — Apache-2.0 OR MIT — [github.com/tauri-apps/tauri](https://github.com/tauri-apps/tauri)
 - **@tauri-apps/plugin-shell** 2.3.6 — MIT OR Apache-2.0 — [github.com/tauri-apps/plugins-workspace](https://github.com/tauri-apps/plugins-workspace)
+- **@tauri-apps/plugin-updater** 2.11.0 — MIT OR Apache-2.0 — [github.com/tauri-apps/plugins-workspace](https://github.com/tauri-apps/plugins-workspace)
 - **@tweenjs/tween.js** 25.0.0 — MIT — [github.com/tweenjs/tween.js](https://github.com/tweenjs/tween.js)
 - **@xterm/addon-fit** 0.11.0 — MIT — [github.com/xtermjs/xterm.js/tree/master/addons/addon-fit](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit)
 - **@xterm/xterm** 6.0.0 — MIT — [github.com/xtermjs/xterm.js](https://github.com/xtermjs/xterm.js)

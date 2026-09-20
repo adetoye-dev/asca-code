@@ -14,10 +14,24 @@
  * - Standard IntelliJ footer with [?] Help, [Cancel], [Apply], [OK]
  */
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Settings, X, ChevronDown, RefreshCw, AlertCircle, Search, ChevronRight, EyeOff, ArrowRight, Check, Pin, CheckCircle2, HelpCircle, ArrowLeft, Eye } from "lucide-react";
-import { PRESET_THEMES } from "../services/themeManager";
+import { PRESET_ACCENTS, PRESET_THEMES } from "../services/themeManager";
 import { ProviderLogo } from "./ui/BrandLogos";
+import { AboutPane } from "./settings/AboutPane";
+import { DataPane } from "./settings/DataPane";
+import { useDialogA11y } from "../hooks/useDialogA11y";
+import { aiFetch } from "../services/aiClient";
+import {
+  AGENT_APPROVAL_MODES,
+  AGENT_TRANSPORTS,
+  DEFAULT_AGENT_APPROVAL_MODE,
+  DEFAULT_AGENT_TRANSPORT,
+  isAgentApprovalMode,
+  isAgentTransport,
+  type AgentApprovalMode,
+  type AgentTransport,
+} from "../services/agentApproval";
 
 export interface AISettings {
   /**
@@ -36,6 +50,10 @@ export interface AISettings {
   insertSpaces?: boolean;
   wordWrap?: boolean;
   terminalFontSize?: number;
+  /** How much the agent may do unattended. See AGENT_APPROVAL_MODES. */
+  approvalMode?: AgentApprovalMode;
+  /** Which agent runtime to drive. See AGENT_TRANSPORTS. */
+  agentTransport?: AgentTransport;
 }
 
 export interface SettingsModalProps {
@@ -45,6 +63,8 @@ export interface SettingsModalProps {
   onSave: (newSettings: AISettings) => void;
   themeId?: string;
   onApplyTheme?: (themeId: string) => void;
+  accentId?: string;
+  onApplyAccent?: (accentId: string) => void;
   initialTab?: string;
   projectName?: string;
   /** Open the real Marketplace panel (Skills, MCP servers, tooling). */
@@ -87,16 +107,36 @@ const SETTINGS_TREE: TreeNode[] = [
   {
     id: "ai-assistant-group",
     label: "AI Assistant",
-    children: [{ id: "providers", label: "Providers & API keys" }],
+    children: [
+      { id: "agent", label: "Agent" },
+      { id: "providers", label: "Providers & API keys" },
+    ],
   },
   { id: "marketplace", label: "Marketplace" },
+  { id: "data", label: "Data & backups" },
+  { id: "about", label: "About" },
 ];
+
+/** Every id the tree actually offers, so a caller cannot land on an empty pane. */
+const SETTINGS_SECTION_IDS: ReadonlySet<string> = (() => {
+  const ids = new Set<string>();
+  const walk = (nodes: TreeNode[]) => {
+    for (const node of nodes) {
+      ids.add(node.id);
+      if (node.children) walk(node.children);
+    }
+  };
+  walk(SETTINGS_TREE);
+  return ids;
+})();
 
 function resolveInitialSection(tab?: string): string {
   if (tab === "appearance") return "appearance";
   if (tab === "ai") return "providers";
-  if (tab) return tab;
-  return "agents";
+  // An unknown id renders nothing at all, which reads as "the dialog is broken"
+  // rather than "that page moved" — the caller said "agents", which never existed.
+  if (tab && SETTINGS_SECTION_IDS.has(tab)) return tab;
+  return "agent";
 }
 
 export function SettingsModal({
@@ -106,6 +146,8 @@ export function SettingsModal({
   onSave,
   themeId = "github-dark",
   onApplyTheme,
+  accentId = "violet",
+  onApplyAccent,
   initialTab = "providers",
   projectName = "Practice",
   onOpenMarketplace,
@@ -156,6 +198,10 @@ export function SettingsModal({
   // Terminal state
   const [terminalFontSize, setTerminalFontSize] = useState(13);
 
+  // Agent state: which runtime, and how much it may do without asking.
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>(DEFAULT_AGENT_APPROVAL_MODE);
+  const [agentTransport, setAgentTransport] = useState<AgentTransport>(DEFAULT_AGENT_TRANSPORT);
+
   // Tree filter logic (unconditional hook)
   const filteredTree = useMemo(() => {
     if (!navSearch?.trim()) return SETTINGS_TREE;
@@ -203,10 +249,34 @@ export function SettingsModal({
     setInsertSpaces(safeSettings.insertSpaces ?? true);
     setWordWrap(safeSettings.wordWrap ?? false);
     setTerminalFontSize(safeSettings.terminalFontSize ?? 13);
+    setApprovalMode(
+      isAgentApprovalMode(safeSettings.approvalMode)
+        ? safeSettings.approvalMode
+        : DEFAULT_AGENT_APPROVAL_MODE,
+    );
+    setAgentTransport(
+      isAgentTransport(safeSettings.agentTransport)
+        ? safeSettings.agentTransport
+        : DEFAULT_AGENT_TRANSPORT,
+    );
     setTestStatus("idle");
     setTestMessage("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialTab]);
+
+  /**
+   * Escape closes the dialog, and focus starts inside it.
+   *
+   * Neither was true. The backdrop click was the only way out that did not
+   * require aiming at a specific button, and a dialog that opens with focus
+   * still on the page behind it is unusable from the keyboard even when every
+   * control inside is reachable. (A comment claimed Escape was handled; it was
+   * not.)
+   */
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Escape, focus-in and — what this was missing — the Tab trap, which is shared
+  // with every other dialog rather than re-derived here.
+  useDialogA11y(dialogRef, () => onClose?.(), isOpen);
 
   const navigateTo = (sectionId: string) => {
     setSelectedSection(sectionId);
@@ -242,7 +312,7 @@ export function SettingsModal({
     try {
       // Proxied through the bridge so the request is made with the stored
       // credential and the key never has to be held in the browser.
-      const res = await fetch("/api/ai/test-connection", {
+      const res = await aiFetch("/api/ai/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -284,6 +354,8 @@ export function SettingsModal({
         insertSpaces,
         wordWrap,
         terminalFontSize,
+        approvalMode,
+        agentTransport,
       });
     }
   };
@@ -302,6 +374,8 @@ export function SettingsModal({
         insertSpaces,
         wordWrap,
         terminalFontSize,
+        approvalMode,
+        agentTransport,
       });
     }
     if (onClose) {
@@ -334,12 +408,21 @@ export function SettingsModal({
 
   return (
     <div
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
+      // Click-outside-to-close is a mouse convenience; Escape is the keyboard
+      // route. Marked presentational so it is not announced as one huge
+      // interactive region.
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 backdrop-blur-md p-4 select-none animate-in fade-in duration-150 font-sans cursor-default"
     >
       {/* Outer Window Frame with Apple Obsidian Glass & Specular Hairlines */}
       <div
-        onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
         className="w-[960px] h-[640px] max-w-[96vw] max-h-[92vh] rounded-modal bg-workbench backdrop-blur-2xl border border-hairline shadow-[0_32px_80px_rgba(0,0,0,0.8),inset_0_1px_0_0_rgba(255,255,255,0.1)] overflow-hidden flex flex-col text-zinc-300 relative"
       >
         {/* ── Settings Header Bar ─────────────────────────────────────────── */}
@@ -348,11 +431,11 @@ export function SettingsModal({
             <div className="w-6 h-6 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-zinc-300 shadow-sm">
               <Settings className="w-3.5 h-3.5" />
             </div>
-            <div className="flex items-center gap-1.5 text-[13px]">
+            <div className="flex items-center gap-1.5 text-body">
               <span className="font-semibold text-zinc-100">Settings</span>
               {projectName && (
                 <>
-                  <span className="text-zinc-600">/</span>
+                  <span className="text-zinc-500">/</span>
                   <span className="text-xs font-mono text-zinc-400">{projectName}</span>
                 </>
               )}
@@ -372,7 +455,7 @@ export function SettingsModal({
         {/* ── Main Two-Column Stage ────────────────────────────────────────── */}
         <div className="flex flex-1 min-h-0 overflow-hidden font-sans">
           {/* Left Column: Navigation Category Tree */}
-          <aside className="w-[260px] bg-black/25 backdrop-blur-xl border-r border-white/[0.08] flex flex-col shrink-0">
+          <aside className="w-[clamp(180px,24%,260px)] bg-black/25 backdrop-blur-xl border-r border-white/[0.08] flex flex-col shrink-0">
             {/* Search Settings Input */}
             <div className="p-2.5 border-b border-white/[0.06]">
               <div className="relative flex items-center">
@@ -382,7 +465,7 @@ export function SettingsModal({
                   value={navSearch}
                   onChange={(e) => setNavSearch(e.target.value)}
                   placeholder="Search settings..."
-                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 font-sans transition"
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-8 pr-2.5 py-1.5 text-body text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 font-sans transition"
                 />
                 {navSearch && (
                   <button
@@ -419,7 +502,7 @@ export function SettingsModal({
               <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-sans">
                 {breadcrumb.map((crumb, idx) => (
                   <React.Fragment key={crumb}>
-                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-zinc-600" />}
+                    {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />}
                     <span
                       className={
                         idx === breadcrumb.length - 1
@@ -465,14 +548,14 @@ export function SettingsModal({
             </div>
 
             {/* Stage Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-5 text-[13px] text-zinc-200 font-sans">
+            <div className="flex-1 overflow-y-auto p-5 text-body text-zinc-200 font-sans">
               {selectedSection === "providers" && (
                 <div className="space-y-5 max-w-2xl">
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-100">
                       LLM Provider & Engine Configuration
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure local or cloud inference engines for code generation, diff synthesis, and chat.
                     </p>
                   </div>
@@ -480,7 +563,9 @@ export function SettingsModal({
                   {/* Provider Selection Cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     {/* Local Ollama */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={provider === "ollama"}
                       onClick={() => setProvider("ollama")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "ollama"
@@ -493,17 +578,19 @@ export function SettingsModal({
                         <span className="font-semibold text-xs text-zinc-100">
                           Local Ollama
                         </span>
-                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
+                        <span className="text-4xs font-mono px-1 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold">
                           Default
                         </span>
                       </div>
-                      <p className="text-[10px] text-zinc-400 leading-tight">
+                      <p className="text-3xs text-zinc-400 leading-tight">
                         Connects to local daemon (Qwen 2.5 Coder, Llama 3.2, DeepSeek).
                       </p>
-                    </div>
+                    </button>
 
                     {/* Cloud OpenAI / Anthropic */}
-                    <div
+                    <button
+                      type="button"
+                      aria-pressed={provider === "openai"}
                       onClick={() => setProvider("openai")}
                       className={`p-3 rounded-card border cursor-pointer transition ${
                         provider === "openai"
@@ -517,19 +604,18 @@ export function SettingsModal({
                           Cloud APIs
                         </span>
                       </div>
-                      <p className="text-[10px] text-zinc-400 leading-tight">
+                      <p className="text-3xs text-zinc-400 leading-tight">
                         GPT-4o, Claude 3.7 Sonnet, Google Gemini, DeepSeek Cloud.
                       </p>
-                    </div>
+                    </button>
                   </div>
 
                   {/* Provider Settings Details */}
                   <div className="space-y-3.5 pt-2 border-t border-hairline">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Model Identifier
-                      </label>
+                      <label htmlFor="settings-model" className="text-xs font-semibold text-zinc-200">                        Model Identifier</label>
                       <input
+                        id="settings-model"
                         type="text"
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
@@ -540,15 +626,14 @@ export function SettingsModal({
                             ? "e.g. qwen2.5-coder-7b-instruct.gguf"
                             : "e.g. gpt-4o, claude-3-7-sonnet"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Base URL
-                      </label>
+                      <label htmlFor="settings-base-url" className="text-xs font-semibold text-zinc-200">                        Base URL</label>
                       <input
+                        id="settings-base-url"
                         type="text"
                         value={baseUrl}
                         onChange={(e) => setBaseUrl(e.target.value)}
@@ -559,22 +644,21 @@ export function SettingsModal({
                             ? "http://127.0.0.1:8080"
                             : "https://api.openai.com/v1"
                         }
-                        className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                        className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                       />
                     </div>
 
                     {provider === "openai" && (
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-zinc-200">
-                          API Key
-                        </label>
+                        <label htmlFor="settings-api-key" className="text-xs font-semibold text-zinc-200">                        API Key</label>
                         <div className="relative flex items-center">
                           <input
+                            id="settings-api-key"
                             type={showApiKey ? "text" : "password"}
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                             placeholder="sk-..."
-                            className="w-full bg-workbench/60 border border-hairline rounded-[8px] px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
+                            className="w-full bg-workbench/60 border border-hairline rounded-lg px-3 py-1.5 pr-8 text-xs text-zinc-100 font-mono focus:border-purple-500/60 focus:ring-1 focus:ring-purple-500/30 focus:outline-none"
                           />
                           <button
                             type="button"
@@ -597,7 +681,7 @@ export function SettingsModal({
                         type="button"
                         onClick={handleTestConnection}
                         disabled={testStatus === "testing"}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-surface hover:bg-surface-hover text-zinc-200 text-xs font-medium transition border border-hairline shadow-elevation-1"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-zinc-200 text-xs font-medium transition border border-hairline shadow-elevation-1"
                       >
                         <RefreshCw
                           className={`w-3.5 h-3.5 ${
@@ -631,7 +715,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       UI Theme & Workbench Appearance
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Select your preferred IDE theme. Changes take effect across editor, sidebars, tabs, and status bar immediately.
                     </p>
                   </div>
@@ -640,8 +724,10 @@ export function SettingsModal({
                     {Object.values(PRESET_THEMES).map((theme) => {
                       const isCurrent = themeId === theme.id;
                       return (
-                        <div
+                        <button
                           key={theme.id}
+                          type="button"
+                          aria-pressed={isCurrent}
                           onClick={() => onApplyTheme && onApplyTheme(theme.id)}
                           className={`p-3 rounded-card border cursor-pointer transition flex flex-col justify-between ${
                             isCurrent
@@ -682,11 +768,57 @@ export function SettingsModal({
                               style={{ backgroundColor: theme.colors.statusBarBg }}
                               title={`Status Bar: ${theme.colors.statusBarBg}`}
                             />
-                            <span className="text-[10px] font-mono text-zinc-400 ml-auto capitalize">
+                            <span className="text-3xs font-mono text-zinc-400 ml-auto capitalize">
                               {theme.type}
                             </span>
                           </div>
-                        </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Accent, which is a separate decision from the theme: one
+                      theme ships, and the accent is the brand. Showing the
+                      candidates here in the real workbench is the point — a
+                      taste call needs looking at, not a list of hex codes. */}
+                  <div className="pt-1">
+                    <h3 className="text-sm font-semibold text-zinc-100">Accent</h3>
+                    <p className="text-2xs text-zinc-400 mt-0.5">
+                      The mark's two ends, and a point between them. Applied live; kept for the next launch.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    {Object.values(PRESET_ACCENTS).map((accent) => {
+                      const isCurrent = accentId === accent.id;
+                      return (
+                        <button
+                          key={accent.id}
+                          type="button"
+                          aria-pressed={isCurrent}
+                          onClick={() => onApplyAccent && onApplyAccent(accent.id)}
+                          className={`p-3 rounded-card border cursor-pointer transition text-left ${
+                            isCurrent
+                              ? "bg-purple-950/40 border-purple-500/50 ring-1 ring-purple-500/40 shadow-sm"
+                              : "bg-surface border-hairline hover:border-zinc-700 hover:bg-surface-hover"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-semibold text-xs text-zinc-100">{accent.name}</span>
+                            {isCurrent && (
+                              <span className="w-4 h-4 rounded-full bg-purple-600 flex items-center justify-center text-white">
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="h-5 rounded border border-white/10 mb-2"
+                            style={{
+                              background: `linear-gradient(90deg, ${accent.ramp["400"]}, ${accent.ramp["600"]})`,
+                            }}
+                          />
+                          <p className="text-3xs text-zinc-400 leading-relaxed">{accent.blurb}</p>
+                        </button>
                       );
                     })}
                   </div>
@@ -700,30 +832,28 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Typography & Font
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure typography for code editors and diff viewers. JetBrains Mono is the bundled default across all surfaces.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Font Family
-                      </label>
+                      <label htmlFor="settings-font-family" className="text-xs font-semibold text-zinc-200">                        Font Family</label>
                       <select
+                        id="settings-font-family"
                         value="JetBrains Mono"
                         disabled
-                        className="w-full rounded-[8px] bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
+                        className="w-full rounded-lg bg-workbench/60 border border-hairline px-3 py-1.5 text-xs text-zinc-200 font-mono cursor-not-allowed opacity-90"
                       >
                         <option value="JetBrains Mono">JetBrains Mono (Bundled Default)</option>
                       </select>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-zinc-200">
-                        Font Size: {fontSize}px
-                      </label>
+                      <label htmlFor="settings-font-size" className="text-xs font-semibold text-zinc-200">                        Font Size: {fontSize}px</label>
                       <input
+                        id="settings-font-size"
                         type="range"
                         min={11}
                         max={20}
@@ -754,7 +884,7 @@ export function SettingsModal({
                           type="checkbox"
                           checked={enableLigatures}
                           onChange={(e) => setEnableLigatures(e.target.checked)}
-                          className="rounded border-hairline text-purple-500 focus:ring-0"
+                          className="rounded border-hairline text-purple-400 focus:ring-0"
                         />
                         <span>Enable font ligatures (==, !=, =&gt;)</span>
                       </label>
@@ -763,9 +893,9 @@ export function SettingsModal({
 
                   {/* Live JetBrains Mono Code Preview Box */}
                   <div className="space-y-1.5 pt-2">
-                    <label className="text-xs font-medium text-zinc-400">
+                    <p className="text-xs font-medium text-zinc-400">
                       Live Font Preview
-                    </label>
+                    </p>
                     <div
                       className="rounded-panel bg-workbench/80 border border-hairline p-4 font-mono text-zinc-100 overflow-x-auto shadow-elevation-1"
                       style={{
@@ -805,7 +935,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Editor Indentation & Code Style
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Configure tab size, spaces vs tabs, and auto-formatting behavior.
                     </p>
                   </div>
@@ -816,7 +946,7 @@ export function SettingsModal({
                       <select
                         value={tabSize}
                         onChange={(e) => setTabSize(Number(e.target.value))}
-                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
+                        className="bg-workbench/80 border border-hairline rounded-md px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={2}>2 spaces</option>
                         <option value={4}>4 spaces</option>
@@ -830,7 +960,7 @@ export function SettingsModal({
                         type="checkbox"
                         checked={insertSpaces}
                         onChange={(e) => setInsertSpaces(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-400 focus:ring-0"
                       />
                     </div>
 
@@ -841,10 +971,111 @@ export function SettingsModal({
                         type="checkbox"
                         checked={wordWrap}
                         onChange={(e) => setWordWrap(e.target.checked)}
-                        className="rounded border-hairline text-purple-500 focus:ring-0"
+                        className="rounded border-hairline text-purple-400 focus:ring-0"
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ── SECTION: AGENT ───────────────────────────────────────────── */}
+              {selectedSection === "agent" && (
+                <div className="space-y-4 max-w-2xl">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-100">Agent</h3>
+                    <p className="text-2xs text-zinc-400 mt-0.5">
+                      Decide up front what the agent may do on its own. This is the
+                      approval step — pick one mode and runs stop interrupting you.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-zinc-200">Engine</p>
+                    {(Object.keys(AGENT_TRANSPORTS) as AgentTransport[]).map((id) => {
+                      const option = AGENT_TRANSPORTS[id];
+                      const selected = agentTransport === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setAgentTransport(id)}
+                          className={`w-full text-left rounded-panel border p-3 transition-colors cursor-pointer ${
+                            selected
+                              ? "border-purple-500/60 bg-purple-950/30"
+                              : "border-hairline bg-surface hover:bg-workbench"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-3 h-3 rounded-full border ${
+                                selected ? "border-purple-400 bg-purple-500" : "border-zinc-600"
+                              }`}
+                            />
+                            <span className="text-xs font-medium text-zinc-100">{option.label}</span>
+                            {id === DEFAULT_AGENT_TRANSPORT && (
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                                Stable
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-2xs text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                            {option.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+
+                    <p className="text-xs font-semibold text-zinc-200 pt-2">Approvals</p>
+                    {(Object.keys(AGENT_APPROVAL_MODES) as AgentApprovalMode[]).map((mode) => {
+                      const option = AGENT_APPROVAL_MODES[mode];
+                      const selected = approvalMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setApprovalMode(mode)}
+                          className={`w-full text-left rounded-panel border p-3 transition-colors cursor-pointer ${
+                            selected
+                              ? "border-purple-500/60 bg-purple-950/30"
+                              : "border-hairline bg-surface hover:bg-workbench"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-3 h-3 rounded-full border ${
+                                selected
+                                  ? "border-purple-400 bg-purple-500"
+                                  : "border-zinc-600 bg-transparent"
+                              }`}
+                            />
+                            <span className="text-xs font-medium text-zinc-100">
+                              {option.label}
+                            </span>
+                            {mode === DEFAULT_AGENT_APPROVAL_MODE && (
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                                Recommended
+                              </span>
+                            )}
+                            {mode === "ask-me" && agentTransport !== "app-server" && (
+                              <span className="text-3xs px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                                Needs app-server · falls back
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-2xs text-zinc-400 mt-1.5 ml-5 leading-relaxed">
+                            {option.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-2xs text-zinc-500 leading-relaxed">
+                    These map onto the agent runtime&apos;s own sandbox and approval
+                    settings. &ldquo;Read only&rdquo; and &ldquo;Approve for me&rdquo;
+                    both keep the agent inside your project folder.
+                  </p>
                 </div>
               )}
 
@@ -855,7 +1086,7 @@ export function SettingsModal({
                     <h3 className="text-sm font-semibold text-zinc-100">
                       Integrated Terminal Settings
                     </h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Text size for the integrated terminal.
                     </p>
                   </div>
@@ -866,7 +1097,7 @@ export function SettingsModal({
                       <select
                         value={terminalFontSize}
                         onChange={(e) => setTerminalFontSize(Number(e.target.value))}
-                        className="bg-workbench/80 border border-hairline rounded-[6px] px-2.5 py-1 text-xs text-zinc-200"
+                        className="bg-workbench/80 border border-hairline rounded-md px-2.5 py-1 text-xs text-zinc-200"
                       >
                         <option value={12}>12px</option>
                         <option value={13}>13px</option>
@@ -879,11 +1110,15 @@ export function SettingsModal({
                 </div>
               )}
 
+              {selectedSection === "about" && <AboutPane />}
+
+              {selectedSection === "data" && <DataPane />}
+
               {selectedSection === "marketplace" && (
                 <div className="space-y-4 max-w-2xl">
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-100">Marketplace</h3>
-                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                    <p className="text-2xs text-zinc-400 mt-0.5">
                       Skills, MCP servers and tooling the agent can use.
                     </p>
                   </div>
@@ -900,7 +1135,7 @@ export function SettingsModal({
                         onClose();
                         onOpenMarketplace?.();
                       }}
-                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition cursor-pointer"
                     >
                       Open the Marketplace
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -927,7 +1162,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
+                  className="px-4 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-body font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Cancel
                 </button>
@@ -935,7 +1170,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleApply}
-                  className="px-4 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-[13px] font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
+                  className="px-4 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200 text-body font-medium border border-white/[0.08] transition cursor-pointer font-sans shadow-sm"
                 >
                   Apply
                 </button>
@@ -943,7 +1178,7 @@ export function SettingsModal({
                 <button
                   type="button"
                   onClick={handleOk}
-                  className="px-5 py-1.5 rounded-[8px] bg-purple-600 hover:bg-purple-500 text-white text-[13px] font-semibold shadow-sm transition cursor-pointer font-sans"
+                  className="px-5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-body font-semibold shadow-sm transition cursor-pointer font-sans"
                 >
                   OK
                 </button>
@@ -989,9 +1224,22 @@ function TreeItem({
   return (
     <div className="px-1.5 py-0.5">
       <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={hasChildren ? isExpanded : undefined}
+        aria-current={isSelected ? "true" : undefined}
+        onKeyDown={(e) => {
+          // Native buttons fire on Enter and Space; these rows are divs because
+          // they contain their own disclosure button.
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (hasChildren) onToggleNode(node.id, e as unknown as React.MouseEvent);
+            else onSelectSection(node.id);
+          }
+        }}
         onClick={handleClick}
         style={{ paddingLeft: `${6 + level * 14}px` }}
-        className={`px-2 py-1.5 rounded-[8px] flex items-center justify-between cursor-pointer transition-colors group ${
+        className={`px-2 py-1.5 rounded-lg flex items-center justify-between cursor-pointer transition-colors group ${
           isSelected
             ? "bg-purple-950/40 border border-purple-500/40 text-purple-200 font-medium shadow-sm"
             : "hover:bg-white/[0.06] text-zinc-300 hover:text-zinc-100"
@@ -999,21 +1247,23 @@ function TreeItem({
       >
         <div className="flex items-center gap-1.5 min-w-0 font-sans">
           {hasChildren ? (
-            <span
+            <button
+              type="button"
+              aria-label={isExpanded ? `Collapse ${node.label}` : `Expand ${node.label}`}
               onClick={(e) => onToggleNode(node.id, e)}
-              className="w-3.5 h-3.5 flex items-center justify-center text-zinc-400 hover:text-zinc-200"
+              className="w-3.5 h-3.5 flex items-center justify-center text-zinc-400 hover:text-zinc-200 cursor-pointer"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3 h-3" />
               ) : (
                 <ChevronRight className="w-3 h-3" />
               )}
-            </span>
+            </button>
           ) : (
             <span className="w-3.5 h-3.5" />
           )}
 
-          <span className="truncate text-[13px]">{node.label}</span>
+          <span className="truncate text-body">{node.label}</span>
         </div>
 
         {node.hasExternalBadge && (

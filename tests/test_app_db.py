@@ -1,9 +1,10 @@
-"""The app's own database: one owner, secrets kept out of the UI, real auth."""
+"""The app's own database: one owner, secrets kept out of the UI."""
 
 import importlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -34,6 +35,16 @@ class AppDbTestCase(unittest.TestCase):
 
 
 class SchemaTests(AppDbTestCase):
+    def test_a_scoped_connection_closes_when_its_block_ends(self):
+        # `with sqlite3.connect(...) as conn` only commits; it does not close.
+        # The connection here is a subclass that does, because every caller
+        # treats the block as the connection's lifetime — and the ones that did
+        # not left open handles for the collector (Python 3.14 warns about it).
+        with app_db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT 1").fetchone()[0], 1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
     def test_database_file_is_owner_only(self):
         app_db.connect().close()
         mode = stat.S_IMODE(app_db.db_path().stat().st_mode)
@@ -53,7 +64,7 @@ class SchemaTests(AppDbTestCase):
                 for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
         for table in ("settings", "providers", "secrets", "projects", "chat_messages",
-                      "usage_events", "accounts", "auth_sessions"):
+                      "usage_events"):
             self.assertIn(table, names)
 
 
@@ -121,6 +132,24 @@ class ProjectRegistryTests(AppDbTestCase):
         self.assertEqual(active, 1)
         self.assertEqual([p["path"] for p in app_db.list_projects()][0], "/tmp/two")
 
+    def test_a_remembered_project_whose_folder_is_gone_is_flagged_not_dropped(self):
+        # A project row outlives its folder, and the switcher only shows three, so
+        # the UI has to be able to tell a live row from a dead one. Flagged rather
+        # than deleted: a folder can come back (an unmounted volume, a rename), and
+        # discarding the user's history is not the database's call.
+        alive = os.path.join(str(self.data_dir), "alive")
+        os.makedirs(alive, exist_ok=True)
+        app_db.touch_project(alive, "alive")
+        app_db.touch_project(os.path.join(str(self.data_dir), "deleted-by-hand"), "gone")
+
+        rows = {row["path"]: row for row in app_db.list_projects()}
+        self.assertIn(os.path.join(str(self.data_dir), "deleted-by-hand"), rows)
+        self.assertTrue(rows[os.path.join(str(self.data_dir), "deleted-by-hand")]["missing"])
+        self.assertFalse(rows[alive]["missing"])
+
+        # And it is still there afterwards: flagged, not pruned.
+        self.assertEqual(len(app_db.list_projects()), 2)
+
     def test_forget_project_also_drops_its_transcript(self):
         app_db.touch_project("/tmp/one", "one")
         app_db.save_chat("/tmp/one", [{"id": "m1", "role": "user", "content": "hi", "timestamp": 1_700_000_000_000}])
@@ -172,6 +201,26 @@ class ChatHistoryTests(AppDbTestCase):
         self.assertEqual(message["images"], ["data:image/png;base64,AAAA"])
         self.assertEqual(message["steps"][0]["name"], "Read File")
 
+    def test_the_change_log_survives_a_reload(self):
+        # The chat shows "Edited N files +X −Y" from the message itself, so a
+        # field that failed to round-trip would mean the log vanished on reload —
+        # which is the whole reason logging was chosen over gating writes.
+        app_db.save_chat("/tmp/a", [
+            {
+                "id": "m1",
+                "role": "assistant",
+                "content": "done",
+                "changes": [
+                    {"path": "src/App.tsx", "added": 5, "removed": 0},
+                    {"path": "src/main.tsx", "added": 4, "removed": 1},
+                ],
+                "timestamp": 5,
+            }
+        ])
+        changes = app_db.load_chat("/tmp/a")[0]["changes"]
+        self.assertEqual([c["path"] for c in changes], ["src/App.tsx", "src/main.tsx"])
+        self.assertEqual(changes[1], {"path": "src/main.tsx", "added": 4, "removed": 1})
+
 
 class UsageLedgerTests(AppDbTestCase):
     def test_summary_aggregates_and_filters(self):
@@ -180,77 +229,29 @@ class UsageLedgerTests(AppDbTestCase):
         app_db.record_usage("ollama", "qwen2.5-coder:7b", 10, 5, 100.0, 0.0, "/tmp/b")
 
         everything = app_db.usage_summary()
-        self.assertEqual(everything["calls"], 3)
-        self.assertEqual(everything["promptTokens"], 310)
-        self.assertAlmostEqual(everything["costUsd"], 0.03, places=6)
+        self.assertEqual(everything["total_calls"], 3)
+        self.assertEqual(everything["prompt_tokens"], 310)
+        self.assertEqual(everything["total_tokens"], 310 + 135)
+        self.assertAlmostEqual(everything["cost_usd"], 0.03, places=6)
+        # One entry per day of the window, even on days with no activity.
+        self.assertEqual(len(everything["daily"]), 14)
+        self.assertEqual(sum(day["calls"] for day in everything["daily"]), 3)
+        self.assertEqual(len(everything["recent"]), 3)
 
         scoped = app_db.usage_summary("/tmp/a")
-        self.assertEqual(scoped["calls"], 2)
-        self.assertEqual([row["model"] for row in scoped["byModel"]], ["deepseek-flash"])
+        self.assertEqual(scoped["total_calls"], 2)
+        self.assertEqual([row["model"] for row in scoped["by_model"]], ["deepseek-flash"])
 
+    def test_cost_is_derived_when_the_caller_omits_it(self):
+        # Callers used to pass cost_usd=0 for hosted providers, so the spend
+        # panel read $0.00 while real money was being spent.
+        app_db.record_usage("deepseek", "deepseek-flash", 1_000_000, 1_000_000)
+        row = app_db.usage_summary()["recent"][0]
+        self.assertAlmostEqual(row["cost_usd"], 0.27 + 1.10, places=6)
 
-class AccountTests(AppDbTestCase):
-    def test_password_is_hashed_with_a_salt(self):
-        account = app_db.create_account("Dev@Example.com", "correct horse battery")
-        self.assertEqual(account["email"], "dev@example.com")
-        with app_db.connect() as conn:
-            row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account["id"],)).fetchone()
-        self.assertNotIn("correct horse battery", row["password_hash"])
-        self.assertNotEqual(row["password_hash"], row["password_salt"])
-        self.assertGreaterEqual(row["iterations"], 100_000)
-
-    def test_login_accepts_the_right_password_and_rejects_others(self):
-        app_db.create_account("dev@example.com", "correct horse battery")
-        self.assertIsNotNone(app_db.verify_login("DEV@example.com", "correct horse battery"))
-        self.assertIsNone(app_db.verify_login("dev@example.com", "wrong"))
-        self.assertIsNone(app_db.verify_login("nobody@example.com", "correct horse battery"))
-
-    def test_duplicate_and_weak_credentials_are_refused(self):
-        app_db.create_account("dev@example.com", "correct horse battery")
-        with self.assertRaises(ValueError):
-            app_db.create_account("dev@example.com", "correct horse battery")
-        with self.assertRaises(ValueError):
-            app_db.create_account("other@example.com", "short")
-        with self.assertRaises(ValueError):
-            app_db.create_account("not-an-email", "correct horse battery")
-
-
-class SessionTests(AppDbTestCase):
-    def setUp(self):
-        super().setUp()
-        self.account = app_db.create_account("dev@example.com", "correct horse battery")
-
-    def test_token_is_stored_only_as_a_digest(self):
-        token = app_db.create_session(self.account["id"])
-        with app_db.connect() as conn:
-            stored = conn.execute("SELECT token_hash FROM auth_sessions").fetchone()["token_hash"]
-        self.assertNotEqual(stored, token)
-        self.assertEqual(len(stored), 64)  # sha256 hex
-
-    def test_validate_round_trip_and_revoke(self):
-        token = app_db.create_session(self.account["id"])
-        self.assertEqual(app_db.validate_session(token)["email"], "dev@example.com")
-        app_db.revoke_session(token)
-        self.assertIsNone(app_db.validate_session(token))
-
-    def test_expired_session_is_rejected_and_pruned(self):
-        token = app_db.create_session(self.account["id"], ttl_seconds=-1)
-        self.assertIsNone(app_db.validate_session(token))
-        with app_db.connect() as conn:
-            remaining = conn.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0]
-        self.assertEqual(remaining, 0)
-
-    def test_password_change_invalidates_existing_sessions(self):
-        token = app_db.create_session(self.account["id"])
-        self.assertTrue(
-            app_db.change_password(self.account["id"], "correct horse battery", "a-new-password")
-        )
-        self.assertIsNone(app_db.validate_session(token))
-        self.assertIsNotNone(app_db.verify_login("dev@example.com", "a-new-password"))
-
-    def test_password_change_requires_the_current_password(self):
-        self.assertFalse(app_db.change_password(self.account["id"], "nope", "a-new-password"))
-        self.assertIsNotNone(app_db.verify_login("dev@example.com", "correct horse battery"))
+    def test_local_models_are_free(self):
+        app_db.record_usage("ollama", "qwen2.5-coder:7b", 10_000, 10_000)
+        self.assertEqual(app_db.usage_summary()["recent"][0]["cost_usd"], 0.0)
 
 
 class DatabaseCliTests(AppDbTestCase):
@@ -298,19 +299,13 @@ class DatabaseCliTests(AppDbTestCase):
         _, out = self._run("chat.load", json.dumps({"projectPath": "/tmp/x"}))
         self.assertEqual(out["data"][0]["content"], "hi")
 
-    def test_auth_login_issues_a_session_token(self):
-        self._run("auth.register", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        code, out = self._run("auth.login", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        self.assertEqual(code, 0, out)
-        token = out["data"]["token"]
-        _, me = self._run("auth.me", json.dumps({"token": token}))
-        self.assertEqual(me["data"]["email"], "a@b.com")
-
-    def test_bad_credentials_fail_with_nonzero_exit(self):
-        self._run("auth.register", json.dumps({"email": "a@b.com", "password": "long-enough-pw"}))
-        code, out = self._run("auth.login", json.dumps({"email": "a@b.com", "password": "wrong-password"}))
-        self.assertEqual(code, 1)
-        self.assertFalse(out["ok"])
+    def test_the_accounts_surface_is_gone_not_dormant(self):
+        # Removed on purpose, so this pins the removal: an unreachable endpoint
+        # with no screen is a claim the app cannot back, and it is the sort of
+        # thing that quietly comes back.
+        for command in ("auth.register", "auth.login", "auth.me", "accounts.list"):
+            code, _ = self._run(command, json.dumps({"email": "a@b.com", "password": "pw"}))
+            self.assertNotEqual(code, 0, f"{command} still exists")
 
     def test_unknown_command_is_reported(self):
         code, out = self._run("nope.nope")

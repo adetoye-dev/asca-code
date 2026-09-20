@@ -1,7 +1,8 @@
 /**
  * ollamaSetup.ts — Automatic Ollama Detection & Setup Service
  *
- * Wraps the /api/ollama/* bridge endpoints to:
+ * Detection, install and downloads for the local model runtime. Every call
+ * prefers the desktop shell and falls back to the dev bridge for a browser:
  * 1. Silently detect whether Ollama is installed and running on startup.
  * 2. Install Ollama via clean passwordless unpack with structured progress streaming.
  * 3. Pull the RAM-appropriate default model with structured progress streaming.
@@ -10,6 +11,9 @@
  */
 
 export const OLLAMA_FIRST_LAUNCH_KEY = "acsa_code_ollama_setup_done_v1";
+
+/** Set once the user dismisses the advisory "no model configured" notice. */
+export const OLLAMA_NOTICE_DISMISSED_KEY = "acsa_code_ollama_notice_dismissed_v1";
 
 export interface OllamaModelDetail {
   name: string;
@@ -45,9 +49,12 @@ export interface OllamaProgressEvent {
 /** Ping the bridge to get Ollama install/running state + RAM-based model recommendation. */
 export async function checkOllamaStatus(): Promise<OllamaStatus> {
   try {
-    const res = await fetch("/api/ollama/status", { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as OllamaStatus;
+    if (hasIpc()) {
+      // The bundled engine probes 127.0.0.1:11434 itself. This is the path that
+      // makes the app able to see a running Ollama at all.
+      return await engineCall<OllamaStatus>("ollama", ["status"]);
+    }
+    throw desktopRequired("Ollama detection");
   } catch (err: any) {
     return {
       installed: false,
@@ -61,55 +68,21 @@ export async function checkOllamaStatus(): Promise<OllamaStatus> {
 }
 
 /**
- * Stream Ollama installation progress.
- * Calls onProgress with percent (0-100) and status description.
+ * Ollama's own installer is the way in.
+ *
+ * This used to download and unpack the macOS package itself, streaming progress
+ * from a dev-server route that only existed while a browser was open. Downloading
+ * an installer and running it is the vendor's job: theirs is signed, notarised
+ * and kept current, and a copy we fetch can be neither. So the wizard sends the
+ * user to the source and keeps everything after that in the app — starting the
+ * server, pulling models, wiring the provider.
  */
 export async function installOllama(onProgress: (evt: OllamaProgressEvent) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    fetch("/api/ollama/install", { method: "POST" })
-      .then((res) => {
-        if (!res.body) { reject(new Error("No response body")); return; }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        function pump(): void {
-          reader.read().then(({ done, value }) => {
-            if (done) { resolve(); return; }
-            buffer += decoder.decode(value, { stream: true });
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop() ?? "";
-            for (const part of parts) {
-              const line = part.replace(/^data: /, "").trim();
-              if (!line) continue;
-              try {
-                const obj = JSON.parse(line) as {
-                  percent?: number;
-                  status?: string;
-                  log?: string;
-                  done?: boolean;
-                  error?: string;
-                };
-                if (typeof obj.percent === "number" || obj.status || obj.log) {
-                  onProgress({
-                    percent: obj.percent ?? 0,
-                    status: obj.status || obj.log || "Installing…",
-                    log: obj.log || obj.status,
-                  });
-                }
-                if (obj.done) {
-                  if (obj.error) { reject(new Error(obj.error)); return; }
-                  resolve();
-                  return;
-                }
-              } catch {}
-            }
-            pump();
-          }).catch(reject);
-        }
-        pump();
-      })
-      .catch(reject);
-  });
+  onProgress({ percent: 0, status: "Ollama is installed from ollama.com" });
+  throw new Error(
+    "Install Ollama from https://ollama.com/download, then choose Retry. Everything after " +
+      "that — starting it, downloading models, using it as a provider — happens here.",
+  );
 }
 
 /**
@@ -120,73 +93,105 @@ export async function pullOllamaModel(
   model: string,
   onProgress: (evt: OllamaProgressEvent) => void
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    fetch("/api/ollama/pull", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-    })
-      .then((res) => {
-        if (!res.body) { reject(new Error("No response body")); return; }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        function pump(): void {
-          reader.read().then(({ done, value }) => {
-            if (done) { resolve(model); return; }
-            buffer += decoder.decode(value, { stream: true });
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop() ?? "";
-            for (const part of parts) {
-              const line = part.replace(/^data: /, "").trim();
-              if (!line) continue;
-              try {
-                const obj = JSON.parse(line) as {
-                  percent?: number;
-                  status?: string;
-                  log?: string;
-                  done?: boolean;
-                  model?: string;
-                  error?: string;
-                };
-                if (typeof obj.percent === "number" || obj.status || obj.log) {
-                  onProgress({
-                    percent: obj.percent ?? 0,
-                    status: obj.status || obj.log || `Pulling ${model}…`,
-                    log: obj.log || obj.status,
-                  });
-                }
-                if (obj.done) {
-                  if (obj.error) { reject(new Error(obj.error)); return; }
-                  resolve(obj.model || model);
-                  return;
-                }
-              } catch {}
-            }
-            pump();
-          }).catch(reject);
+  if (hasIpc()) return pullViaIpc(model, onProgress);
+  // Downloads are the engine's job (it streams Ollama's own progress through
+  // `ollama_pull`). A browser has no engine, so there is nothing to fall back to.
+  throw desktopRequired("Downloading a model");
+}
+
+/**
+ * Download through the desktop shell.
+ *
+ * The engine streams one NDJSON frame per progress update on its stdout and Rust
+ * forwards each as an `ollama:frame` event, so the wizard shows the same percent
+ * it did over the dev bridge — this is the path the packaged app uses.
+ */
+async function pullViaIpc(
+  model: string,
+  onProgress: (evt: OllamaProgressEvent) => void,
+): Promise<string> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+
+  let finished = false;
+  let unlisten: Array<() => void> = [];
+  const cleanup = () => {
+    unlisten.forEach((off) => off());
+    unlisten = [];
+  };
+
+  return new Promise<string>((resolve, reject) => {
+    void (async () => {
+      const handle = (line: string) => {
+        if (finished) return;
+        try {
+          const obj = JSON.parse(line) as {
+            percent?: number;
+            status?: string;
+            done?: boolean;
+            model?: string;
+            error?: string;
+          };
+          if (obj.error && !obj.done) {
+            onProgress({ percent: obj.percent ?? 0, status: obj.error });
+            return;
+          }
+          if (obj.percent !== undefined || obj.status) {
+            onProgress({
+              percent: obj.percent ?? 0,
+              status: obj.status || `Downloading ${model}…`,
+              log: obj.status,
+            });
+          }
+          if (obj.done) {
+            finished = true;
+            cleanup();
+            if (obj.error) reject(new Error(obj.error));
+            else resolve(obj.model || model);
+          }
+        } catch {
+          /* a partial or non-JSON line carries nothing to show */
         }
-        pump();
-      })
-      .catch(reject);
+      };
+
+      unlisten.push(
+        await listen<{ line?: string } | string>("ollama:frame", (event) => {
+          const payload = event.payload;
+          handle(typeof payload === "string" ? payload : String(payload?.line ?? ""));
+        }),
+      );
+      unlisten.push(
+        await listen<string>("ollama:exit", (event) => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          const note = String(event.payload ?? "").trim();
+          reject(new Error(note || "The download stopped before finishing."));
+        }),
+      );
+
+      try {
+        await invoke("ollama_pull", { model });
+      } catch (error) {
+        finished = true;
+        cleanup();
+        reject(new Error(String(error)));
+      }
+    })();
   });
 }
 
 /** Start the Ollama server and wait for it to become healthy (up to 6s). */
 export async function startOllamaServer(): Promise<boolean> {
   try {
-    const res = await fetch("/api/ollama/start", { method: "POST" });
-    if (!res.ok) return false;
-    const data = await res.json();
-    return !!(data as { ok: boolean }).ok;
+    if (hasIpc()) {
+      const result = await engineCall<{ started: boolean }>("ollama", ["start"]);
+      return Boolean(result?.started);
+    }
+    return false;
   } catch {
     return false;
   }
-}
-
-/** Returns true if this is the first time setup needs to run. */
-export function isFirstLaunchSetup(): boolean {
-  return !localStorage.getItem(OLLAMA_FIRST_LAUNCH_KEY);
 }
 
 /** Mark setup as completed so wizard doesn't auto-pop on next launch. */
@@ -194,17 +199,30 @@ export function markSetupComplete(): void {
   localStorage.setItem(OLLAMA_FIRST_LAUNCH_KEY, "1");
 }
 
+/**
+ * The "no model configured" notice is advisory, so dismissing it has to stick —
+ * otherwise the app nags on every launch. The wizard stays reachable from the AI
+ * dashboard and the command palette, so nothing is lost by hiding it.
+ */
+export function isOllamaNoticeDismissed(): boolean {
+  return localStorage.getItem(OLLAMA_NOTICE_DISMISSED_KEY) === "1";
+}
+
+export function dismissOllamaNotice(): void {
+  localStorage.setItem(OLLAMA_NOTICE_DISMISSED_KEY, "1");
+}
+
 /** Delete an installed Ollama model to free disk space. */
 export async function deleteOllamaModel(model: string): Promise<boolean> {
   try {
-    const res = await fetch("/api/ollama/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { ok?: boolean };
-    return !!data.ok;
+    if (hasIpc()) {
+      const result = await engineCall<{ ok: boolean }>("ollama", [
+        "delete",
+        JSON.stringify({ model }),
+      ]);
+      return Boolean(result?.ok);
+    }
+    return false;
   } catch {
     return false;
   }
@@ -361,14 +379,14 @@ export function formatContextLength(tokens?: number): string {
  */
 export async function getOllamaModelShow(model: string): Promise<any> {
   try {
-    const res = await fetch("/api/ollama/show", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json.ok ? json.data : null;
+    if (hasIpc()) {
+      const result = await engineCall<{ ok: boolean }>("ollama", [
+        "show",
+        JSON.stringify({ model }),
+      ]);
+      return result?.ok ? result : null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -535,4 +553,4 @@ export function startCodingWithOllama(model?: string): void {
     window.dispatchEvent(new CustomEvent(EVENT_START_CODING_WITH_OLLAMA, { detail: { model } }));
   }
 }
-
+import { desktopRequired, engineCall, hasIpc } from "./engineBridge";

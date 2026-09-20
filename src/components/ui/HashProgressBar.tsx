@@ -21,6 +21,8 @@ export function HashProgressBar({
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
 
   const cleanStatus = (statusText || "Processing…")
+    // Control characters are the point: this strips ANSI colour codes.
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
     .trim();
 
@@ -41,9 +43,9 @@ export function HashProgressBar({
   return (
     <div className={`space-y-2.5 p-3.5 rounded-xl bg-zinc-950 border border-zinc-800/90 font-mono ${className}`}>
       {/* Taller, Squared-Edge Gradient Loading Bar */}
-      <div className="w-full h-3 rounded-[2px] bg-zinc-900 border border-zinc-800/80 overflow-hidden shadow-inner">
+      <div className="w-full h-3 rounded-sm bg-zinc-900 border border-zinc-800/80 overflow-hidden shadow-inner">
         <div
-          className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-emerald-400 rounded-[2px] transition-all duration-300 ease-out"
+          className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-emerald-400 rounded-sm transition-all duration-300 ease-out"
           style={{ width: `${clamped}%` }}
         />
       </div>
@@ -51,11 +53,11 @@ export function HashProgressBar({
       {/* Progress Meta Row */}
       <div className="flex items-center justify-between gap-3 text-xs select-none">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="truncate text-[11px] text-zinc-400">
+          <span className="truncate text-2xs text-zinc-400">
             {prefixText}
           </span>
           {clamped > 0 && clamped < 100 && (
-            <span className="text-zinc-500 shrink-0 text-[10px] animate-pulse font-sans">
+            <span className="text-zinc-500 shrink-0 text-3xs animate-pulse font-sans">
               · Working…
             </span>
           )}

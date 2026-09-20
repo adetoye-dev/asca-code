@@ -65,6 +65,8 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
 
   const addLog = (line?: string) => {
     if (!line) return;
+    // Control characters are the point: this strips ANSI colour codes.
+    // eslint-disable-next-line no-control-regex
     const clean = line.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "").trim();
     if (!clean) return;
     setLogs((prev) => {
@@ -226,7 +228,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           <Icon icon={Loader2} className="w-9 h-9 text-purple-400 animate-spin" />
           <div>
             <p className="text-xs font-semibold text-zinc-200">Detecting local Ollama installation…</p>
-            <p className="text-[11px] text-zinc-500 mt-1">Inspecting PATH and application directories</p>
+            <p className="text-2xs text-zinc-500 mt-1">Inspecting PATH and application directories</p>
           </div>
         </div>
       );
@@ -243,7 +245,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                 ACSA Code will download and configure Ollama directly without requiring root or administrator passwords.
               </p>
               {status && status.totalRamGb > 0 && (
-                <div className="mt-1 text-[11px] text-amber-300/80 font-mono">
+                <div className="mt-1 text-2xs text-amber-300/80 font-mono">
                   Hardware: {status.totalRamGb} GB RAM · recommended model: {status.recommendedModel}
                 </div>
               )}
@@ -264,7 +266,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -312,7 +314,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -346,16 +348,16 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
       return (
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-300">
+            <label htmlFor="ollamasetupwizard-select-local-model-to-download-1" className="text-xs font-semibold text-zinc-300">
               Select Local Model to Download
             </label>
             {status && status.totalRamGb > 0 && (
-              <p className="text-[11px] text-zinc-400">
+              <p className="text-2xs text-zinc-400">
                 System RAM: <span className="text-zinc-200 font-mono font-medium">{status.totalRamGb} GB</span> ·
                 Recommended: <span className="text-purple-400 font-mono font-semibold">{status.recommendedModel}</span>
               </p>
             )}
-            <select
+            <select id="ollamasetupwizard-select-local-model-to-download-1"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               disabled={isBusy}
@@ -383,7 +385,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
               <button
                 type="button"
                 onClick={() => setShowLogs((prev) => !prev)}
-                className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
+                className="flex items-center gap-1.5 text-3xs text-zinc-500 hover:text-zinc-300 transition-colors font-mono"
               >
                 <Icon icon={ChevronDown} className={`w-3 h-3 transition-transform ${showLogs ? "" : "-rotate-90"}`} />
                 <span>{showLogs ? "Hide details" : `Show details (${logs.length} events)`}</span>
@@ -421,7 +423,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
                   : "Ollama server is active and verified as your default AI engine."}
               </p>
               {status && status.models && status.models.length > 0 && (
-                <p className="text-[11px] text-zinc-500 mt-1 font-mono truncate max-w-xs mx-auto">
+                <p className="text-2xs text-zinc-500 mt-1 font-mono truncate max-w-xs mx-auto">
                   Available: {status.models.join(", ")}
                 </p>
               )}
@@ -467,7 +469,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
             <Icon icon={AlertCircle} className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <div className="text-xs text-red-200/90 leading-relaxed">
               <span className="font-semibold text-white">Setup Interrupted</span>
-              <p className="mt-1 font-mono text-[11px] text-red-300/80 break-words">{errorMsg}</p>
+              <p className="mt-1 font-mono text-2xs text-red-300/80 break-words">{errorMsg}</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -504,7 +506,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           </div>
           <div>
             <h2 className="text-xs font-bold text-white tracking-tight">Local AI Engine Setup</h2>
-            <p className="text-[10px] text-zinc-500">Autonomous Ollama Provisioning</p>
+            <p className="text-3xs text-zinc-500">Runs on this machine</p>
           </div>
         </div>
         <button
@@ -526,12 +528,12 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
           return (
             <div key={s.id} className="flex items-center">
               <div
-                className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md transition-colors ${
+                className={`flex items-center gap-1 text-3xs font-semibold px-2 py-0.5 rounded-md transition-colors ${
                   done
                     ? "text-emerald-400"
                     : active
                     ? "text-white bg-zinc-800"
-                    : "text-zinc-600"
+                    : "text-zinc-500"
                 }`}
               >
                 {done && <Icon icon={CheckCircle2} className="w-2.5 h-2.5" />}
@@ -553,7 +555,7 @@ export function OllamaSetupWizard({ onClose, onComplete, asModal = true }: Ollam
   if (!asModal) return inner;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-critical flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       {inner}
     </div>
   );
@@ -568,7 +570,7 @@ function LogBox({
   logsEndRef: React.RefObject<HTMLDivElement>;
 }) {
   return (
-    <div className="h-28 overflow-y-auto rounded-xl bg-zinc-950 border border-zinc-800/80 p-2.5 font-mono text-[10px] text-zinc-400 space-y-0.5">
+    <div className="h-28 overflow-y-auto rounded-xl bg-zinc-950 border border-zinc-800/80 p-2.5 font-mono text-3xs text-zinc-400 space-y-0.5">
       {logs.map((l, i) => (
         <div key={i} className={`truncate ${l.startsWith("✓") ? "text-emerald-400" : ""}`}>
           {l}
@@ -581,30 +583,30 @@ function LogBox({
 
 /* ── Non-Intrusive Repeat-Launch Banner ─────────────────────────────────── */
 interface OllamaBannerProps {
-  onOpenWizard: () => void;
+  onOpenSetup: () => void;
   onDismiss: () => void;
 }
 
-export function OllamaNotRunningBanner({ onOpenWizard, onDismiss }: OllamaBannerProps) {
+export function OllamaNotRunningBanner({ onOpenSetup, onDismiss }: OllamaBannerProps) {
   return (
-    <div className="fixed bottom-6 right-6 z-[9000] flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
+    <div className="fixed bottom-6 right-6 z-toast flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-workbench border border-amber-500/40 shadow-xl max-w-xs font-sans">
       <Icon icon={AlertCircle} className="w-4 h-4 text-amber-400 shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-white truncate">Ollama is not running</p>
-        <p className="text-[10px] text-zinc-400 mt-0.5">Local AI engine is inactive</p>
+        <p className="text-xs font-semibold text-white truncate">No AI model is configured</p>
+        <p className="text-3xs text-zinc-400 mt-0.5">Add a provider key, or start the local engine</p>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
-          onClick={onOpenWizard}
-          className="text-[10px] font-bold text-purple-400 hover:text-purple-300 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
+          onClick={onOpenSetup}
+          className="text-3xs font-bold text-purple-400 hover:text-purple-300 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
         >
-          Fix
+          Set up
         </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="text-zinc-600 hover:text-zinc-400 transition-colors p-1"
+          className="text-zinc-500 hover:text-zinc-400 transition-colors p-1"
           title="Dismiss"
         >
           <Icon icon={X} className="w-3 h-3" />
