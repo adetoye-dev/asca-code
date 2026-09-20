@@ -25,6 +25,12 @@ export interface StoredProject {
   name: string;
   last_opened_at: number;
   is_active: number;
+  /**
+   * The database's answer to "is this folder still there?". A remembered project
+   * outlives its folder, and the switcher only shows three, so dead rows have to
+   * be distinguishable from live ones. See services/recentProjects.ts.
+   */
+  missing?: boolean;
 }
 
 export interface StoredMessage {

@@ -132,6 +132,24 @@ class ProjectRegistryTests(AppDbTestCase):
         self.assertEqual(active, 1)
         self.assertEqual([p["path"] for p in app_db.list_projects()][0], "/tmp/two")
 
+    def test_a_remembered_project_whose_folder_is_gone_is_flagged_not_dropped(self):
+        # A project row outlives its folder, and the switcher only shows three, so
+        # the UI has to be able to tell a live row from a dead one. Flagged rather
+        # than deleted: a folder can come back (an unmounted volume, a rename), and
+        # discarding the user's history is not the database's call.
+        alive = os.path.join(str(self.data_dir), "alive")
+        os.makedirs(alive, exist_ok=True)
+        app_db.touch_project(alive, "alive")
+        app_db.touch_project(os.path.join(str(self.data_dir), "deleted-by-hand"), "gone")
+
+        rows = {row["path"]: row for row in app_db.list_projects()}
+        self.assertIn(os.path.join(str(self.data_dir), "deleted-by-hand"), rows)
+        self.assertTrue(rows[os.path.join(str(self.data_dir), "deleted-by-hand")]["missing"])
+        self.assertFalse(rows[alive]["missing"])
+
+        # And it is still there afterwards: flagged, not pruned.
+        self.assertEqual(len(app_db.list_projects()), 2)
+
     def test_forget_project_also_drops_its_transcript(self):
         app_db.touch_project("/tmp/one", "one")
         app_db.save_chat("/tmp/one", [{"id": "m1", "role": "user", "content": "hi", "timestamp": 1_700_000_000_000}])

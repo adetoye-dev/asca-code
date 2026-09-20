@@ -9,6 +9,12 @@
  */
 
 import { useState, useRef, useEffect } from "react";
+import {
+  normalizeProjectPath,
+  isPlaceholderPath,
+  selectRecentProjects,
+  type RememberedProject,
+} from "../../services/recentProjects";
 import { Plus, Check, GitFork, ChevronDown, Folder } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import type { ProjectMeta } from "../../hooks/usePipeline";
@@ -42,43 +48,23 @@ export function ProjectSwitcher({
   // could resurrect a project on a machine that had merely opened one.
   useEffect(() => {
     let cancelled = false;
-    const normPath = (p?: string) => {
-      const value = (p || "").trim();
-      if (value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) {
-        return value.endsWith("/") || value.endsWith("\\") ? value.slice(0, 3) : value;
-      }
-      return value.replace(/[/\\]+$/, "");
-    };
 
     (async () => {
-      const activeNorm = normPath(activeProject.path);
-      const seen = new Set<string>();
-      const deduped: ProjectMeta[] = [];
-
-      // The active project always leads the list.
-      if (activeProject?.name && activeNorm && activeNorm !== "." && activeNorm !== "./") {
-        seen.add(activeNorm);
-        deduped.push({ ...activeProject, path: activeNorm });
-      }
-
+      const activePath = normalizeProjectPath(activeProject.path);
+      let stored: RememberedProject[] = [];
       try {
-        const stored = await appStore.listProjects(6);
-        for (const item of stored) {
-          const itemNorm = normPath(item.path);
-          if (!itemNorm || itemNorm === "." || itemNorm === "./" || seen.has(itemNorm)) continue;
-          seen.add(itemNorm);
-          deduped.push({ name: item.name, path: itemNorm });
-        }
+        stored = await appStore.listProjects(6);
       } catch {
         // Database unavailable: show just the active project.
       }
 
       if (cancelled) return;
-      const limited = deduped.slice(0, 3);
-      setRecentProjects(limited.length > 0 ? limited : [activeProject]);
+
+      const chosen = selectRecentProjects(activeProject, stored, 3);
+      setRecentProjects(chosen.length > 0 ? chosen : [activeProject]);
 
       // Remember this project so it is offered next time.
-      if (activeNorm && activeNorm !== "." && activeNorm !== "./") {
+      if (!isPlaceholderPath(activePath)) {
         void appStore.touchProject(activeProject.path, activeProject.name).catch(() => {});
       }
       // The old list is now redundant, and leaving it would keep a stale pointer.

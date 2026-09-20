@@ -440,7 +440,25 @@ def list_projects(limit: int = 10) -> list[dict[str, Any]]:
             " ORDER BY last_opened_at DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_flag_missing(dict(row)) for row in rows]
+
+
+def _flag_missing(project: dict[str, Any]) -> dict[str, Any]:
+    """Mark a remembered project whose folder is no longer on disk.
+
+    A project row outlives its folder: the folder gets deleted, moved or renamed
+    between sessions and the row stays. The switcher offers the three most recent,
+    so a handful of dead rows can hide every project that still exists — eight
+    deleted test projects sat above the two real ones, and "my recent projects
+    don't appear in the switcher" was literally true.
+
+    Flagged rather than deleted: a folder can come back (an unmounted volume, a
+    rename), and dropping a user's history is not this function's call. The UI
+    decides what to show; nothing is destroyed here.
+    """
+    path = str(project.get("path") or "")
+    project["missing"] = not path or not os.path.isdir(path)
+    return project
 
 
 def forget_project(path: str) -> None:
