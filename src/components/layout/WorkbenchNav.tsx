@@ -6,6 +6,13 @@
  * button whose label is simply hidden while the sidebar is narrow, which is what
  * keeps the two states from drifting apart.
  *
+ * The rows also have exactly one *layout*. They are indented so the icon sits on
+ * the centre line of the collapsed column (20px in a 56px column), and expanding
+ * only opens the width and fades the labels in — nothing re-flows per state. Two
+ * layouts swapping while the width animated is what made opening and closing look
+ * broken: the icons flew across the panel because the collapsed layout centred
+ * itself in a box that was still wide.
+ *
  * Behaviour:
  * - pointing at it (or tabbing into it) expands it in place — the layout makes
  *   room rather than a second surface appearing over the top;
@@ -252,16 +259,16 @@ export function WorkbenchNav({
         {/* ── Identity ─────────────────────────────────────────────────────
             The brand is the sidebar's, not a bar's: it is the icon alone when
             collapsed and the icon with the name when there is room. */}
-        <div className={`flex h-10 shrink-0 items-center border-b border-hairline ${expanded ? "justify-between pl-2 pr-1.5" : "justify-center"}`}>
+        <div className="relative flex h-10 shrink-0 items-center border-b border-hairline">
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
             data-testid="nav-brand"
             aria-expanded={expanded}
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
-            className="flex min-w-0 items-center gap-2 rounded-lg py-1 px-1.5 hover:bg-white/5"
+            className="mx-1.5 flex h-9 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-3 pr-2.5 hover:bg-white/5"
           >
-            <IdeBrandLogo className="w-5 h-5 shrink-0" />
+            <IdeBrandLogo size={20} className="h-5 w-5 shrink-0" />
             <span
               aria-hidden={!expanded}
               className={`truncate text-body font-semibold tracking-tight text-zinc-100 ${labelClass}`}
@@ -269,6 +276,7 @@ export function WorkbenchNav({
               ACSA Code
             </span>
           </button>
+          {expanded && (
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
@@ -278,10 +286,11 @@ export function WorkbenchNav({
             tabIndex={expanded ? 0 : -1}
             title={pinned ? "Release the sidebar" : "Keep the sidebar open"}
             aria-label={pinned ? "Release the sidebar" : "Keep the sidebar open"}
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${labelClass}`}
+            className={`absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${labelClass}`}
           >
             <Icon icon={pinned ? PinOff : Pin} className="w-3.5 h-3.5" />
           </button>
+          )}
         </div>
 
         {/* ── Find and commands ─────────────────────────────────────────── */}
@@ -302,13 +311,23 @@ export function WorkbenchNav({
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
           {NAV_SECTIONS.map((section, sectionIndex) => (
             <div key={section.label}>
-              {expanded ? (
-                <div className="px-3 pb-0.5 pt-2 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
-                  {section.label}
-                </div>
-              ) : (
-                sectionIndex > 0 && <div aria-hidden className="mx-3 my-1.5 h-px bg-hairline" />
+              {sectionIndex > 0 && (
+                <div
+                  aria-hidden
+                  className={`mx-5 bg-hairline transition-all duration-150 ${
+                    expanded ? "h-0 opacity-0" : "h-px opacity-100"
+                  }`}
+                />
               )}
+              <div
+                className={`overflow-hidden pl-5 transition-all duration-150 ${
+                  expanded ? "h-6 opacity-100" : "h-0 opacity-0"
+                }`}
+              >
+                <span className="flex h-6 items-end pb-1 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
+                  {section.label}
+                </span>
+              </div>
               {section.items.map((item) => {
                 const active = screen === item.id;
                 const isExplorerToggle = item.id === "editor" && active;
@@ -321,11 +340,9 @@ export function WorkbenchNav({
                     aria-label={item.label}
                     title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                     data-testid={`nav-item-${item.id}`}
-                    className={`flex items-center rounded-lg text-left transition-colors ${
-                      expanded
-                        ? "mx-1.5 w-[calc(100%-0.75rem)] gap-2.5 px-2.5 py-2"
-                        : "mx-auto h-9 w-9 justify-center"
-                    } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
+                    className={`mx-1.5 flex h-9 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
+                      active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
+                    }`}
                   >
                     <Icon
                       icon={item.icon}
@@ -403,11 +420,7 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className={`flex items-center rounded-lg text-left transition-colors ${
-        expanded
-          ? "mx-1.5 mt-1 w-[calc(100%-0.75rem)] gap-2.5 px-2.5 py-2"
-          : "mx-auto mt-1 h-9 w-9 justify-center"
-      } text-zinc-400 hover:bg-white/5 hover:text-zinc-100`}
+      className="mx-1.5 mt-1 flex h-9 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
     >
       <Icon icon={icon} className="h-[15px] w-[15px] shrink-0" />
       <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-2xs ${labelClass}`}>
