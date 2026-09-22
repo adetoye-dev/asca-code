@@ -641,18 +641,20 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     revealEditorForFile,
   ]);
 
-  // Escape closes the full-canvas chat, or leaves a page for the editor. The nav
-  // stops its own Escape from reaching here (see WorkbenchNav).
+  // Escape closes the full-canvas chat, or leaves a page for the editor. It goes
+  // through `openScreen` like every other way home, so the dock that stepped
+  // aside comes back with it. The nav stops its own Escape from reaching here
+  // (see WorkbenchNav).
   useEffect(() => {
     if (!isCenterChatOpen && screen === "editor") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (isCenterChatOpen) setIsCenterChatOpen(false);
-      else setScreen("editor");
+      else openScreen("editor");
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isCenterChatOpen, screen]);
+  }, [isCenterChatOpen, screen, openScreen]);
 
   // ── Commands Dictionary for Command Palette ───────────────────────────────
   const commands: CommandItem[] = [
