@@ -116,6 +116,24 @@ export function WorkbenchNav({
 }: WorkbenchNavProps) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<number | null>(null);
+  /**
+   * Whether the last thing the user did was type. A click focuses the row it
+   * lands on, and that is not a request to keep the sidebar open — without this,
+   * choosing something with the mouse reopened the sidebar the moment the pointer
+   * left it. The browser's `:focus-visible` says the same thing, but this is the
+   * same thing *and* testable.
+   */
+  const keyboardIntent = useRef(false);
+  useEffect(() => {
+    const onKey = () => { keyboardIntent.current = true; };
+    const onPointer = () => { keyboardIntent.current = false; };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
   const [focusWithin, setFocusWithin] = useState(false);
   /**
    * Set when a choice or Escape closes the sidebar while the pointer is still on
@@ -218,7 +236,9 @@ export function WorkbenchNav({
       className="flex h-full shrink-0"
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
-      onFocus={() => setFocusWithin(true)}
+      onFocus={() => {
+        if (keyboardIntent.current) setFocusWithin(true);
+      }}
       onBlur={() => setFocusWithin(false)}
       onKeyDown={handleKeyDown}
     >

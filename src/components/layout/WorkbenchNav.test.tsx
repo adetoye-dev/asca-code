@@ -124,6 +124,32 @@ describe("the workbench sidebar", () => {
     expect(onPinnedChange).toHaveBeenCalledWith(false);
   });
 
+  it("opens for the keyboard when a row takes focus", async () => {
+    setup();
+    fireEvent.keyDown(window, { key: "Tab" });
+    fireEvent.focus(screen.getByTestId("nav-item-git"));
+    await expandedWidth();
+  });
+
+  it("does not reopen for a click that focused the row", async () => {
+    // Clicking a row focuses it. That is not a request to keep the sidebar open,
+    // and treating it as one meant a mouse choice reopened it as soon as the
+    // pointer left.
+    const { onSelectScreen } = setup();
+    fireEvent.pointerDown(window);
+    fireEvent.mouseOver(nav());
+    await expandedWidth();
+    const row = screen.getByTestId("nav-item-git");
+    fireEvent.focus(row);
+    fireEvent.click(row);
+    expect(onSelectScreen).toHaveBeenCalledWith("git");
+
+    // The pointer leaves; focus is still on the row; it must stay closed.
+    fireEvent.mouseOut(nav());
+    await new Promise((r) => setTimeout(r, 250));
+    expect(width()).toBeLessThan(100);
+  });
+
   it("treats the active Editor row as the file tree's switch", async () => {
     const { onToggleExplorer, onSelectScreen } = setup({ screen: "editor" });
     hover();
