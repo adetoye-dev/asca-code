@@ -220,7 +220,7 @@ export function WorkbenchNav({
         {/* ── Identity ─────────────────────────────────────────────────────
             The brand is the sidebar's, not a bar's: it is the icon alone when
             collapsed and the icon with the name when there is room. */}
-        <div className="relative flex h-10 shrink-0 items-center border-b border-hairline">
+        <div className="relative flex h-10 shrink-0 items-center">
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
@@ -255,7 +255,7 @@ export function WorkbenchNav({
         </div>
 
         {/* ── Screens ───────────────────────────────────────────────────── */}
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden pb-2 pt-5">
           {NAV_ITEMS.map((item) => {
             const active = screen === item.id;
             return (
@@ -291,7 +291,7 @@ export function WorkbenchNav({
           })}
         </div>
 
-        <div className="shrink-0 border-t border-hairline py-2">
+        <div className="shrink-0 pb-2">
           <Row
             expanded={expanded}
             labelClass={labelClass}
