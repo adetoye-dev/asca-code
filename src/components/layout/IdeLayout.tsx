@@ -267,7 +267,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     window.addEventListener("mouseup", handleMouseUp);
   }, []);
 
-  const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(true);
+  // Closed on launch: the terminal is a tool you reach for, not the default view
+  // of half the canvas. The titlebar toggle and ⌘J are how you get it.
+  const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   /** What the editor's dock looked like before a page took the canvas. */
   const dockBeforePageRef = useRef<{ right: boolean; bottom: boolean } | null>(null);

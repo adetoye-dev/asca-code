@@ -46,51 +46,24 @@ export type ScreenId = "editor" | "git" | "codeMap" | "monitor" | "aiManager" | 
 interface NavItem {
   id: ScreenId;
   label: string;
-  hint: string;
   shortcut?: string;
   icon: typeof Activity;
 }
 
-interface NavSection {
-  label: string;
-  items: NavItem[];
-}
-
 /**
- * The rows, and the groups they sit in. One list: the collapsed and expanded
- * states read from it, so they cannot disagree about what exists.
+ * The rows. One list, read by both states, so they cannot disagree about what
+ * exists — and deliberately not grouped: the rows keep the same height and the
+ * same rhythm whether the labels are showing or not, which is what makes the
+ * sidebar feel like one column that opened rather than a different one.
  */
-export const NAV_SECTIONS: NavSection[] = [
-  {
-    label: "Workspace",
-    items: [
-      { id: "editor", label: "Editor", hint: "Files, tabs and the terminal", shortcut: "⌘⇧E", icon: FolderTree },
-    ],
-  },
-  {
-    label: "Code",
-    items: [
-      { id: "git", label: "Repository", hint: "Changes, staging and commits", shortcut: "⌘⇧G", icon: GitBranch },
-      { id: "codeMap", label: "Code map", hint: "Symbols, dependents and entry points", icon: Network },
-    ],
-  },
-  {
-    label: "AI",
-    items: [
-      { id: "aiManager", label: "Models & providers", hint: "Keys, models and what is connected", icon: Cpu },
-    ],
-  },
-  {
-    label: "Platform",
-    items: [
-      { id: "marketplace", label: "Marketplace", hint: "Skills, tools and MCP servers", shortcut: "⌘⇧X", icon: Package },
-      { id: "monitor", label: "Health & performance", hint: "This machine, this app", icon: Activity },
-    ],
-  },
+export const NAV_ITEMS: NavItem[] = [
+  { id: "editor", label: "Editor", shortcut: "⌘⇧E", icon: FolderTree },
+  { id: "git", label: "Repository", shortcut: "⌘⇧G", icon: GitBranch },
+  { id: "codeMap", label: "Code map", icon: Network },
+  { id: "aiManager", label: "Models", icon: Cpu },
+  { id: "marketplace", label: "Marketplace", shortcut: "⌘⇧X", icon: Package },
+  { id: "monitor", label: "Performance", icon: Activity },
 ];
-
-/** Every row, flattened, for lookups by id. */
-export const NAV_ITEMS: NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
 
 export const NAV_COLLAPSED_WIDTH = 56;
 export const NAV_EXPANDED_WIDTH = 240;
@@ -254,7 +227,7 @@ export function WorkbenchNav({
             data-testid="nav-brand"
             aria-expanded={expanded}
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
-            className="mx-1.5 flex h-9 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-3 pr-2.5 hover:bg-white/5"
+            className="mx-1.5 flex h-10 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-3 pr-2.5 hover:bg-white/5"
           >
             <IdeBrandLogo size={20} className="h-5 w-5 shrink-0" />
             <span
@@ -282,62 +255,43 @@ export function WorkbenchNav({
         </div>
 
         {/* ── Screens ───────────────────────────────────────────────────── */}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
-          {NAV_SECTIONS.map((section, sectionIndex) => (
-            <div key={section.label}>
-              {sectionIndex > 0 && (
-                <div
-                  aria-hidden
-                  className={`mx-5 bg-hairline transition-all duration-150 ${
-                    expanded ? "h-0 opacity-0" : "h-px opacity-100"
-                  }`}
-                />
-              )}
-              <div
-                className={`overflow-hidden pl-5 transition-all duration-150 ${
-                  expanded ? "h-6 opacity-100" : "h-0 opacity-0"
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-2">
+          {NAV_ITEMS.map((item) => {
+            const active = screen === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => activate(item)}
+                aria-current={active ? "page" : undefined}
+                aria-label={item.label}
+                title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
+                data-testid={`nav-item-${item.id}`}
+                className={`mx-1.5 flex h-10 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
+                  active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
                 }`}
               >
-                <span className="flex h-6 items-end pb-1 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
-                  {section.label}
+                <Icon
+                  icon={item.icon}
+                  className={`h-[15px] w-[15px] shrink-0 ${active ? "text-accent" : ""}`}
+                />
+                <span
+                  aria-hidden={!expanded}
+                  className={`min-w-0 flex-1 truncate text-xs font-semibold ${labelClass}`}
+                >
+                  {item.label}
                 </span>
-              </div>
-              {section.items.map((item) => {
-                const active = screen === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => activate(item)}
-                    aria-current={active ? "page" : undefined}
-                    aria-label={item.label}
-                    title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
-                    data-testid={`nav-item-${item.id}`}
-                    className={`mx-1.5 flex h-9 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
-                      active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-                    }`}
-                  >
-                    <Icon
-                      icon={item.icon}
-                      className={`h-[15px] w-[15px] shrink-0 ${active ? "text-accent" : ""}`}
-                    />
-                    <span aria-hidden={!expanded} className={`min-w-0 flex-1 ${labelClass}`}>
-                      <span className="block truncate text-2xs font-medium">{item.label}</span>
-                      <span className="block truncate text-4xs text-zinc-500">{item.hint}</span>
-                    </span>
-                    {item.shortcut && expanded && (
-                      <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
-                        {item.shortcut}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
+                {item.shortcut && expanded && (
+                  <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
+                    {item.shortcut}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="shrink-0 border-t border-hairline py-1">
+        <div className="shrink-0 border-t border-hairline py-2">
           <Row
             expanded={expanded}
             labelClass={labelClass}
@@ -381,10 +335,10 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className="mx-1.5 mt-1 flex h-9 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
+      className="mx-1.5 flex h-10 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
     >
       <Icon icon={icon} className="h-[15px] w-[15px] shrink-0" />
-      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-2xs ${labelClass}`}>
+      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-xs font-semibold ${labelClass}`}>
         {label}
       </span>
       {shortcut && expanded && (

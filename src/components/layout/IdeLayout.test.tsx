@@ -14,7 +14,9 @@ Element.prototype.scrollIntoView = () => undefined;
 
 // The shell is what is under test, so the surfaces it hosts are stubs — each has
 // its own suite. Everything that talks to the machine is stubbed too.
-vi.mock("../panels/BottomPanel", () => ({ BottomPanel: () => <div data-testid="terminal" /> }));
+vi.mock("../panels/BottomPanel", () => ({
+  BottomPanel: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <div data-testid="terminal" /> : null),
+}));
 vi.mock("../dashboards/AiAssistantChat", () => ({ AiAssistantChat: () => <div data-testid="chat-dock" /> }));
 vi.mock("../sidebar/MarketplaceSidebar", () => ({
   MarketplaceSidebar: () => <div data-testid="marketplace-page" />,
@@ -125,20 +127,25 @@ afterEach(cleanup);
 const renderShell = () => render(<IdeLayout {...pipeline()} />);
 
 describe("the workbench shell", () => {
-  it("paints the navigation, the editor and its file tree, the terminal and the chat", async () => {
+  it("paints the sidebar, the editor with its tree, and the chat — not the terminal", async () => {
     renderShell();
-    expect(screen.getByTestId("workbench-nav")).toBeTruthy();
     expect(screen.getByTestId("workbench-nav")).toBeTruthy();
     // The explorer is part of the editor screen now, not the whole workbench:
     // its own empty state is on screen.
     expect(screen.getByText("No files in directory.")).toBeTruthy();
-    // Both are behind a lazy boundary, so they arrive a tick later.
-    expect(await screen.findByTestId("terminal")).toBeTruthy();
     expect(screen.getByTestId("chat-dock")).toBeTruthy();
+    // The terminal is a tool you reach for, not half the canvas on launch.
+    expect(screen.queryByTestId("terminal")).toBeNull();
+    fireEvent.click(screen.getByTitle("Toggle Bottom Panel (Cmd+J / Ctrl+`)"));
+    expect(await screen.findByTestId("terminal")).toBeTruthy();
   });
 
   it("gives the canvas to a page, and puts the editor's dock back on the way home", async () => {
     renderShell();
+
+    // Open the terminal first, so "the dock stepped aside" means something.
+    fireEvent.click(screen.getByTitle("Toggle Bottom Panel (Cmd+J / Ctrl+`)"));
+    await screen.findByTestId("terminal");
 
     // Choose Repository from the panel.
     fireEvent.mouseOver(screen.getByTestId("workbench-nav"));

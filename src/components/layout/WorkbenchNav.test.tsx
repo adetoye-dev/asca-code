@@ -65,17 +65,17 @@ describe("the workbench sidebar", () => {
     expect(width()).toBeLessThan(100);
   });
 
-  it("shows its groups and rows, which are the same rows as when collapsed", async () => {
-    // One list, not two: every row exists in both states, and what changes is
-    // whether its label can be seen.
+  it("lists every screen, as one row each", async () => {
+    // Flat on purpose: the rows keep their height and rhythm in both states, and
+    // a single label per row is what makes that possible.
     setup();
-    const rowsWhenCollapsed = screen.getAllByTestId(/^nav-item-/).length;
     hover();
     await expandedWidth();
-    for (const label of ["Workspace", "Code", "AI", "Platform"]) {
+    for (const label of ["Editor", "Repository", "Code map", "Models", "Marketplace", "Performance"]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
-    expect(screen.getAllByTestId(/^nav-item-/)).toHaveLength(rowsWhenCollapsed);
+    // No section headings: those are what broke the rhythm.
+    expect(screen.queryByText("Workspace")).toBeNull();
   });
 
   it("closes itself once something has been chosen", async () => {
