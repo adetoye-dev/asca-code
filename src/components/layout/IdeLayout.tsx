@@ -212,13 +212,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       return false;
     }
   });
-  const [explorerOpen, setExplorerOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("acsa_explorer_open") !== "0";
-    } catch {
-      return true;
-    }
-  });
   const [explorerWidth, setExplorerWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem("acsa_explorer_width");
@@ -238,12 +231,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       localStorage.setItem("acsa_nav_pinned", navPinned ? "1" : "0");
     } catch {}
   }, [navPinned]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("acsa_explorer_open", explorerOpen ? "1" : "0");
-    } catch {}
-  }, [explorerOpen]);
-
   const startResizingExplorer = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizingExplorer(true);
@@ -336,7 +323,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   /** Something asked for a file: the editor screen is where files are looked at. */
   const revealEditorForFile = useCallback(() => {
     setScreen("editor");
-    setExplorerOpen(true);
   }, []);
 
   const handleOpenFileAtLocation = useCallback(
@@ -437,15 +423,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
    *
    * A page wants the canvas, so the terminal and the chat dock step aside — and
    * are put back when the editor is chosen again, which is what keeps the nav
-   * from being a one-way door. The Editor row toggles the file tree instead of
-   * re-selecting the screen you are already on.
+   * from being a one-way door.
    */
   const openScreen = useCallback(
     (next: ScreenId) => {
-      if (next === screen) {
-        if (next === "editor") setExplorerOpen((prev) => !prev);
-        return;
-      }
+      if (next === screen) return;
       if (next === "editor") {
         const dock = dockBeforePageRef.current;
         if (dock) {
@@ -510,10 +492,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       setPaletteMode("command");
       setIsCommandPaletteOpen(true);
     };
-    const handleToggleExplorer = () => {
-      setScreen("editor");
-      setExplorerOpen((prev) => !prev);
-    };
     const handleToggleTerminal = () => setIsBottomPanelOpen((prev) => !prev);
     const handleToggleAi = () => {
       // Any "AI Assistant" affordance targets the docked assistant; leaving the
@@ -524,14 +502,12 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     window.addEventListener("acsa:open-file-search", handleOpenFileSearch);
     window.addEventListener("acsa:open-command-palette", handleOpenCommandPalette);
-    window.addEventListener("acsa:toggle-explorer", handleToggleExplorer);
     window.addEventListener("acsa:toggle-terminal", handleToggleTerminal);
     window.addEventListener("acsa:toggle-ai", handleToggleAi);
 
     return () => {
       window.removeEventListener("acsa:open-file-search", handleOpenFileSearch);
       window.removeEventListener("acsa:open-command-palette", handleOpenCommandPalette);
-      window.removeEventListener("acsa:toggle-explorer", handleToggleExplorer);
       window.removeEventListener("acsa:toggle-terminal", handleToggleTerminal);
       window.removeEventListener("acsa:toggle-ai", handleToggleAi);
     };
@@ -550,11 +526,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         return;
       }
 
-      // Cmd+Shift+E: the editor screen and its file tree
+      // Cmd+Shift+E: the editor screen
       if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "e") {
         e.preventDefault();
-        if (screen === "editor" && explorerOpen) setExplorerOpen(false);
-        else revealEditorForFile();
+        revealEditorForFile();
         return;
       }
 
@@ -657,7 +632,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     isCenterChatOpen,
     setIsSettingsModalOpen,
     screen,
-    explorerOpen,
     openScreen,
     revealEditorForFile,
   ]);
@@ -771,7 +745,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "view.explorer",
-      title: "View: Show the Editor (with its file tree)",
+      title: "View: Show the Editor",
       category: "View",
       shortcut: "⇧⌘E",
       icon: Folder,
@@ -923,9 +897,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const openCommandPalette = useCallback(() => {
     setPaletteMode("command");
     setIsCommandPaletteOpen(true);
-  }, []);
-  const toggleExplorerFromWatermark = useCallback(() => {
-    setExplorerOpen((prev) => !prev);
   }, []);
   const toggleTerminalFromWatermark = useCallback(() => {
     setIsBottomPanelOpen((prev) => !prev);
@@ -1177,7 +1148,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       <DockviewWatermark
         onOpenFile={openFilePalette}
         onOpenCommands={openCommandPalette}
-        onToggleExplorer={toggleExplorerFromWatermark}
         onToggleTerminal={toggleTerminalFromWatermark}
         onToggleAi={toggleAiFromWatermark}
         setupSlot={
@@ -1192,7 +1162,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     [
       openFilePalette,
       openCommandPalette,
-      toggleExplorerFromWatermark,
       toggleTerminalFromWatermark,
       toggleAiFromWatermark,
       projectStatus,
@@ -1209,12 +1178,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         <WorkbenchNav
           screen={screen}
           onSelectScreen={openScreen}
-          explorerOpen={explorerOpen}
-          onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
           pinned={navPinned}
           onPinnedChange={setNavPinned}
           onOpenSettings={openSettings}
-          onOpenCommandPalette={openCommandPalette}
         />
 
         {/* Everything else: the titlebar, then the canvas. */}
@@ -1262,24 +1228,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
           {/* Right: Layout Toggles, AI Chat Button & Settings */}
           <div className="flex items-center gap-2">
-            {/* The file tree and the terminal belong to the editor screen, so
-                their toggles only appear there. On a page, the nav and Escape are
-                the way back. */}
+            {/* The terminal belongs to the editor screen, so its toggle only
+                appears there. On a page, the nav and Escape are the way back.
+                The file tree has no toggle: it is part of that screen. */}
             {screen === "editor" && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setExplorerOpen((prev) => !prev)}
-                  className={`p-1.5 rounded-lg transition-colors ${
-                    explorerOpen
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-                  }`}
-                  title="Toggle File Tree (Cmd+Shift+E)"
-                >
-                  <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
-                </button>
-
                 <button
                   type="button"
                   onClick={() => setIsBottomPanelOpen((prev) => !prev)}
@@ -1329,9 +1282,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           {screen === "editor" ? (
             <div className="flex flex-1 min-h-0">
               {/* File tree, paired with the editor rather than parked beside the
-                  whole workbench: it belongs to this screen. */}
-              {explorerOpen && (
-                <aside
+                  whole workbench. It is part of this screen, not a panel that can
+                  be dismissed, so it is not conditional. */}
+              <aside
                   style={{ width: `${explorerWidth}px` }}
                   className="relative max-w-[42%] h-full shrink-0 border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col overflow-hidden"
                 >
@@ -1357,8 +1310,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                     }`}
                     title="Drag to resize the file tree"
                   />
-                </aside>
-              )}
+              </aside>
 
               {/* Dockview Editors & Diff Surface, with the terminal beneath */}
               <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">

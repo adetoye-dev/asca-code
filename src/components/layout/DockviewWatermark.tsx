@@ -1,12 +1,11 @@
 import React from "react";
-import { Search, Sparkles, PanelLeft, Terminal, MessageSquare } from "lucide-react";
+import { Search, Sparkles, Terminal, MessageSquare } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
 
 export interface DockviewWatermarkProps {
   onOpenFile?: () => void;
   onOpenCommands?: () => void;
-  onToggleExplorer?: () => void;
   onToggleTerminal?: () => void;
   onToggleAi?: () => void;
   /** Optional "what do I do next?" slot, e.g. the project setup card. */
@@ -17,7 +16,6 @@ export interface DockviewWatermarkProps {
 export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
   onOpenFile,
   onOpenCommands,
-  onToggleExplorer,
   onToggleTerminal,
   onToggleAi,
   setupSlot,
@@ -30,11 +28,6 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
   const handleOpenCommands = () => {
     if (onOpenCommands) onOpenCommands();
     else window.dispatchEvent(new CustomEvent("acsa:open-command-palette"));
-  };
-
-  const handleToggleExplorer = () => {
-    if (onToggleExplorer) onToggleExplorer();
-    else window.dispatchEvent(new CustomEvent("acsa:toggle-explorer"));
   };
 
   const handleToggleTerminal = () => {
@@ -59,12 +52,6 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
       shortcut: "⌘ ⇧ P",
       icon: Sparkles,
       action: handleOpenCommands,
-    },
-    {
-      label: "Toggle Explorer",
-      shortcut: "⌘ ⇧ E",
-      icon: PanelLeft,
-      action: handleToggleExplorer,
     },
     {
       label: "Toggle Terminal",

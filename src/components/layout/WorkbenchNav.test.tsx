@@ -6,14 +6,11 @@ import { WorkbenchNav, type ScreenId } from "./WorkbenchNav";
 function setup(overrides: Partial<React.ComponentProps<typeof WorkbenchNav>> = {}) {
   const handlers = {
     onSelectScreen: vi.fn<(screen: ScreenId) => void>(),
-    onToggleExplorer: vi.fn(),
     onPinnedChange: vi.fn(),
     onOpenSettings: vi.fn(),
-    onOpenCommandPalette: vi.fn(),
   };
   const props = {
     screen: "editor" as ScreenId,
-    explorerOpen: true,
     pinned: false,
     ...handlers,
     ...overrides,
@@ -150,23 +147,14 @@ describe("the workbench sidebar", () => {
     expect(width()).toBeLessThan(100);
   });
 
-  it("treats the active Editor row as the file tree's switch", async () => {
-    const { onToggleExplorer, onSelectScreen } = setup({ screen: "editor" });
-    hover();
-    await expandedWidth();
-    fireEvent.click(screen.getByTestId("nav-item-editor"));
-    expect(onToggleExplorer).toHaveBeenCalledTimes(1);
-    expect(onSelectScreen).not.toHaveBeenCalled();
-  });
-
-  it("has one settings row, and no chat row at all", () => {
-    // Chat is a panel toggle, not a screen: it belongs to the titlebar and ⌘L.
-    // It had been offered twice in the sidebar, which is what this guards.
-    const { onOpenSettings, onOpenCommandPalette } = setup();
+  it("offers screens and settings, and nothing else", () => {
+    // Chat is a panel toggle, not a screen, so it belongs to the titlebar and ⌘L
+    // — it had been offered twice in here. Search was the palette's job too, and
+    // the omnibar already does it, so that row is gone rather than repeated.
+    const { onOpenSettings } = setup();
     expect(screen.queryByText("Chat")).toBeNull();
+    expect(screen.queryByText(/Search/)).toBeNull();
     fireEvent.click(screen.getByTestId("nav-settings"));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByTestId("nav-command-palette"));
-    expect(onOpenCommandPalette).toHaveBeenCalledTimes(1);
   });
 });

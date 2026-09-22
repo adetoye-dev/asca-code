@@ -171,16 +171,21 @@ describe("the workbench shell", () => {
     expect(width()).toBeGreaterThan(100);
   });
 
-  it("keeps the file tree toggle in the titlebar to the editor screen", async () => {
+  it("treats the file tree as part of the editor screen, not a panel", async () => {
     renderShell();
-    const treeToggle = () => screen.queryByTitle("Toggle File Tree (Cmd+Shift+E)");
-    expect(treeToggle()).toBeTruthy();
+    // It is there on the editor screen, with nothing to dismiss it.
+    expect(screen.getByText("No files in directory.")).toBeTruthy();
+    // (The resize handle still carries a title; what is gone is a *toggle*.)
+    expect(screen.queryByTitle(/Toggle File Tree/)).toBeNull();
 
+    // A page has no terminal toggle and no tree; coming back brings the tree.
     fireEvent.mouseOver(screen.getByTestId("workbench-nav"));
     fireEvent.click(screen.getByTestId("nav-item-marketplace"));
     await waitFor(() => expect(screen.getByTestId("marketplace-page")).toBeTruthy());
-    // A page has no file tree or terminal to toggle.
-    expect(treeToggle()).toBeNull();
     expect(screen.queryByTitle("Toggle Bottom Panel (Cmd+J / Ctrl+`)")).toBeNull();
+    expect(screen.queryByText("No files in directory.")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.getByText("No files in directory.")).toBeTruthy());
   });
 });

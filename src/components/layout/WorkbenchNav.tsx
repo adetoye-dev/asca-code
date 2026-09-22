@@ -28,7 +28,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ChevronRight,
   Cpu,
   FolderTree,
   GitBranch,
@@ -36,7 +35,6 @@ import {
   Package,
   Pin,
   PinOff,
-  Search,
   Settings,
 } from "lucide-react";
 import { Icon } from "../ui/Icon";
@@ -102,24 +100,17 @@ export const NAV_HOVER_INTENT_MS = 140;
 interface WorkbenchNavProps {
   screen: ScreenId;
   onSelectScreen: (screen: ScreenId) => void;
-  /** The editor screen's file tree. Choosing Editor while on Editor toggles it. */
-  explorerOpen: boolean;
-  onToggleExplorer: () => void;
   pinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
   onOpenSettings: () => void;
-  onOpenCommandPalette: () => void;
 }
 
 export function WorkbenchNav({
   screen,
   onSelectScreen,
-  explorerOpen,
-  onToggleExplorer,
   pinned,
   onPinnedChange,
   onOpenSettings,
-  onOpenCommandPalette,
 }: WorkbenchNavProps) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<number | null>(null);
@@ -182,13 +173,10 @@ export function WorkbenchNav({
 
   const activate = useCallback(
     (item: NavItem) => {
-      // The active Editor row is a switch for its file tree, the way the old
-      // activity bar behaved: you are already on the screen it names.
-      if (item.id === "editor" && screen === "editor") onToggleExplorer();
-      else onSelectScreen(item.id);
+      onSelectScreen(item.id);
       if (!pinned) setDismissed(true);
     },
-    [screen, pinned, onSelectScreen, onToggleExplorer]
+    [pinned, onSelectScreen]
   );
 
   /** Arrow keys walk the rows; Escape closes the sidebar. */
@@ -293,20 +281,6 @@ export function WorkbenchNav({
           )}
         </div>
 
-        {/* ── Find and commands ─────────────────────────────────────────── */}
-        <Row
-          expanded={expanded}
-          labelClass={labelClass}
-          icon={Search}
-          label="Search or run a command"
-          shortcut="⌘P"
-          testId="nav-command-palette"
-          onClick={() => {
-            onOpenCommandPalette();
-            if (!pinned) setDismissed(true);
-          }}
-        />
-
         {/* ── Screens ───────────────────────────────────────────────────── */}
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
           {NAV_SECTIONS.map((section, sectionIndex) => (
@@ -330,7 +304,6 @@ export function WorkbenchNav({
               </div>
               {section.items.map((item) => {
                 const active = screen === item.id;
-                const isExplorerToggle = item.id === "editor" && active;
                 return (
                   <button
                     key={item.id}
@@ -350,24 +323,12 @@ export function WorkbenchNav({
                     />
                     <span aria-hidden={!expanded} className={`min-w-0 flex-1 ${labelClass}`}>
                       <span className="block truncate text-2xs font-medium">{item.label}</span>
-                      <span className="block truncate text-4xs text-zinc-500">
-                        {isExplorerToggle
-                          ? explorerOpen
-                            ? "Hide the file tree"
-                            : "Show the file tree"
-                          : item.hint}
-                      </span>
+                      <span className="block truncate text-4xs text-zinc-500">{item.hint}</span>
                     </span>
                     {item.shortcut && expanded && (
                       <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
                         {item.shortcut}
                       </span>
-                    )}
-                    {isExplorerToggle && expanded && (
-                      <Icon
-                        icon={ChevronRight}
-                        className={`w-3 h-3 shrink-0 text-zinc-500 transition-transform ${explorerOpen ? "rotate-90" : ""}`}
-                      />
                     )}
                   </button>
                 );
