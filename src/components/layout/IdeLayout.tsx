@@ -1,14 +1,18 @@
 /**
- * IdeLayout.tsx — Production VS Code Workbench Layout for ACSA Code
+ * IdeLayout.tsx — the workbench shell.
  *
- * Full developer-grade layout integrating:
- * 1. Titlebar: Project picker, Quick Open file search bar, Layout toggles (Sidebar/Panel), Theme picker, Telemetry.
- * 2. Activity Bar: Explorer, Monitoring, Model Manager, Agent Dock, Marketplace & Themes.
- * 3. Primary Sidebar: Mounts the active activity bar view (toggleable via Cmd+B).
- * 4. Main Stage (Dockview): Multi-tab Monaco editor with split panes & Diff inspector.
- * 5. Dedicated Bottom Panel: Tabbed dock housing the interactive shell, the run's output, and problems.
- * 6. Status Bar: Branch name, encoding, language, theme, and gate status.
- * 7. Command Palette & Quick Open: Triggered by Cmd+Shift+P and Cmd+P.
+ * One screen at a time, chosen from a single navigation surface:
+ * 1. Titlebar: the project switcher and branch, the omnibar, the toggles that
+ *    belong to the editor screen (file tree, terminal, chat), and the updater.
+ * 2. Navigation: an icon rail with a panel that reveals on hover, collapses
+ *    after a choice, and can be pinned with Cmd+B. See WorkbenchNav.tsx.
+ * 3. Editor screen: the file tree paired with the dockview (Monaco tabs and the
+ *    diff inspector) and the terminal/output panel beneath it.
+ * 4. Pages: repository, code map, models & providers, marketplace, and host
+ *    health — full width, with the terminal and the chat dock set aside on the
+ *    way in and replaced on the way back.
+ * 5. Status Bar: branch, index state, and the host's live readings.
+ * 6. Command Palette & Quick Open: Cmd+Shift+P and Cmd+P.
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext, lazy, Suspense } from "react";
@@ -37,9 +41,9 @@ import {
   type ProjectStatus,
 } from "../../services/projectSetup";
 import { ExplorerSidebar } from "../sidebar/ExplorerSidebar";
-import { SearchSidebar } from "../sidebar/SearchSidebar";
-import { SourceControlSidebar } from "../sidebar/SourceControlSidebar";
 import { MarketplaceSidebar } from "../sidebar/MarketplaceSidebar";
+import { GitDashboard } from "../dashboards/GitDashboard";
+import { WorkbenchNav, NAV_ITEMS, type ScreenId } from "./WorkbenchNav";
 import { UpdateButton } from "./UpdateButton";
 import { VersionControlDropdown } from "./VersionControlDropdown";
 import { CloneModal } from "../modals/CloneModal";
@@ -61,8 +65,6 @@ import { openOllamaSetupWizard, EVENT_OPEN_AI_MANAGEMENT, EVENT_START_CODING_WIT
 import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
 
-type SidebarTab = "explorer" | "search" | "sourceControl";
-
 const SPECIAL_PANELS = ["dock_diff", "diff_"];
 
 /* ── Lazily-loaded heavy surfaces ─────────────────────────────────────────
@@ -82,23 +84,6 @@ const AiManagementDashboard = lazy(() =>
 const CodeMapDashboard = lazy(() =>
   import("../dashboards/CodeMapDashboard").then((m) => ({ default: m.CodeMapDashboard }))
 );
-
-/** Full-page surfaces rendered as chrome-free overlays over the editor grid. */
-type FullPageId = "monitor" | "aiManager" | "codeMap" | "marketplace";
-
-const FULL_PAGE_TITLES: Record<FullPageId, string> = {
-  monitor: "Host Health & Performance",
-  aiManager: "AI Models & Providers",
-  codeMap: "Code Map",
-  marketplace: "Marketplace",
-};
-
-const FULL_PAGE_ICONS: Record<FullPageId, typeof Cpu> = {
-  monitor: Activity,
-  aiManager: Cpu,
-  codeMap: Network,
-  marketplace: Package,
-};
 
 /**
  * Tab-chrome state shared with dockview's tab headers. Dockview renders tab
@@ -215,28 +200,54 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     agentSteps,
   } = pipeline;
 
-  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("explorer");
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+  // One screen at a time, chosen from the nav: the editor (its file tree, the
+  // dockview and the terminal) or a full-width page beside it.
+  const [screen, setScreen] = useState<ScreenId>("editor");
+  const [navPinned, setNavPinned] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem("acsa_sidebar_width");
+      return localStorage.getItem("acsa_nav_pinned") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [explorerOpen, setExplorerOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("acsa_explorer_open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [explorerWidth, setExplorerWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("acsa_explorer_width");
       if (saved) {
         const num = parseInt(saved, 10);
-        if (!isNaN(num) && num >= 180 && num <= 500) return num;
+        if (!isNaN(num) && num >= 180 && num <= 520) return num;
       }
     } catch {}
-    return 240;
+    return 260;
   });
-  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const sidebarWidthRef = useRef(sidebarWidth);
-  sidebarWidthRef.current = sidebarWidth;
+  const [isResizingExplorer, setIsResizingExplorer] = useState(false);
+  const explorerWidthRef = useRef(explorerWidth);
+  explorerWidthRef.current = explorerWidth;
 
-  const startResizingSidebar = useCallback((e: React.MouseEvent) => {
+  useEffect(() => {
+    try {
+      localStorage.setItem("acsa_nav_pinned", navPinned ? "1" : "0");
+    } catch {}
+  }, [navPinned]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("acsa_explorer_open", explorerOpen ? "1" : "0");
+    } catch {}
+  }, [explorerOpen]);
+
+  const startResizingExplorer = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setIsResizingSidebar(true);
+    setIsResizingExplorer(true);
 
     const startX = e.clientX;
-    const startWidth = sidebarWidthRef.current;
+    const startWidth = explorerWidthRef.current;
     const prevCursor = document.body.style.cursor;
     const prevUserSelect = document.body.style.userSelect;
     document.body.style.cursor = "col-resize";
@@ -246,20 +257,20 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       const delta = moveEvent.clientX - startX;
       // Bound by the window as well as a fixed ceiling: 500px is fine on a
       // desktop and most of a small window.
-      const ceiling = Math.max(180, Math.min(500, Math.round(window.innerWidth * 0.4)));
+      const ceiling = Math.max(180, Math.min(520, Math.round(window.innerWidth * 0.4)));
       const newWidth = Math.max(180, Math.min(ceiling, startWidth + delta));
-      setSidebarWidth(newWidth);
-      sidebarWidthRef.current = newWidth;
+      setExplorerWidth(newWidth);
+      explorerWidthRef.current = newWidth;
     };
 
     const handleMouseUp = () => {
-      setIsResizingSidebar(false);
+      setIsResizingExplorer(false);
       document.body.style.cursor = prevCursor;
       document.body.style.userSelect = prevUserSelect;
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
       try {
-        localStorage.setItem("acsa_sidebar_width", sidebarWidthRef.current.toString());
+        localStorage.setItem("acsa_explorer_width", explorerWidthRef.current.toString());
       } catch {}
     };
 
@@ -269,12 +280,11 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(true);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+  /** What the editor's dock looked like before a page took the canvas. */
+  const dockBeforePageRef = useRef<{ right: boolean; bottom: boolean } | null>(null);
   // Full-canvas chat surface ("Open in Center Stage"). Rendered as an overlay
   // over the editor grid so it has no dockview tab chrome of its own.
   const [isCenterChatOpen, setIsCenterChatOpen] = useState(false);
-  // Full-page surfaces (Host Health, AI Models, Code Map). Also overlays, for
-  // the same reason: a dockview tab would leak tab chrome into a full page.
-  const [fullPage, setFullPage] = useState<FullPageId | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [gitBranch, setGitBranch] = useState("main");
@@ -293,7 +303,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // matches nothing, so opening Settings landed on an empty pane — the whole
   // dialog looked broken until you happened to click a nav item.
   const [settingsModalTab, setSettingsModalTab] = useState<string>("agent");
-  const [searchInitialReplace, setSearchInitialReplace] = useState(false);
   const [targetEditorLine, setTargetEditorLine] = useState<{
     path: string;
     line: number;
@@ -303,12 +312,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [selectedCode, setSelectedCode] = useState("");
   const dockviewApiRef = useRef<DockviewApi | null>(null);
 
+  /** Something asked for a file: the editor screen is where files are looked at. */
+  const revealEditorForFile = useCallback(() => {
+    setScreen("editor");
+    setExplorerOpen(true);
+  }, []);
+
   const handleOpenFileAtLocation = useCallback(
     async (filePath: string, lineNumber?: number, column?: number) => {
-      // Leaving the full-canvas chat to look at a file: dismiss the overlay so
-      // the editor is actually visible.
+      // Looking at a file means the editor screen: put the chat and any page
+      // away so the file is actually visible.
       setIsCenterChatOpen(false);
-      setFullPage(null);
+      revealEditorForFile();
       const fileName = filePath.split(/[/\\]/).pop() || filePath;
       await openFile({
         name: fileName,
@@ -325,18 +340,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         });
       }
     },
-    [openFile]
+    [openFile, revealEditorForFile]
   );
 
-  // Opening a file from the explorer / quick-open while a full-surface overlay
-  // is up should reveal the editor instead of loading it behind the overlay.
-  const openFileAndExitFullChat = useCallback(
+  // A file was chosen somewhere in the chrome: show it on the editor screen
+  // rather than loading it behind a page or the full-canvas chat.
+  const openFileInEditor = useCallback(
     (file: Parameters<typeof openFile>[0]) => {
       setIsCenterChatOpen(false);
-      setFullPage(null);
+      revealEditorForFile();
       return openFile(file);
     },
-    [openFile]
+    [openFile, revealEditorForFile]
   );
 
   const openThemeEditor = useCallback(() => {
@@ -396,37 +411,40 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     }
   };
 
-  const handleOpenGitDiff = (filePath: string, originalContent: string, modifiedContent: string, isStaged?: boolean) => {
-    const api = dockviewApiRef.current;
-    if (!api) return;
-    const panelId = isStaged ? `diff_staged_${filePath}` : `diff_${filePath}`;
-    const existing = api.getPanel(panelId);
-    if (!existing) {
-      api.addPanel({
-        id: panelId,
-        component: "diff",
-        title: `${isStaged ? "Diff (Staged)" : "Diff"}: ${filePath.split("/").pop() || filePath}`,
-        params: { filePath, originalContent, modifiedContent, isGit: true },
-      });
-    } else {
-      existing.api.setActive();
-    }
-  };
+  /**
+   * Show a screen.
+   *
+   * A page wants the canvas, so the terminal and the chat dock step aside — and
+   * are put back when the editor is chosen again, which is what keeps the nav
+   * from being a one-way door. The Editor row toggles the file tree instead of
+   * re-selecting the screen you are already on.
+   */
+  const openScreen = useCallback(
+    (next: ScreenId) => {
+      if (next === screen) {
+        if (next === "editor") setExplorerOpen((prev) => !prev);
+        return;
+      }
+      if (next === "editor") {
+        const dock = dockBeforePageRef.current;
+        if (dock) {
+          setIsRightPanelOpen(dock.right);
+          setIsBottomPanelOpen(dock.bottom);
+          dockBeforePageRef.current = null;
+        }
+      } else if (screen === "editor") {
+        dockBeforePageRef.current = { right: isRightPanelOpen, bottom: isBottomPanelOpen };
+        setIsCenterChatOpen(false);
+        setIsRightPanelOpen(false);
+        setIsBottomPanelOpen(false);
+      }
+      setScreen(next);
+    },
+    [screen, isRightPanelOpen, isBottomPanelOpen]
+  );
 
-  // Full-page surfaces reuse the chrome-free overlay so nothing competes with
-  // the editor for tab space. Opening one closes the others.
-  const openFullPage = (page: FullPageId) => {
-    setIsBottomPanelOpen(false);
-    setIsCenterChatOpen(false);
-    // A full page wants the whole canvas, so reclaim the side tool window.
-    setIsRightPanelOpen(false);
-    setFullPage((prev) => (prev === page ? null : page));
-  };
-
-  const openMonitorTab = () => openFullPage("monitor");
-  const openAiManagerTab = () => openFullPage("aiManager");
-  const openCodeMapTab = () => openFullPage("codeMap");
-  const openMarketplaceTab = () => openFullPage("marketplace");
+  const openAiManagerTab = () => openScreen("aiManager");
+  const openMarketplaceTab = () => openScreen("marketplace");
 
   const openAiChatTab = () => {
     // Mutual exclusivity: close right panel when opening center stage tab
@@ -471,7 +489,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       setPaletteMode("command");
       setIsCommandPaletteOpen(true);
     };
-    const handleToggleSidebar = () => setIsSidebarOpen((prev) => !prev);
+    const handleToggleExplorer = () => {
+      setScreen("editor");
+      setExplorerOpen((prev) => !prev);
+    };
     const handleToggleTerminal = () => setIsBottomPanelOpen((prev) => !prev);
     const handleToggleAi = () => {
       // Any "AI Assistant" affordance targets the docked assistant; leaving the
@@ -482,14 +503,14 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     window.addEventListener("acsa:open-file-search", handleOpenFileSearch);
     window.addEventListener("acsa:open-command-palette", handleOpenCommandPalette);
-    window.addEventListener("acsa:toggle-sidebar", handleToggleSidebar);
+    window.addEventListener("acsa:toggle-explorer", handleToggleExplorer);
     window.addEventListener("acsa:toggle-terminal", handleToggleTerminal);
     window.addEventListener("acsa:toggle-ai", handleToggleAi);
 
     return () => {
       window.removeEventListener("acsa:open-file-search", handleOpenFileSearch);
       window.removeEventListener("acsa:open-command-palette", handleOpenCommandPalette);
-      window.removeEventListener("acsa:toggle-sidebar", handleToggleSidebar);
+      window.removeEventListener("acsa:toggle-explorer", handleToggleExplorer);
       window.removeEventListener("acsa:toggle-terminal", handleToggleTerminal);
       window.removeEventListener("acsa:toggle-ai", handleToggleAi);
     };
@@ -508,37 +529,25 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         return;
       }
 
-      // Cmd+Shift+E: Explorer Sidebar
+      // Cmd+Shift+E: the editor screen and its file tree
       if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "e") {
         e.preventDefault();
-        setActiveSidebarTab("explorer");
-        setIsSidebarOpen(true);
+        if (screen === "editor" && explorerOpen) setExplorerOpen(false);
+        else revealEditorForFile();
         return;
       }
 
-      // Cmd+Shift+F: Find in Files (Search Sidebar)
-      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        setSearchInitialReplace(false);
-        setActiveSidebarTab("search");
-        setIsSidebarOpen(true);
-        return;
-      }
-
-      // Cmd+Shift+H: Replace in Files (Search Sidebar with Replace expanded)
-      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "h") {
-        e.preventDefault();
-        setSearchInitialReplace(true);
-        setActiveSidebarTab("search");
-        setIsSidebarOpen(true);
-        return;
-      }
-
-      // Cmd+Shift+G: Source Control
+      // Cmd+Shift+G: the repository page
       if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "g") {
         e.preventDefault();
-        setActiveSidebarTab("sourceControl");
-        setIsSidebarOpen(true);
+        openScreen("git");
+        return;
+      }
+
+      // Cmd+Shift+X: the marketplace page
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+        openScreen("marketplace");
         return;
       }
 
@@ -550,23 +559,31 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         return;
       }
 
-      // Cmd+B: Toggle Primary Sidebar
+      // Cmd+B: pin or unpin the navigation panel
       if (isCmdOrCtrl && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        setIsSidebarOpen((prev) => !prev);
+        setNavPinned((prev) => !prev);
         return;
       }
 
-      // Cmd+J or Ctrl+`: Toggle Bottom Panel
+      // Cmd+J or Ctrl+`: Toggle Bottom Panel. The terminal lives on the editor
+      // screen, so asking for it from a page means going there.
       if ((isCmdOrCtrl && e.key.toLowerCase() === "j") || (e.ctrlKey && e.key === "`")) {
         e.preventDefault();
-        setIsBottomPanelOpen((prev) => !prev);
+        if (screen !== "editor") {
+          setScreen("editor");
+          setIsBottomPanelOpen(true);
+        } else {
+          setIsBottomPanelOpen((prev) => !prev);
+        }
         return;
       }
 
       // Cmd+L / Ctrl+L: send the current editor selection to Chat/Ask
       if (isCmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
+        // The chat dock is part of the editor screen; from a page, come back.
+        if (screen !== "editor") setScreen("editor");
         if (isCenterChatOpen) {
           // Full-canvas chat is a focused mode: Cmd+L returns to the side dock.
           setIsCenterChatOpen(false);
@@ -613,29 +630,39 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTabPath, saveFile, isCenterChatOpen, setIsSettingsModalOpen]);
+  }, [
+    activeTabPath,
+    saveFile,
+    isCenterChatOpen,
+    setIsSettingsModalOpen,
+    screen,
+    explorerOpen,
+    openScreen,
+    revealEditorForFile,
+  ]);
 
-  // Escape closes the topmost full-surface overlay (chat / full page).
+  // Escape closes the full-canvas chat, or leaves a page for the editor. The nav
+  // stops its own Escape from reaching here (see WorkbenchNav).
   useEffect(() => {
-    if (!isCenterChatOpen && !fullPage) return;
+    if (!isCenterChatOpen && screen === "editor") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (fullPage) setFullPage(null);
-      else if (isCenterChatOpen) setIsCenterChatOpen(false);
+      if (isCenterChatOpen) setIsCenterChatOpen(false);
+      else setScreen("editor");
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isCenterChatOpen, fullPage]);
+  }, [isCenterChatOpen, screen]);
 
   // ── Commands Dictionary for Command Palette ───────────────────────────────
   const commands: CommandItem[] = [
     {
-      id: "view.toggleSidebar",
-      title: "Toggle Primary Side Bar",
+      id: "view.toggleNav",
+      title: "View: Toggle the Navigation Panel",
       category: "View",
       shortcut: "⌘B",
       icon: PanelLeft,
-      action: () => setIsSidebarOpen((prev) => !prev),
+      action: () => setNavPinned((prev) => !prev),
     },
     {
       id: "view.toggleBottomPanel",
@@ -658,7 +685,10 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       category: "AI",
       shortcut: "⌘L",
       icon: MessageSquare,
-      action: () => setIsRightPanelOpen((prev) => !prev),
+      action: () => {
+        setScreen("editor");
+        setIsRightPanelOpen((prev) => !prev);
+      },
     },
     {
       id: "preferences.settings",
@@ -718,48 +748,27 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     {
       id: "view.explorer",
-      title: "Show Explorer",
+      title: "View: Show the Editor (with its file tree)",
       category: "View",
+      shortcut: "⇧⌘E",
       icon: Folder,
-      action: () => {
-        setActiveSidebarTab("explorer");
-        setIsSidebarOpen(true);
-      },
+      action: revealEditorForFile,
     },
     {
-      id: "view.search",
-      title: "Find in Files (Workspace Search)",
-      category: "Search",
-      shortcut: "⇧⌘F",
-      icon: Search,
-      action: () => {
-        setSearchInitialReplace(false);
-        setActiveSidebarTab("search");
-        setIsSidebarOpen(true);
-      },
-    },
-    {
-      id: "view.replace",
-      title: "Replace in Files (Workspace Replace)",
-      category: "Search",
-      shortcut: "⇧⌘H",
-      icon: Search,
-      action: () => {
-        setSearchInitialReplace(true);
-        setActiveSidebarTab("search");
-        setIsSidebarOpen(true);
-      },
-    },
-    {
-      id: "view.sourceControl",
-      title: "Show Source Control (Git)",
-      category: "View",
-      shortcut: "⌃⇧G",
+      id: "view.repository",
+      title: "Source Control: Open the Repository Page",
+      category: "Source Control",
+      shortcut: "⇧⌘G",
       icon: GitPullRequest,
-      action: () => {
-        setActiveSidebarTab("sourceControl");
-        setIsSidebarOpen(true);
-      },
+      action: () => openScreen("git"),
+    },
+    {
+      id: "view.marketplace",
+      title: "Marketplace: Skills, Tools & MCP Servers",
+      category: "View",
+      shortcut: "⇧⌘X",
+      icon: Package,
+      action: () => openScreen("marketplace"),
     },
     {
       id: "git.clone",
@@ -773,21 +782,21 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       title: "Host Health: Open Performance & Maintenance Dashboard",
       category: "View",
       icon: Activity,
-      action: openMonitorTab,
+      action: () => openScreen("monitor"),
     },
     {
       id: "view.openAiManager",
       title: "AI: Open Model Management & Providers Dashboard",
       category: "AI",
       icon: Cpu,
-      action: openAiManagerTab,
+      action: () => openScreen("aiManager"),
     },
     {
       id: "view.openCodeMap",
       title: "Code Map: Search Symbols & Inspect Dependency Hubs",
       category: "View",
       icon: Network,
-      action: openCodeMapTab,
+      action: () => openScreen("codeMap"),
     },
     {
       id: "ai.setupOllama",
@@ -892,8 +901,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setPaletteMode("command");
     setIsCommandPaletteOpen(true);
   }, []);
-  const toggleSidebarFromWatermark = useCallback(() => {
-    setIsSidebarOpen((prev) => !prev);
+  const toggleExplorerFromWatermark = useCallback(() => {
+    setExplorerOpen((prev) => !prev);
   }, []);
   const toggleTerminalFromWatermark = useCallback(() => {
     setIsBottomPanelOpen((prev) => !prev);
@@ -902,6 +911,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setIsCenterChatOpen(false);
     setIsRightPanelOpen((prev) => !prev);
   }, []);
+
+  /** The nav row for the screen being shown, for the page header. */
+  const activeNavItem = NAV_ITEMS.find((item) => item.id === screen);
 
   // The live state that dockview panel components read.
   //
@@ -1142,7 +1154,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       <DockviewWatermark
         onOpenFile={openFilePalette}
         onOpenCommands={openCommandPalette}
-        onToggleSidebar={toggleSidebarFromWatermark}
+        onToggleExplorer={toggleExplorerFromWatermark}
         onToggleTerminal={toggleTerminalFromWatermark}
         onToggleAi={toggleAiFromWatermark}
         setupSlot={
@@ -1157,7 +1169,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     [
       openFilePalette,
       openCommandPalette,
-      toggleSidebarFromWatermark,
+      toggleExplorerFromWatermark,
       toggleTerminalFromWatermark,
       toggleAiFromWatermark,
       projectStatus,
@@ -1220,33 +1232,38 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
         {/* Right: Layout Toggles, AI Chat Button & Settings */}
         <div className="flex items-center gap-2">
-          {/* Toggle Primary Sidebar Button */}
-          <button
-            type="button"
-            onClick={() => setIsSidebarOpen((prev) => !prev)}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isSidebarOpen
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-            }`}
-            title="Toggle Primary Side Bar (Cmd+B)"
-          >
-            <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
-          </button>
+          {/* The file tree and the terminal belong to the editor screen, so
+              their toggles only appear there. On a page, the nav and Escape are
+              the way back. */}
+          {screen === "editor" && (
+            <>
+              <button
+                type="button"
+                onClick={() => setExplorerOpen((prev) => !prev)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  explorerOpen
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+                }`}
+                title="Toggle File Tree (Cmd+Shift+E)"
+              >
+                <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
+              </button>
 
-          {/* Toggle Bottom Panel Button */}
-          <button
-            type="button"
-            onClick={() => setIsBottomPanelOpen((prev) => !prev)}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isBottomPanelOpen
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-            }`}
-            title="Toggle Bottom Panel (Cmd+J / Ctrl+`)"
-          >
-            <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
-          </button>
+              <button
+                type="button"
+                onClick={() => setIsBottomPanelOpen((prev) => !prev)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  isBottomPanelOpen
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+                }`}
+                title="Toggle Bottom Panel (Cmd+J / Ctrl+`)"
+              >
+                <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
 
           {/* AI Chat Button: toggles the docked assistant, or leaves full-canvas chat */}
           <button
@@ -1278,204 +1295,68 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
       {/* ── Main Workbench Body ──────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Activity Bar (VS Code Vertical Strip) */}
-        <aside className="w-11 bg-[var(--vscode-activitybar-bg)] border-r border-[var(--vscode-border)] flex flex-col items-center py-2 gap-2.5 shrink-0 z-raised">
-          {/* Explorer Tab */}
-          <button
-            type="button"
-            title="Explorer (Cmd+Shift+E)"
-            onClick={() => {
-              if (activeSidebarTab === "explorer" && isSidebarOpen) {
-                setIsSidebarOpen(false);
-              } else {
-                setActiveSidebarTab("explorer");
-                setIsSidebarOpen(true);
-              }
-            }}
-            className={`p-2 rounded-lg transition-all ${
-              activeSidebarTab === "explorer" && isSidebarOpen
-                ? "bg-white/10 text-white rounded-md"
-                : "text-zinc-400 hover:text-zinc-100"
-            }`}
-          >
-            <Icon icon={Folder} className="w-4 h-4" />
-          </button>
+        {/* One navigation surface for the whole workbench: an icon rail with a
+            panel that reveals on hover, collapses after a choice, and can be
+            pinned. See WorkbenchNav.tsx. */}
+        <WorkbenchNav
+          screen={screen}
+          onSelectScreen={openScreen}
+          explorerOpen={explorerOpen}
+          onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
+          pinned={navPinned}
+          onPinnedChange={setNavPinned}
+          chatOpen={isRightPanelOpen}
+          onToggleChat={() => {
+            setScreen("editor");
+            setIsRightPanelOpen((prev) => !prev);
+          }}
+          onOpenSettings={openSettings}
+          onOpenCommandPalette={openCommandPalette}
+          projectName={activeProject.name}
+          projectPath={activeProject.path}
+        />
 
-          {/* Search Tab */}
-          <button
-            type="button"
-            title="Search (Cmd+Shift+F)"
-            onClick={() => {
-              if (activeSidebarTab === "search" && isSidebarOpen) {
-                setIsSidebarOpen(false);
-              } else {
-                setSearchInitialReplace(false);
-                setActiveSidebarTab("search");
-                setIsSidebarOpen(true);
-              }
-            }}
-            className={`p-2 rounded-lg transition-all ${
-              activeSidebarTab === "search" && isSidebarOpen
-                ? "bg-white/10 text-white rounded-md"
-                : "text-zinc-400 hover:text-zinc-100"
-            }`}
-          >
-            <Icon icon={Search} className="w-4 h-4" />
-          </button>
+        {/* The canvas: the editor screen, or a page. A pinned nav puts its panel
+            in the flow, so this simply starts after it; a hovered one overlays,
+            so revealing it never reflows the editor. */}
+        <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+          {screen === "editor" ? (
+            <div className="flex flex-1 min-h-0">
+              {/* File tree, paired with the editor rather than parked beside the
+                  whole workbench: it belongs to this screen. */}
+              {explorerOpen && (
+                <aside
+                  style={{ width: `${explorerWidth}px` }}
+                  className="relative max-w-[42%] h-full shrink-0 border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col overflow-hidden"
+                >
+                  <ExplorerSidebar
+                    projectName={activeProject.name}
+                    projectPath={activeProject.path}
+                    files={projectFiles}
+                    activeFilePath={activeTabPath}
+                    onSelectFile={openFileInEditor}
+                    onCreateFile={createFileOrFolder}
+                    onDeleteFile={deleteFile}
+                    onRefresh={refreshProjectFiles}
+                    onOpenFolder={handleOpenFolder}
+                    touchedPaths={touchedPaths}
+                  />
+                  {/* Pointer-only, like the nav rail: there is no keyboard
+                      equivalent, and the pane is usable at its default width. */}
+                  <div
+                    role="presentation"
+                    onMouseDown={startResizingExplorer}
+                    className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-dock select-none ${
+                      isResizingExplorer ? "bg-zinc-500" : ""
+                    }`}
+                    title="Drag to resize the file tree"
+                  />
+                </aside>
+              )}
 
-          {/* Source Control Tab */}
-          <button
-            type="button"
-            title="Source Control (Ctrl+Shift+G)"
-            onClick={() => {
-              if (activeSidebarTab === "sourceControl" && isSidebarOpen) {
-                setIsSidebarOpen(false);
-              } else {
-                setActiveSidebarTab("sourceControl");
-                setIsSidebarOpen(true);
-              }
-            }}
-            className={`p-2 rounded-lg transition-all ${
-              activeSidebarTab === "sourceControl" && isSidebarOpen
-                ? "bg-white/10 text-white rounded-md"
-                : "text-zinc-400 hover:text-zinc-100"
-            }`}
-          >
-            <Icon icon={GitPullRequest} className="w-4 h-4" />
-          </button>
-
-
-
-          <button
-            type="button"
-            title="Host Health & Performance (Opens Full Page)"
-            onClick={openMonitorTab}
-            className={`p-2 rounded-lg transition-all ${
-              fullPage === "monitor"
-                ? "bg-white/10 text-emerald-400 rounded-md"
-                : "text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/60"
-            }`}
-          >
-            <Icon icon={Activity} className="w-4 h-4" />
-          </button>
-
-          {/* Code Map & Symbol Index (Opens Full Page Dashboard) */}
-          <button
-            type="button"
-            title="Code Map: symbols, dependency hubs & entrypoints (Opens Full Page)"
-            onClick={openCodeMapTab}
-            className={`p-2 rounded-lg transition-all ${
-              fullPage === "codeMap"
-                ? "bg-white/10 text-purple-300 rounded-md"
-                : "text-zinc-400 hover:text-purple-300 hover:bg-zinc-800/60"
-            }`}
-          >
-            <Icon icon={Network} className="w-4 h-4" />
-          </button>
-
-          {/* Model Management & Providers (Opens Full Page Dashboard) */}
-          <button
-            type="button"
-            title="AI Models & Providers (Opens Full Page)"
-            onClick={openAiManagerTab}
-            className={`p-2 rounded-lg transition-all ${
-              fullPage === "aiManager"
-                ? "bg-white/10 text-white rounded-md"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-            }`}
-          >
-            <Icon icon={Cpu} className="w-4 h-4" />
-          </button>
-
-          {/* Marketplace Tab: Skills, Tools & MCP servers */}
-          <button
-            type="button"
-            title="Marketplace: Skills, Tools & MCP Servers (Cmd+Shift+X)"
-            onClick={openMarketplaceTab}
-            className={`p-2 rounded-lg transition-all ${
-              fullPage === "marketplace"
-                ? "bg-white/10 text-white rounded-md"
-                : "text-zinc-400 hover:text-zinc-100"
-            }`}
-          >
-            <Icon icon={Package} className="w-4 h-4" />
-          </button>
-
-          <div className="flex-1" />
-
-          {/* Settings Modal Button */}
-          <button
-            type="button"
-            title="Settings (Cmd+,)"
-            onClick={openSettings}
-            className="p-2 text-zinc-400 hover:text-zinc-100 rounded-lg transition-all mb-1"
-          >
-            <Icon icon={Settings} className="w-4 h-4" />
-          </button>
-        </aside>
-
-        {/* Primary Sidebar Area */}
-        <aside
-          style={{ width: isSidebarOpen ? `${sidebarWidth}px` : 0 }}
-          className={`relative max-w-[40%] border-r border-[var(--vscode-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col h-full shrink-0 overflow-hidden ${
-            isSidebarOpen ? "" : "hidden"
-          }`}
-        >
-          {activeSidebarTab === "explorer" && (
-            <ExplorerSidebar
-              projectName={activeProject.name}
-              projectPath={activeProject.path}
-              files={projectFiles}
-              activeFilePath={activeTabPath}
-              onSelectFile={openFileAndExitFullChat}
-              onCreateFile={createFileOrFolder}
-              onDeleteFile={deleteFile}
-              onRefresh={refreshProjectFiles}
-              onOpenFolder={handleOpenFolder}
-              touchedPaths={touchedPaths}
-            />
-          )}
-
-          {activeSidebarTab === "search" && (
-            <SearchSidebar
-              projectCwd={activeProject.path}
-              projectName={activeProject.name}
-              onOpenFile={handleOpenFileAtLocation}
-              onUpdateTabContent={updateTabContent}
-              onRefreshFiles={refreshProjectFiles}
-              initialReplaceExpanded={searchInitialReplace}
-            />
-          )}
-
-          {activeSidebarTab === "sourceControl" && (
-            <SourceControlSidebar
-              projectCwd={activeProject.path}
-              onOpenDiff={handleOpenGitDiff}
-              onRefreshFiles={() => {
-                refreshProjectFiles();
-                refreshBranch();
-              }}
-            />
-          )}
-
-          {/* Draggable Resize Handle */}
-          {/* Pointer-only: there is no keyboard equivalent, and the panel is
-              fully usable at its default width. Marked presentational so it is
-              not announced as an interactive control it is not. */}
-          <div
-            role="presentation"
-            onMouseDown={startResizingSidebar}
-            className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-zinc-600/40 transition-colors z-dock select-none ${
-              isResizingSidebar ? "bg-zinc-500" : ""
-            }`}
-            title="Drag to resize sidebar"
-          />
-        </aside>
-
-        {/* Center Stage: Dockview (Editors) + Dedicated Bottom Panel */}
-        <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
-          {/* Dockview Editors & Diff Surface */}
-          <div className="flex-1 w-full overflow-hidden relative">
+              {/* Dockview Editors & Diff Surface, with the terminal beneath */}
+              <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-[var(--vscode-editor-bg)]">
+                <div className="flex-1 w-full overflow-hidden relative">
             <TabChromeContext.Provider value={tabChrome}>
             {/* Panels read current state through this: dockview froze the
                 component it was handed at panel creation, so a closure would
@@ -1491,41 +1372,67 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             </WorkbenchProvider>
             </TabChromeContext.Provider>
 
-            {/* Full-Canvas AI Assistant — a true overlay with no dockview tab
-                chrome. Only one assistant surface is ever mounted: opening this
-                closes the side dock and vice versa. `z-overlay` keeps it above the
-                editor's own floating chrome (Review button etc.) and — deliberately —
-                *below* `z-popover`, so a titlebar dropdown still lands on top of it
-                rather than being clipped by it. */}
+                  {/* Full-Canvas AI Assistant — a true overlay with no dockview
+                      tab chrome. Only one assistant surface is ever mounted:
+                      opening this closes the side dock and vice versa. */}
             {isCenterChatOpen && (
               <div className="absolute inset-0 z-overlay bg-[#141416]">
                 <AiAssistantChat {...centerChatProps} />
               </div>
             )}
-
-            {/* Full-page surfaces (Host Health, AI Models, Code Map). Rendered
-                as overlays for the same reason as the chat: no tab chrome. */}
-            {fullPage && (
-              <div className="absolute inset-0 z-overlay bg-[#141416] flex flex-col">
-                <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
-                  <div className="flex items-center gap-2">
-                    <Icon icon={FULL_PAGE_ICONS[fullPage]} className="w-4 h-4 text-zinc-300" />
-                    <span className="text-body font-semibold text-zinc-100 tracking-tight">
-                      {FULL_PAGE_TITLES[fullPage]}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setFullPage(null)}
-                    title="Close (Esc)"
-                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
-                  >
-                    <Icon icon={X} className="w-3.5 h-3.5" />
-                  </button>
                 </div>
-                <div className="flex-1 min-h-0">
-                  <Suspense fallback={<SurfaceFallback label={FULL_PAGE_TITLES[fullPage]} />}>
-                  {fullPage === "monitor" && (
+
+                {/* Dedicated Bottom Panel (Terminal / Output / Problems). The
+                    terminal belongs to the editor screen; a page takes the whole
+                    canvas, and `openScreen` puts this back on the way home. */}
+                <Suspense fallback={null}>
+                  <BottomPanel
+                    isOpen={isBottomPanelOpen}
+                    onClose={() => setIsBottomPanelOpen(false)}
+                    activeProjectCwd={activeProject.path}
+                    activityLog={activityLog}
+                    onClearLog={clearLog}
+                    status={status}
+                    terminalFontSize={aiSettings?.terminalFontSize ?? 13}
+                  />
+                </Suspense>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-1 min-h-0 flex-col">
+              {/* A page header, so a full-width surface still says where it is
+                  and how to leave. Escape does the same. */}
+              <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--vscode-border)] bg-[#18181b] shrink-0">
+                <div className="flex items-center gap-2">
+                  {activeNavItem && (
+                    <Icon icon={activeNavItem.icon} className="w-4 h-4 text-zinc-300" />
+                  )}
+                  <span className="text-body font-semibold text-zinc-100 tracking-tight">
+                    {activeNavItem?.label ?? "Page"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openScreen("editor")}
+                  title="Back to the editor (Esc)"
+                  aria-label="Back to the editor"
+                  className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                >
+                  <Icon icon={X} className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                <Suspense fallback={<SurfaceFallback label={activeNavItem?.label ?? "the page"} />}>
+                  {screen === "git" && (
+                    <GitDashboard
+                      projectCwd={activeProject.path}
+                      onWorkspaceChanged={() => {
+                        refreshBranch();
+                        refreshProjectFiles();
+                      }}
+                    />
+                  )}
+                  {screen === "monitor" && (
                     <PerformanceDashboard
                       projectRoot={activeProject.path}
                       onRefreshMetrics={() => {
@@ -1534,7 +1441,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                       }}
                     />
                   )}
-                  {fullPage === "aiManager" && (
+                  {screen === "aiManager" && (
                     <AiManagementDashboard
                       onModelSettingsChanged={() => {
                         const def = getDefaultProvider();
@@ -1548,7 +1455,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                       }}
                     />
                   )}
-                  {fullPage === "marketplace" && (
+                  {screen === "marketplace" && (
                     // A centred column rather than the full width: this was a
                     // sidebar, and stretched across a wide monitor its rows read
                     // as a spreadsheet.
@@ -1556,35 +1463,18 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                       <MarketplaceSidebar projectRoot={activeProject.path} />
                     </div>
                   )}
-                  {fullPage === "codeMap" && (
+                  {screen === "codeMap" && (
                     <CodeMapDashboard
                       projectRoot={activeProject.path}
                       projectName={activeProject.name}
                       aiSettings={aiSettings}
-                      onOpenFile={(path, line) => {
-                        setFullPage(null);
-                        handleOpenFileAtLocation(path, line);
-                      }}
+                      onOpenFile={(path, line) => handleOpenFileAtLocation(path, line)}
                     />
                   )}
-                  </Suspense>
-                </div>
+                </Suspense>
               </div>
-            )}
-          </div>
-
-          {/* Dedicated Bottom Panel (Terminal / Output / Problems) */}
-          <Suspense fallback={null}>
-          <BottomPanel
-            isOpen={isBottomPanelOpen}
-            onClose={() => setIsBottomPanelOpen(false)}
-            activeProjectCwd={activeProject.path}
-            activityLog={activityLog}
-            onClearLog={clearLog}
-            status={status}
-            terminalFontSize={aiSettings?.terminalFontSize ?? 13}
-          />
-          </Suspense>
+            </div>
+          )}
         </div>
 
         {/* ── Right Secondary Tool Window (IntelliJ-Style AI Assistant Dock) ── */}
@@ -1613,7 +1503,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               isWide={false}
               activeAiSettings={aiSettings}
               selectedContext={activeTabPath ? { path: activeTabPath, code: selectedCode } : null}
-                indexStatus={indexStatus}
+              indexStatus={indexStatus}
               isIndexing={isIndexing}
               onSyncIndex={syncIndex}
               streamingAnswer={streamingAnswer}
@@ -1686,7 +1576,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         onClose={() => setIsCommandPaletteOpen(false)}
         commands={commands}
         files={projectFiles}
-        onOpenFile={openFileAndExitFullChat}
+        onOpenFile={openFileInEditor}
         initialMode={paletteMode}
       />
 

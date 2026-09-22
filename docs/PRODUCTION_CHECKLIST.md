@@ -111,12 +111,19 @@ dockview layout. `0.2.4` carries the rest of that audit: the composer's text and
 moved out of the workbench's state, the transcript and the editor sit behind memo boundaries, and the
 macOS bundle job stopped running on every push to `dev`.
 
-**Left in this phase — the surfaces.** The model picker, the layout, and the z-index scale have no
-render tests, and every screen still carries the pre-identity spacing and hierarchy: the palette and
-type scale are single-sourced now, so a change lands everywhere, but nobody has decided what the
-*hierarchy* should be. Two smaller things ride along: the 21 inline hexes, and the old semantic token
-layer (`--obsidian-*`, `--text-*`), which nothing reads and which should either be deleted or
-repointed at the real palette.
+**Layout — done.** The permanent activity bar and sidebar are gone, replaced by one collapsible
+navigation surface (`WorkbenchNav.tsx`): a rail that reveals a grouped panel on hover, collapses
+after a choice, and pins with Cmd+B. The explorer now belongs to the editor screen rather than to the
+whole workbench, the repository is a page that shows the diff beside the changes it came from, and
+search-in-files was removed — the palette's file search covers it. Both new surfaces have render
+tests (`WorkbenchNav.test.tsx`, `GitDashboard.test.tsx`).
+
+**Left in this phase — the rest of the surfaces.** The model picker and the z-index scale still have
+no render tests, and the pages behind the nav still carry their pre-identity spacing and hierarchy:
+the palette and type scale are single-sourced now, so a change lands everywhere, but nobody has
+decided what the *hierarchy* should be for those. Two smaller things ride along: the inline hexes in
+the shell, and the old semantic token layer (`--obsidian-*`, `--text-*`), which nothing reads and
+which should either be deleted or repointed at the real palette.
 
 Then, in order: OS keychain; Windows and Linux release jobs; Dependabot and `npm audit`; and the
 screen-reader pass, which needs a human listening.

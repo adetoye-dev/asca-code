@@ -6,7 +6,7 @@ import { IdeBrandLogo } from "../ui/BrandLogos";
 export interface DockviewWatermarkProps {
   onOpenFile?: () => void;
   onOpenCommands?: () => void;
-  onToggleSidebar?: () => void;
+  onToggleExplorer?: () => void;
   onToggleTerminal?: () => void;
   onToggleAi?: () => void;
   /** Optional "what do I do next?" slot, e.g. the project setup card. */
@@ -17,7 +17,7 @@ export interface DockviewWatermarkProps {
 export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
   onOpenFile,
   onOpenCommands,
-  onToggleSidebar,
+  onToggleExplorer,
   onToggleTerminal,
   onToggleAi,
   setupSlot,
@@ -32,9 +32,9 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
     else window.dispatchEvent(new CustomEvent("acsa:open-command-palette"));
   };
 
-  const handleToggleSidebar = () => {
-    if (onToggleSidebar) onToggleSidebar();
-    else window.dispatchEvent(new CustomEvent("acsa:toggle-sidebar"));
+  const handleToggleExplorer = () => {
+    if (onToggleExplorer) onToggleExplorer();
+    else window.dispatchEvent(new CustomEvent("acsa:toggle-explorer"));
   };
 
   const handleToggleTerminal = () => {
@@ -61,10 +61,10 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
       action: handleOpenCommands,
     },
     {
-      label: "Toggle Sidebar",
-      shortcut: "⌘ B",
+      label: "Toggle Explorer",
+      shortcut: "⌘ ⇧ E",
       icon: PanelLeft,
-      action: handleToggleSidebar,
+      action: handleToggleExplorer,
     },
     {
       label: "Toggle Terminal",
