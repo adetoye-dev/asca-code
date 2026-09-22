@@ -26,7 +26,6 @@ import "dockview/dist/styles/dockview.css";
 import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, PanelBottom, PanelLeft, FolderPlus, Settings, PanelRight, Cpu, MessageSquare, Palette, Package, Bot, GitCompare, X, Network } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
-import { IdeBrandLogo } from "../ui/BrandLogos";
 
 import { StatusBar } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
@@ -66,6 +65,9 @@ import type { UsePipelineReturn } from "../../hooks/usePipeline";
 import { gitFetch } from "../../services/gitClient";
 
 const SPECIAL_PANELS = ["dock_diff", "diff_"];
+
+/** Under this width the chat dock steps aside so the editor keeps its room. */
+const DOCK_YIELD_WIDTH = 1000;
 
 /* ── Lazily-loaded heavy surfaces ─────────────────────────────────────────
    Monaco (~1.5 MB) and the terminal/graph stacks dominate the bundle but are
@@ -282,6 +284,25 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   /** What the editor's dock looked like before a page took the canvas. */
   const dockBeforePageRef = useRef<{ right: boolean; bottom: boolean } | null>(null);
+
+  /**
+   * Below this the editor is being squeezed rather than shared: 56 of sidebar,
+   * the file tree, the dock and the editor all want room, and the editor is the
+   * one being worked in. So the dock gives way — once, when the window crosses
+   * the line. It never reopens itself: a window that keeps reopening a panel you
+   * closed is worse than one that leaves it closed.
+   */
+  useEffect(() => {
+    let wasNarrow = window.innerWidth < DOCK_YIELD_WIDTH;
+    if (wasNarrow) setIsRightPanelOpen(false);
+    const onResize = () => {
+      const narrow = window.innerWidth < DOCK_YIELD_WIDTH;
+      if (narrow && !wasNarrow) setIsRightPanelOpen(false);
+      wasNarrow = narrow;
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   // Full-canvas chat surface ("Open in Center Stage"). Rendered as an overlay
   // over the editor grid so it has no dockview tab chrome of its own.
   const [isCenterChatOpen, setIsCenterChatOpen] = useState(false);
@@ -1182,124 +1203,9 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--vscode-sidebar-bg)] text-[var(--vscode-editor-fg)] select-none">
-      {/* ── Top IDE Titlebar (Clean, Uncluttered, JetBrains / VS Code Modern UI) ── */}
-      <header className="flex items-center justify-between px-3 h-10 border-b border-[var(--vscode-border)] bg-[var(--vscode-titlebar-bg)] shrink-0 text-xs font-sans">
-        {/* Left: Sleek Brand & Project Selector */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-2 pr-1">
-            <IdeBrandLogo className="w-5 h-5 shrink-0" />
-            <span className="font-semibold tracking-tight text-zinc-100 text-body flex items-center gap-1 font-sans">
-              ACSA <span className="text-zinc-400 font-medium">Code</span>
-            </span>
-          </div>
-
-          <div className="w-px h-4 bg-zinc-700/50" />
-
-          {/* Modern IDE Project Switcher Pill & Dropdown */}
-          <ProjectSwitcher
-            activeProject={activeProject}
-            onOpenFolder={handleOpenFolder}
-            onNewProject={() => setIsProjectModalOpen(true)}
-            onCloneRepo={() => setIsCloneModalOpen(true)}
-            onSelectRecentProject={openFolder}
-          />
-
-          {/* Real Git Version Control Dropdown */}
-          <VersionControlDropdown
-            projectCwd={activeProject.path}
-            onBranchChanged={() => {
-              refreshBranch();
-              refreshProjectFiles();
-            }}
-          />
-        </div>
-
-        {/* Center: Command Palette / Omnibar Trigger */}
-        <button
-          type="button"
-          aria-label="Search files or run a command"
-          onClick={() => setIsCommandPaletteOpen(true)}
-          className="flex-1 max-w-xl mx-4 h-7 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 rounded-lg px-2.5 flex items-center justify-between cursor-pointer transition-colors shadow-sm group"
-        >
-          <div className="flex items-center gap-2 text-xs text-zinc-400 group-hover:text-zinc-300">
-            <Icon icon={Search} className="w-3.5 h-3.5" />
-            <span className="truncate">
-              {activeProject ? `${activeProject.name} — Search files (Cmd+P)` : "Search files (Cmd+P)"}
-            </span>
-          </div>
-          <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-3xs font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
-            ⌘P
-          </kbd>
-        </button>
-
-        {/* Right: Layout Toggles, AI Chat Button & Settings */}
-        <div className="flex items-center gap-2">
-          {/* The file tree and the terminal belong to the editor screen, so
-              their toggles only appear there. On a page, the nav and Escape are
-              the way back. */}
-          {screen === "editor" && (
-            <>
-              <button
-                type="button"
-                onClick={() => setExplorerOpen((prev) => !prev)}
-                className={`p-1.5 rounded-lg transition-colors ${
-                  explorerOpen
-                    ? "bg-zinc-800 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-                }`}
-                title="Toggle File Tree (Cmd+Shift+E)"
-              >
-                <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsBottomPanelOpen((prev) => !prev)}
-                className={`p-1.5 rounded-lg transition-colors ${
-                  isBottomPanelOpen
-                    ? "bg-zinc-800 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-                }`}
-                title="Toggle Bottom Panel (Cmd+J / Ctrl+`)"
-              >
-                <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-
-          {/* AI Chat Button: toggles the docked assistant, or leaves full-canvas chat */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isCenterChatOpen) {
-                setIsCenterChatOpen(false);
-                setIsRightPanelOpen(true);
-              } else {
-                setIsRightPanelOpen((prev) => !prev);
-              }
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              isRightPanelOpen || isCenterChatOpen
-                ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
-                : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
-            }`}
-            title="Toggle AI Chat Panel (Cmd+L)"
-          >
-            <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
-            <span>Chat</span>
-          </button>
-
-          {/* Appears only when there is a newer release, and installs only on a
-              click. See services/appUpdater.ts for the policy. */}
-          <UpdateButton />
-        </div>
-      </header>
-
-      {/* ── Main Workbench Body ──────────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* One navigation surface for the whole workbench: an icon rail with a
-            panel that reveals on hover, collapses after a choice, and can be
-            pinned. See WorkbenchNav.tsx. */}
+      {/* The sidebar owns the window's left edge and its whole height — the
+          brand lives in it, so there is no bar above it. */}
+      <div className="flex flex-1 min-h-0">
         <WorkbenchNav
           screen={screen}
           onSelectScreen={openScreen}
@@ -1307,20 +1213,118 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           onToggleExplorer={() => setExplorerOpen((prev) => !prev)}
           pinned={navPinned}
           onPinnedChange={setNavPinned}
-          chatOpen={isRightPanelOpen}
-          onToggleChat={() => {
-            setScreen("editor");
-            setIsRightPanelOpen((prev) => !prev);
-          }}
           onOpenSettings={openSettings}
           onOpenCommandPalette={openCommandPalette}
-          projectName={activeProject.name}
-          projectPath={activeProject.path}
         />
 
-        {/* The canvas: the editor screen, or a page. A pinned nav puts its panel
-            in the flow, so this simply starts after it; a hovered one overlays,
-            so revealing it never reflows the editor. */}
+        {/* Everything else: the titlebar, then the canvas. */}
+        <div className="flex flex-1 min-w-0 flex-col min-h-0">
+        {/* ── Top IDE Titlebar (Clean, Uncluttered, JetBrains / VS Code Modern UI) ── */}
+        <header className="flex items-center justify-between px-3 h-10 border-b border-[var(--vscode-border)] bg-[var(--vscode-titlebar-bg)] shrink-0 text-xs font-sans">
+          {/* Left: Project Selector */}
+          <div className="flex items-center gap-2.5">
+            {/* Modern IDE Project Switcher Pill & Dropdown */}
+            <ProjectSwitcher
+              activeProject={activeProject}
+              onOpenFolder={handleOpenFolder}
+              onNewProject={() => setIsProjectModalOpen(true)}
+              onCloneRepo={() => setIsCloneModalOpen(true)}
+              onSelectRecentProject={openFolder}
+            />
+
+            {/* Real Git Version Control Dropdown */}
+            <VersionControlDropdown
+              projectCwd={activeProject.path}
+              onBranchChanged={() => {
+                refreshBranch();
+                refreshProjectFiles();
+              }}
+            />
+          </div>
+
+          {/* Center: Command Palette / Omnibar Trigger */}
+          <button
+            type="button"
+            aria-label="Search files or run a command"
+            onClick={() => setIsCommandPaletteOpen(true)}
+            className="flex-1 max-w-xl mx-4 h-7 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 rounded-lg px-2.5 flex items-center justify-between cursor-pointer transition-colors shadow-sm group"
+          >
+            <div className="flex items-center gap-2 text-xs text-zinc-400 group-hover:text-zinc-300">
+              <Icon icon={Search} className="w-3.5 h-3.5" />
+              <span className="truncate">
+                {activeProject ? `${activeProject.name} — Search files (Cmd+P)` : "Search files (Cmd+P)"}
+              </span>
+            </div>
+            <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-3xs font-mono text-zinc-400 bg-zinc-800/70 border border-zinc-700/50 rounded">
+              ⌘P
+            </kbd>
+          </button>
+
+          {/* Right: Layout Toggles, AI Chat Button & Settings */}
+          <div className="flex items-center gap-2">
+            {/* The file tree and the terminal belong to the editor screen, so
+                their toggles only appear there. On a page, the nav and Escape are
+                the way back. */}
+            {screen === "editor" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExplorerOpen((prev) => !prev)}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    explorerOpen
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+                  }`}
+                  title="Toggle File Tree (Cmd+Shift+E)"
+                >
+                  <Icon icon={PanelLeft} className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsBottomPanelOpen((prev) => !prev)}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    isBottomPanelOpen
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+                  }`}
+                  title="Toggle Bottom Panel (Cmd+J / Ctrl+`)"
+                >
+                  <Icon icon={PanelBottom} className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+
+            {/* AI Chat Button: toggles the docked assistant, or leaves full-canvas chat */}
+            <button
+              type="button"
+              onClick={() => {
+                if (isCenterChatOpen) {
+                  setIsCenterChatOpen(false);
+                  setIsRightPanelOpen(true);
+                } else {
+                  setIsRightPanelOpen((prev) => !prev);
+                }
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                isRightPanelOpen || isCenterChatOpen
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
+                  : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
+              }`}
+              title="Toggle AI Chat Panel (Cmd+L)"
+            >
+              <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
+              <span>Chat</span>
+            </button>
+
+            {/* Appears only when there is a newer release, and installs only on a
+                click. See services/appUpdater.ts for the policy. */}
+            <UpdateButton />
+          </div>
+        </header>
+
+      {/* ── The canvas: the editor screen, or a page, with the chat dock ──── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
         <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
           {screen === "editor" ? (
             <div className="flex flex-1 min-h-0">
@@ -1523,7 +1527,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
             />
           </aside>
         )}
-
+          </div>
+        </div>
       </div>
 
       <StatusBar

@@ -87,11 +87,12 @@ export const DockviewWatermark: React.FC<DockviewWatermarkProps> = ({
         <IdeBrandLogo size={24} className="opacity-75" />
       </div>
 
-      {/* Title & Subtitle */}
-      <div className="text-xs font-semibold tracking-wider uppercase text-zinc-400 mb-1">
+      {/* Title & Subtitle. Capped and centred so a narrow editor wraps them
+          instead of clipping the ends off. */}
+      <div className="mb-1 max-w-full text-center text-xs font-semibold uppercase tracking-wider text-zinc-400">
         ACSA Code
       </div>
-      <div className="text-2xs text-zinc-500 mb-6 font-mono">
+      <div className="mb-6 max-w-full text-center font-mono text-2xs text-zinc-500">
         Local-first agentic engineering workbench
       </div>
 

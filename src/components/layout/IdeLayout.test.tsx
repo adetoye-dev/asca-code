@@ -128,7 +128,7 @@ describe("the workbench shell", () => {
   it("paints the navigation, the editor and its file tree, the terminal and the chat", async () => {
     renderShell();
     expect(screen.getByTestId("workbench-nav")).toBeTruthy();
-    expect(screen.getByTestId("nav-rail")).toBeTruthy();
+    expect(screen.getByTestId("workbench-nav")).toBeTruthy();
     // The explorer is part of the editor screen now, not the whole workbench:
     // its own empty state is on screen.
     expect(screen.getByText("No files in directory.")).toBeTruthy();
@@ -141,7 +141,7 @@ describe("the workbench shell", () => {
     renderShell();
 
     // Choose Repository from the panel.
-    fireEvent.mouseOver(screen.getByTestId("nav-rail"));
+    fireEvent.mouseOver(screen.getByTestId("workbench-nav"));
     fireEvent.click(screen.getByTestId("nav-item-git"));
 
     // The page is up — its commit box is the anchor, since the branch also shows
@@ -158,17 +158,17 @@ describe("the workbench shell", () => {
     expect(screen.getByTestId("chat-dock")).toBeTruthy();
   });
 
-  it("pins the navigation with Cmd+B, so it stops hiding", () => {
+  it("pins the sidebar with Cmd+B, so it stops hiding", async () => {
     renderShell();
-    const panel = () => screen.getByTestId("nav-panel");
-    expect(panel().getAttribute("aria-hidden")).toBe("true");
+    const width = () => Number.parseInt(screen.getByTestId("workbench-nav").style.width, 10);
+    expect(width()).toBeLessThan(100);
 
     fireEvent.keyDown(window, { key: "b", metaKey: true });
-    expect(panel().getAttribute("aria-hidden")).toBe("false");
+    await waitFor(() => expect(width()).toBeGreaterThan(100));
 
     // And the choice sticks: moving the pointer away does not close it.
-    fireEvent.mouseOut(screen.getByTestId("nav-rail"));
-    expect(panel().getAttribute("aria-hidden")).toBe("false");
+    fireEvent.mouseOut(screen.getByTestId("workbench-nav"));
+    expect(width()).toBeGreaterThan(100);
   });
 
   it("keeps the file tree toggle in the titlebar to the editor screen", async () => {
@@ -176,7 +176,7 @@ describe("the workbench shell", () => {
     const treeToggle = () => screen.queryByTitle("Toggle File Tree (Cmd+Shift+E)");
     expect(treeToggle()).toBeTruthy();
 
-    fireEvent.mouseOver(screen.getByTestId("nav-rail"));
+    fireEvent.mouseOver(screen.getByTestId("workbench-nav"));
     fireEvent.click(screen.getByTestId("nav-item-marketplace"));
     await waitFor(() => expect(screen.getByTestId("marketplace-page")).toBeTruthy());
     // A page has no file tree or terminal to toggle.

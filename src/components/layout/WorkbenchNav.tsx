@@ -1,16 +1,20 @@
 /**
- * WorkbenchNav.tsx — the workbench's one navigation surface.
+ * WorkbenchNav.tsx — the workbench's sidebar.
  *
- * It replaces a permanent activity bar plus a permanent sidebar. There is a rail
- * (icons, always 56px) and a panel (labels, groups, shortcuts) that slides out
- * beside it:
+ * One element, two states. Collapsed it is an icon column; expanded it is the
+ * same column with its labels open. Nothing is rendered twice: every row is one
+ * button whose label is simply hidden while the sidebar is narrow, which is what
+ * keeps the two states from drifting apart.
  *
- * - pointing at either one reveals the panel; it is an overlay, so revealing it
- *   never reflows the editor underneath;
- * - choosing something closes it again, unless it is pinned;
- * - pinning puts the panel in the layout instead, so the work opens beside it;
- * - Escape closes it, the pin is remembered, and every row is a real button with
- *   a shortcut hint, so the keyboard story is the same as the mouse one.
+ * Behaviour:
+ * - pointing at it (or tabbing into it) expands it in place — the layout makes
+ *   room rather than a second surface appearing over the top;
+ * - a short hover intent keeps a cursor merely crossing it from shoving the
+ *   editor sideways;
+ * - choosing something collapses it again unless it is pinned, and the pin is
+ *   remembered;
+ * - Escape closes it, and it spans the full height of the window because the
+ *   brand lives here rather than in a bar above it.
  *
  * The screens themselves live in IdeLayout; this only says which one is wanted.
  */
@@ -21,13 +25,12 @@ import {
   Cpu,
   FolderTree,
   GitBranch,
-  MessageSquare,
   Network,
   Package,
-  Settings,
   Pin,
   PinOff,
   Search,
+  Settings,
 } from "lucide-react";
 import { Icon } from "../ui/Icon";
 import { IdeBrandLogo } from "../ui/BrandLogos";
@@ -49,76 +52,45 @@ interface NavSection {
 }
 
 /**
- * The rail's icons and the panel's rows come from this, so the two can never
- * disagree about what exists. Order is the order on screen.
+ * The rows, and the groups they sit in. One list: the collapsed and expanded
+ * states read from it, so they cannot disagree about what exists.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Workspace",
     items: [
-      {
-        id: "editor",
-        label: "Editor",
-        hint: "Files, tabs and the terminal",
-        shortcut: "⌘⇧E",
-        icon: FolderTree,
-      },
+      { id: "editor", label: "Editor", hint: "Files, tabs and the terminal", shortcut: "⌘⇧E", icon: FolderTree },
     ],
   },
   {
     label: "Code",
     items: [
-      {
-        id: "git",
-        label: "Repository",
-        hint: "Changes, staging and commits",
-        shortcut: "⌘⇧G",
-        icon: GitBranch,
-      },
-      {
-        id: "codeMap",
-        label: "Code map",
-        hint: "Symbols, dependents and entry points",
-        icon: Network,
-      },
+      { id: "git", label: "Repository", hint: "Changes, staging and commits", shortcut: "⌘⇧G", icon: GitBranch },
+      { id: "codeMap", label: "Code map", hint: "Symbols, dependents and entry points", icon: Network },
     ],
   },
   {
     label: "AI",
     items: [
-      {
-        id: "aiManager",
-        label: "Models & providers",
-        hint: "Keys, models and what is connected",
-        icon: Cpu,
-      },
+      { id: "aiManager", label: "Models & providers", hint: "Keys, models and what is connected", icon: Cpu },
     ],
   },
   {
     label: "Platform",
     items: [
-      {
-        id: "marketplace",
-        label: "Marketplace",
-        hint: "Skills, tools and MCP servers",
-        shortcut: "⌘⇧X",
-        icon: Package,
-      },
-      {
-        id: "monitor",
-        label: "Health & performance",
-        hint: "This machine, this app",
-        icon: Activity,
-      },
+      { id: "marketplace", label: "Marketplace", hint: "Skills, tools and MCP servers", shortcut: "⌘⇧X", icon: Package },
+      { id: "monitor", label: "Health & performance", hint: "This machine, this app", icon: Activity },
     ],
   },
 ];
 
-/** Every item, flattened, for lookups by id. */
+/** Every row, flattened, for lookups by id. */
 export const NAV_ITEMS: NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
 
-export const NAV_RAIL_WIDTH = 56;
-export const NAV_PANEL_WIDTH = 208;
+export const NAV_COLLAPSED_WIDTH = 56;
+export const NAV_EXPANDED_WIDTH = 240;
+/** A cursor crossing the sidebar must not shove the editor across. */
+export const NAV_HOVER_INTENT_MS = 140;
 
 interface WorkbenchNavProps {
   screen: ScreenId;
@@ -128,12 +100,8 @@ interface WorkbenchNavProps {
   onToggleExplorer: () => void;
   pinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
-  chatOpen: boolean;
-  onToggleChat: () => void;
   onOpenSettings: () => void;
   onOpenCommandPalette: () => void;
-  projectName?: string;
-  projectPath?: string;
 }
 
 export function WorkbenchNav({
@@ -143,25 +111,44 @@ export function WorkbenchNav({
   onToggleExplorer,
   pinned,
   onPinnedChange,
-  chatOpen,
-  onToggleChat,
   onOpenSettings,
   onOpenCommandPalette,
-  projectName,
-  projectPath,
 }: WorkbenchNavProps) {
   const [hovered, setHovered] = useState(false);
+  const hoverTimer = useRef<number | null>(null);
   const [focusWithin, setFocusWithin] = useState(false);
   /**
-   * Set when the panel closes while the pointer is still on the rail — after a
-   * choice, or Escape. Without it the pointer's own presence would immediately
-   * reveal the panel again, which reads as it refusing to close.
+   * Set when a choice or Escape closes the sidebar while the pointer is still on
+   * it. Without it the pointer's own presence would reopen it immediately, which
+   * reads as the menu refusing to close.
    */
   const [dismissed, setDismissed] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  /** Pointing at either surface, or tabbing into it, opens the panel. */
-  const revealed = pinned || ((hovered || focusWithin) && !dismissed);
+  const expanded = pinned || ((hovered || focusWithin) && !dismissed);
+
+  const cancelHoverTimer = useCallback(() => {
+    if (hoverTimer.current !== null) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  }, []);
+
+  const onPointerEnter = useCallback(() => {
+    setDismissed(false);
+    // Tabbing or clicking is deliberate; a pointer arriving is not.
+    if (pinned) return;
+    cancelHoverTimer();
+    hoverTimer.current = window.setTimeout(() => setHovered(true), NAV_HOVER_INTENT_MS);
+  }, [pinned, cancelHoverTimer]);
+
+  const onPointerLeave = useCallback(() => {
+    cancelHoverTimer();
+    setHovered(false);
+    setDismissed(false);
+  }, [cancelHoverTimer]);
+
+  useEffect(() => cancelHoverTimer, [cancelHoverTimer]);
 
   const close = useCallback(() => {
     setDismissed(true);
@@ -170,8 +157,8 @@ export function WorkbenchNav({
 
   const activate = useCallback(
     (item: NavItem) => {
-      // The active Editor row is a toggle for its file tree, the way the old
-      // activity bar behaved: the screen is already the one you are asking for.
+      // The active Editor row is a switch for its file tree, the way the old
+      // activity bar behaved: you are already on the screen it names.
       if (item.id === "editor" && screen === "editor") onToggleExplorer();
       else onSelectScreen(item.id);
       if (!pinned) setDismissed(true);
@@ -179,7 +166,7 @@ export function WorkbenchNav({
     [screen, pinned, onSelectScreen, onToggleExplorer]
   );
 
-  /** Arrow keys walk the panel; Escape closes it. */
+  /** Arrow keys walk the rows; Escape closes the sidebar. */
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -188,191 +175,120 @@ export function WorkbenchNav({
         return;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-      const rows = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+      const rows = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
       if (rows.length === 0) return;
       event.preventDefault();
       const current = rows.indexOf(document.activeElement as HTMLButtonElement);
       const step = event.key === "ArrowDown" ? 1 : -1;
-      const next =
-        current === -1
-          ? 0
-          : (current + step + rows.length) % rows.length;
-      rows[next]?.focus();
+      rows[current === -1 ? 0 : (current + step + rows.length) % rows.length]?.focus();
     },
     [close]
   );
 
   // A click anywhere else puts it away, the same as any other menu.
   useEffect(() => {
-    if (!revealed || pinned) return;
+    if (!expanded || pinned) return;
     const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (panelRef.current?.contains(target)) return;
-      if ((event.target as HTMLElement).closest("[data-nav-surface]")) return;
+      if (rootRef.current?.contains(event.target as Node)) return;
       setDismissed(true);
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [revealed, pinned]);
+  }, [expanded, pinned]);
+
+  /**
+   * Label visibility, in one place. The text stays in the DOM so the width can
+   * animate, but it is hidden from the accessibility tree while the sidebar is
+   * collapsed — the row's `aria-label` is what is read then.
+   */
+  const labelClass = `transition-opacity duration-100 ${
+    expanded ? "opacity-100" : "pointer-events-none opacity-0"
+  }`;
 
   return (
+    /* One sidebar in the flow: collapsed it is an icon column, expanded it is the
+       same column with room for its labels, and the layout makes room for it
+       either way. There is no second surface to drift out of step.
+       The wrapper is presentational and carries the hover/keyboard plumbing, so
+       the landmark inside stays a landmark — the same shape as the resize
+       handles, which are pointer-only by nature. */
     <div
       role="presentation"
-      data-nav-surface
-      data-testid="workbench-nav"
-      style={{ width: pinned ? "auto" : NAV_RAIL_WIDTH }}
-      className="relative z-raised flex h-full shrink-0"
-      onMouseEnter={() => {
-        setHovered(true);
-        setDismissed(false);
-      }}
-      onMouseLeave={() => {
-        setHovered(false);
-        setDismissed(false);
-      }}
+      data-testid="nav-surface"
+      className="flex h-full shrink-0"
+      onMouseEnter={onPointerEnter}
+      onMouseLeave={onPointerLeave}
       onFocus={() => setFocusWithin(true)}
       onBlur={() => setFocusWithin(false)}
       onKeyDown={handleKeyDown}
     >
-      <nav aria-label="Workbench" className="flex h-full">
-      {/* ── Rail ─────────────────────────────────────────────────────────── */}
-      <div
-        style={{ width: NAV_RAIL_WIDTH }}
-        className="flex h-full flex-col items-center gap-1 border-r border-hairline bg-[var(--vscode-activitybar-bg)] py-2"
-        data-testid="nav-rail"
-      >
-        <button
-          type="button"
-          onClick={() => onPinnedChange(!pinned)}
-          title="ACSA Code — open the menu (⌘B)"
-          aria-expanded={revealed}
-          aria-label="ACSA Code menu"
-          className="mb-1 flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/10"
-        >
-          <IdeBrandLogo className="w-5 h-5" />
-        </button>
-
-        <div className="my-1 h-px w-6 bg-hairline" />
-
-        {NAV_SECTIONS.map((section, sectionIndex) => (
-          <div key={section.label} className="flex flex-col items-center gap-1">
-            {sectionIndex > 0 && <div className="my-1 h-px w-6 bg-hairline" />}
-            {section.items.map((item) => {
-              const active = screen === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
-                  aria-label={item.label}
-                  aria-current={active ? "page" : undefined}
-                  data-testid={`nav-rail-${item.id}`}
-                  onClick={() => activate(item)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                    active
-                      ? "bg-white/10 text-white"
-                      : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-                  }`}
-                >
-                  <Icon icon={item.icon} className="w-4 h-4" />
-                </button>
-              );
-            })}
-          </div>
-        ))}
-
-        <div className="flex-1" />
-
-        <button
-          type="button"
-          title="Chat (⌘L)"
-          aria-label="Chat"
-          aria-pressed={chatOpen}
-          data-testid="nav-rail-chat"
-          onClick={onToggleChat}
-          className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-            chatOpen ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-          }`}
-        >
-          <Icon icon={MessageSquare} className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          title="Settings (⌘,)"
-          aria-label="Settings"
-          data-testid="nav-rail-settings"
-          onClick={onOpenSettings}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
-        >
-          <Icon icon={Settings} className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* ── Panel ────────────────────────────────────────────────────────── */}
-      <div
-        ref={panelRef}
-        data-testid="nav-panel"
-        aria-hidden={!revealed}
-        // `inert` as well as the faded-out styling: without it, Tab would walk
-        // into a panel nobody can see.
-        {...(revealed ? {} : ({ inert: "" } as Record<string, string>))}
-        style={{ width: NAV_PANEL_WIDTH }}
-        className={`h-full flex-col border-r border-hairline bg-[var(--vscode-sidebar-bg)] shadow-2xl ${
-          pinned ? "relative flex opacity-100" : "absolute left-full top-0 flex"
-        } ${
-          revealed && !pinned
-            ? "pointer-events-auto translate-x-0 opacity-100"
-            : revealed
-              ? ""
-              : "pointer-events-none -translate-x-2 opacity-0"
-        } transition-[opacity,transform] duration-150 ease-out`}
-      >
-        {/* Who and where */}
-        <div className="flex items-start justify-between gap-2 border-b border-hairline px-3 py-3">
-          <div className="min-w-0">
-            <div className="truncate text-body font-semibold text-zinc-100">
-              {projectName || "No project open"}
-            </div>
-            <div className="truncate text-4xs text-zinc-500" title={projectPath}>
-              {projectPath || "Open a folder to begin"}
-            </div>
-          </div>
+    <aside
+      ref={rootRef}
+      aria-label="Workbench"
+      data-testid="workbench-nav"
+      style={{ width: expanded ? NAV_EXPANDED_WIDTH : NAV_COLLAPSED_WIDTH }}
+      className="relative z-raised flex h-full shrink-0 flex-col overflow-hidden border-r border-hairline bg-[var(--vscode-activitybar-bg)] transition-[width] duration-150 ease-out"
+    >
+        {/* ── Identity ─────────────────────────────────────────────────────
+            The brand is the sidebar's, not a bar's: it is the icon alone when
+            collapsed and the icon with the name when there is room. */}
+        <div className={`flex h-10 shrink-0 items-center border-b border-hairline ${expanded ? "justify-between pl-2 pr-1.5" : "justify-center"}`}>
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
-            title={pinned ? "Unpin the menu" : "Keep the menu open"}
-            aria-label={pinned ? "Unpin the menu" : "Keep the menu open"}
-            aria-pressed={pinned}
+            data-testid="nav-brand"
+            aria-expanded={expanded}
+            title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
+            className="flex min-w-0 items-center gap-2 rounded-lg py-1 px-1.5 hover:bg-white/5"
+          >
+            <IdeBrandLogo className="w-5 h-5 shrink-0" />
+            <span
+              aria-hidden={!expanded}
+              className={`truncate text-body font-semibold tracking-tight text-zinc-100 ${labelClass}`}
+            >
+              ACSA Code
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onPinnedChange(!pinned)}
             data-testid="nav-pin"
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
-              pinned ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-            }`}
+            aria-pressed={pinned}
+            aria-hidden={!expanded}
+            tabIndex={expanded ? 0 : -1}
+            title={pinned ? "Release the sidebar" : "Keep the sidebar open"}
+            aria-label={pinned ? "Release the sidebar" : "Keep the sidebar open"}
+            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${labelClass}`}
           >
             <Icon icon={pinned ? PinOff : Pin} className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto py-2">
-          {/* Same entry point as clicking the omnibar in the titlebar. */}
-          <button
-            type="button"
-            onClick={() => {
-              onOpenCommandPalette();
-              if (!pinned) setDismissed(true);
-            }}
-            data-testid="nav-command-palette"
-            className="mx-2 mb-2 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-2xs text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
-          >
-            <Icon icon={Search} className="w-3.5 h-3.5 shrink-0" />
-            <span className="flex-1 truncate">Search files or run a command</span>
-            <span className="shrink-0 font-mono text-4xs text-zinc-500">⌘P</span>
-          </button>
+        {/* ── Find and commands ─────────────────────────────────────────── */}
+        <Row
+          expanded={expanded}
+          labelClass={labelClass}
+          icon={Search}
+          label="Search or run a command"
+          shortcut="⌘P"
+          testId="nav-command-palette"
+          onClick={() => {
+            onOpenCommandPalette();
+            if (!pinned) setDismissed(true);
+          }}
+        />
 
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.label} className="px-2 pb-2">
-              <div className="px-2.5 pb-1 pt-2 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
-                {section.label}
-              </div>
+        {/* ── Screens ───────────────────────────────────────────────────── */}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+          {NAV_SECTIONS.map((section, sectionIndex) => (
+            <div key={section.label}>
+              {expanded ? (
+                <div className="px-3 pb-0.5 pt-2 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
+                  {section.label}
+                </div>
+              ) : (
+                sectionIndex > 0 && <div aria-hidden className="mx-3 my-1.5 h-px bg-hairline" />
+              )}
               {section.items.map((item) => {
                 const active = screen === item.id;
                 const isExplorerToggle = item.id === "editor" && active;
@@ -382,31 +298,35 @@ export function WorkbenchNav({
                     type="button"
                     onClick={() => activate(item)}
                     aria-current={active ? "page" : undefined}
+                    aria-label={item.label}
+                    title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                     data-testid={`nav-item-${item.id}`}
-                    className={`group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                      active
-                        ? "bg-white/10 text-white"
-                        : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-                    }`}
+                    className={`flex items-center rounded-lg text-left transition-colors ${
+                      expanded
+                        ? "mx-1.5 w-[calc(100%-0.75rem)] gap-2.5 px-2.5 py-2"
+                        : "mx-auto h-9 w-9 justify-center"
+                    } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
                   >
                     <Icon
                       icon={item.icon}
-                      className={`h-3.5 w-3.5 shrink-0 ${active ? "text-accent" : ""}`}
+                      className={`h-[15px] w-[15px] shrink-0 ${active ? "text-accent" : ""}`}
                     />
-                    <span className="min-w-0 flex-1">
+                    <span aria-hidden={!expanded} className={`min-w-0 flex-1 ${labelClass}`}>
                       <span className="block truncate text-2xs font-medium">{item.label}</span>
                       <span className="block truncate text-4xs text-zinc-500">
                         {isExplorerToggle
                           ? explorerOpen
-                            ? "File tree open — click to hide"
-                            : "File tree hidden — click to show"
+                            ? "Hide the file tree"
+                            : "Show the file tree"
                           : item.hint}
                       </span>
                     </span>
-                    {item.shortcut && (
-                      <span className="shrink-0 font-mono text-4xs text-zinc-500">{item.shortcut}</span>
+                    {item.shortcut && expanded && (
+                      <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
+                        {item.shortcut}
+                      </span>
                     )}
-                    {isExplorerToggle && (
+                    {isExplorerToggle && expanded && (
                       <Icon
                         icon={ChevronRight}
                         className={`w-3 h-3 shrink-0 text-zinc-500 transition-transform ${explorerOpen ? "rotate-90" : ""}`}
@@ -419,38 +339,64 @@ export function WorkbenchNav({
           ))}
         </div>
 
-        <div className="border-t border-hairline p-2">
-          <button
-            type="button"
-            onClick={() => {
-              onToggleChat();
-              if (!pinned) setDismissed(true);
-            }}
-            aria-pressed={chatOpen}
-            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-2xs transition-colors ${
-              chatOpen ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-            }`}
-          >
-            <Icon icon={MessageSquare} className="w-3.5 h-3.5 shrink-0" />
-            <span className="flex-1">Chat</span>
-            <span className="font-mono text-4xs text-zinc-500">⌘L</span>
-          </button>
-          <button
-            type="button"
+        <div className="shrink-0 border-t border-hairline py-1">
+          <Row
+            expanded={expanded}
+            labelClass={labelClass}
+            icon={Settings}
+            label="Settings"
+            shortcut="⌘,"
+            testId="nav-settings"
             onClick={() => {
               onOpenSettings();
               if (!pinned) setDismissed(true);
             }}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-2xs text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
-          >
-            <Icon icon={Settings} className="w-3.5 h-3.5 shrink-0" />
-            <span className="flex-1">Settings</span>
-            <span className="font-mono text-4xs text-zinc-500">⌘,</span>
-          </button>
+          />
         </div>
-      </div>
-      </nav>
+    </aside>
     </div>
+  );
+}
+
+/** A row that is an icon when the sidebar is collapsed and a row when it is not. */
+function Row({
+  expanded,
+  labelClass,
+  icon,
+  label,
+  shortcut,
+  testId,
+  onClick,
+}: {
+  expanded: boolean;
+  labelClass: string;
+  icon: typeof Settings;
+  label: string;
+  shortcut?: string;
+  testId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+      className={`flex items-center rounded-lg text-left transition-colors ${
+        expanded
+          ? "mx-1.5 mt-1 w-[calc(100%-0.75rem)] gap-2.5 px-2.5 py-2"
+          : "mx-auto mt-1 h-9 w-9 justify-center"
+      } text-zinc-400 hover:bg-white/5 hover:text-zinc-100`}
+    >
+      <Icon icon={icon} className="h-[15px] w-[15px] shrink-0" />
+      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-2xs ${labelClass}`}>
+        {label}
+      </span>
+      {shortcut && expanded && (
+        <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>{shortcut}</span>
+      )}
+    </button>
   );
 }
 
