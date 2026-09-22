@@ -76,6 +76,11 @@ interface WorkbenchNavProps {
   pinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
   onOpenSettings: () => void;
+  /**
+   * Unsaved files, shown as a count on the Editor row — the one badge here that
+   * reports something you would otherwise have to open the screen to find out.
+   */
+  dirtyCount?: number;
 }
 
 export function WorkbenchNav({
@@ -84,6 +89,7 @@ export function WorkbenchNav({
   pinned,
   onPinnedChange,
   onOpenSettings,
+  dirtyCount = 0,
 }: WorkbenchNavProps) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<number | null>(null);
@@ -281,6 +287,15 @@ export function WorkbenchNav({
                 >
                   {item.label}
                 </span>
+                {item.id === "editor" && dirtyCount > 0 && (
+                  <span
+                    data-testid="nav-dirty-count"
+                    title={`${dirtyCount} unsaved ${dirtyCount === 1 ? "file" : "files"}`}
+                    className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-accent px-1 font-mono text-4xs font-semibold text-zinc-950"
+                  >
+                    {dirtyCount}
+                  </span>
+                )}
                 {item.shortcut && expanded && (
                   <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
                     {item.shortcut}

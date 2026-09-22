@@ -20,7 +20,6 @@ import {
   FlaskConical,
   Plug,
   RefreshCw,
-  ChevronDown,
   ChevronRight,
   ExternalLink,
   ShieldCheck,
@@ -57,6 +56,39 @@ const DOMAIN_ICONS: Record<MarketplaceDomain, any> = {
   testing: FlaskConical,
   tooling: Package,
 };
+
+/** What each category is for, one line, the way the reference does it. */
+const DOMAIN_BLURB: Record<MarketplaceDomain, string> = {
+  coding: "Code-aware tools: search, edit, refactor and review.",
+  security: "Scanning, secrets and supply-chain checks.",
+  design: "Visual work: layouts, assets and design systems.",
+  memory: "Notes and graphs the agent can carry between sessions.",
+  research: "Fetching, reading and citing things outside the project.",
+  testing: "Running, generating and judging tests.",
+  tooling: "The plumbing: filesystem, git, browsers, shells.",
+};
+
+const DOMAIN_ORDER: MarketplaceDomain[] = [
+  "coding",
+  "security",
+  "design",
+  "memory",
+  "research",
+  "testing",
+  "tooling",
+];
+
+/** Bundled first, then official, then community — a stable, honest ranking. */
+const TRUST_ORDER: Record<string, number> = { "built-in": 0, official: 1, community: 2 };
+
+interface CatalogueSection {
+  key: string;
+  title: string;
+  blurb: string;
+  entries: Array<{ item: MarketplaceItem; rank: number }>;
+  /** Set when the section can be opened on its own (its own filter). */
+  filter?: { kind: MarketplaceKind | "all"; domain: MarketplaceDomain | "all" };
+}
 
 export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps) {
   const [kind, setKind] = useState<MarketplaceKind | "all">("all");
@@ -102,6 +134,69 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
       return true;
     });
   }, [kind, domain, query]);
+
+  /**
+   * Filtered: one list. Unfiltered: the catalogue grouped, bundled first, which
+   * is what makes this a page worth scrolling rather than a list to search.
+   */
+  const sections = useMemo<CatalogueSection[]>(() => {
+    const rank = (list: MarketplaceItem[]) =>
+      [...list]
+        .sort((a, b) =>
+          a.trust === b.trust
+            ? a.name.localeCompare(b.name)
+            : (TRUST_ORDER[a.trust] ?? 9) - (TRUST_ORDER[b.trust] ?? 9)
+        )
+        .map((item, index) => ({ item, rank: index + 1 }));
+
+    const q = query.trim();
+    if (kind !== "all" || domain !== "all" || q) {
+      const title = q
+        ? `Results for “${q}”`
+        : kind !== "all"
+          ? kind === "skill"
+            ? "Skills"
+            : "MCP servers"
+          : domain !== "all"
+            ? domainLabel(domain)
+            : "Everything";
+      return [
+        {
+          key: "results",
+          title,
+          blurb: `${items.length} ${items.length === 1 ? "entry" : "entries"}`,
+          entries: rank(items),
+        },
+      ];
+    }
+
+    // Deliberately no "featured" band at the top: today every entry is bundled,
+    // so one would repeat the page under itself. Bundled-first is the ordering
+    // inside each section instead, and the badge says which those are.
+    const out: CatalogueSection[] = [];
+    for (const d of DOMAIN_ORDER) {
+      const list = items.filter((item) => item.domain === d);
+      if (list.length === 0) continue;
+      out.push({
+        key: d,
+        title: domainLabel(d),
+        blurb: DOMAIN_BLURB[d],
+        entries: rank(list),
+        filter: { kind: "all", domain: d },
+      });
+    }
+    return out;
+  }, [items, kind, domain, query]);
+
+  const counts = useMemo(() => {
+    const byKind: Record<MarketplaceKind, number> = { skill: 0, mcp: 0 };
+    const byDomain = {} as Record<MarketplaceDomain, number>;
+    for (const item of MARKETPLACE_ITEMS) {
+      byKind[item.kind] += 1;
+      byDomain[item.domain] = (byDomain[item.domain] || 0) + 1;
+    }
+    return { total: MARKETPLACE_ITEMS.length, byKind, byDomain };
+  }, []);
 
   const isInstalled = (item: MarketplaceItem) =>
     item.kind === "skill"
@@ -154,191 +249,243 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
     setBusyId("");
   };
 
-  const kindTabs: Array<{ id: MarketplaceKind | "all"; label: string }> = [
-    { id: "all", label: "All" },
-    { id: "skill", label: "Skills" },
-    { id: "mcp", label: "MCP Servers" },
-  ];
 
-  const domains: Array<MarketplaceDomain | "all"> = [
-    "all",
-    "coding",
-    "security",
-    "design",
-    "memory",
-    "research",
-    "testing",
-    "tooling",
+
+  const categoryRows: Array<{
+    key: string;
+    label: string;
+    icon: any;
+    count: number;
+    kind: MarketplaceKind | "all";
+    domain: MarketplaceDomain | "all";
+  }> = [
+    { key: "all", label: "All capabilities", icon: Package, count: counts.total, kind: "all", domain: "all" },
+    { key: "skill", label: "Skills", icon: FileText, count: counts.byKind.skill, kind: "skill", domain: "all" },
+    { key: "mcp", label: "MCP servers", icon: Plug, count: counts.byKind.mcp, kind: "mcp", domain: "all" },
+    ...DOMAIN_ORDER.map((d) => ({
+      key: d,
+      label: domainLabel(d),
+      icon: DOMAIN_ICONS[d],
+      count: counts.byDomain[d] || 0,
+      kind: "all" as const,
+      domain: d,
+    })),
   ];
 
   return (
-    <div className="flex flex-col h-full w-full bg-workbench text-zinc-300">
-      {/* Header */}
-      <div className="px-3 pt-3 pb-2 shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-2xs font-bold uppercase tracking-wider text-zinc-400">
-            Marketplace
-          </span>
-          <button
-            type="button"
-            onClick={refreshInstalled}
-            title="Refresh installed capabilities"
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-          >
-            <Icon icon={RefreshCw} className="w-3.5 h-3.5" />
-          </button>
+    <div className="flex h-full w-full min-h-0 bg-canvas text-zinc-300">
+      {/* ── Categories ───────────────────────────────────────────────────── */}
+      <aside className="flex w-[clamp(12rem,16vw,16.5rem)] shrink-0 flex-col border-r border-hairline bg-workbench">
+        <div className="px-4 pb-1 pt-4 text-4xs font-semibold uppercase tracking-wider text-zinc-500">
+          Categories
         </div>
-
-        <div className="relative mb-2">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search skills, tools, MCP servers…"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-7 pr-2.5 py-1.5 text-2xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-purple-500/60"
-          />
-          <Icon icon={Search} className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500" />
-        </div>
-
-        <div className="flex items-center gap-1 mb-2">
-          {kindTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setKind(tab.id)}
-              className={`px-2 py-1 rounded-md text-3xs font-semibold uppercase tracking-wide transition-colors ${
-                kind === tab.id
-                  ? "bg-white/10 text-white"
-                  : "text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-1">
-          {domains.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDomain(d)}
-              className={`px-1.5 py-0.5 rounded text-3xs font-mono transition-colors ${
-                domain === d
-                  ? "bg-purple-500/20 text-purple-200 border border-purple-500/40"
-                  : "text-zinc-500 hover:text-zinc-200 border border-transparent"
-              }`}
-            >
-              {d === "all" ? "all" : domainLabel(d).toLowerCase()}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {message && (
-        <div
-          className={`mx-3 mb-2 px-2 py-1.5 rounded-lg text-3xs border ${
-            message.ok
-              ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-200"
-              : "bg-amber-950/30 border-amber-500/40 text-amber-200"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
-
-      {/* Items */}
-      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2">
-        {items.length === 0 && (
-          <div className="text-2xs text-zinc-500 text-center py-6">
-            No capabilities match your filters.
-          </div>
-        )}
-        {items.map((item) => {
-          const installed = isInstalled(item);
-          const busy = busyId === item.id;
-          const DomainIcon = DOMAIN_ICONS[item.domain] || Package;
-          const tools = toolsById[item.id];
-          const expanded = expandedId === item.id;
-          const links = [
-            { label: "Repository", url: item.repo },
-            { label: "Docs", url: item.docs },
-            { label: "Website", url: item.homepage },
-          ].filter((l) => Boolean(l.url));
-          const target = installTarget(item, projectRoot);
-          const trustTone =
-            item.trust === "built-in"
-              ? "bg-sky-500/15 text-sky-300"
-              : item.trust === "official"
-              ? "bg-emerald-500/15 text-emerald-300"
-              : "bg-amber-500/15 text-amber-300";
-          return (
-            <div
-              key={item.id}
-              className={`rounded-xl border bg-zinc-900/40 transition-colors ${
-                expanded ? "border-purple-500/40" : "border-zinc-800 hover:border-zinc-700"
-              }`}
-            >
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {categoryRows.map((row) => {
+            const active = kind === row.kind && domain === row.domain;
+            return (
               <button
+                key={row.key}
                 type="button"
-                onClick={() => setExpandedId(expanded ? "" : item.id)}
-                className="w-full text-left p-2.5"
-                title={expanded ? "Hide details" : "Show details"}
+                onClick={() => {
+                  setKind(row.kind);
+                  setDomain(row.domain);
+                }}
+                data-testid={`marketplace-category-${row.key}`}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                  active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
+                }`}
               >
-                <div className="flex items-start gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
-                    <Icon icon={DomainIcon} className="w-3.5 h-3.5 text-purple-300" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-semibold text-zinc-100 truncate">
-                        {item.name}
-                      </span>
-                      <span
-                        className={`px-1 rounded text-4xs font-mono uppercase ${
-                          item.kind === "mcp"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "bg-sky-500/15 text-sky-300"
-                        }`}
-                      >
-                        {item.kind === "mcp" ? "mcp" : "skill"}
-                      </span>
-                      <span className={`px-1 rounded text-4xs font-mono uppercase ${trustTone}`}>
-                        {TRUST_LABEL[item.trust]}
-                      </span>
-                      {installed && (
-                        <span className="px-1 rounded text-4xs font-mono bg-emerald-500/15 text-emerald-300">
-                          installed
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-3xs text-zinc-400 mt-0.5 leading-snug">
-                      {item.description}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      <span className="text-4xs font-mono text-zinc-500">
-                        {domainLabel(item.domain).toLowerCase()} · {item.author}
-                      </span>
-                      {item.license && (
-                        <span className="text-4xs font-mono text-zinc-500">
-                          {item.license}
-                        </span>
-                      )}
-                      {item.requires && (
-                        <span className="text-4xs font-mono text-amber-400/80">
-                          needs {item.requires}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <Icon
-                    icon={expanded ? ChevronDown : ChevronRight}
-                    className="w-3.5 h-3.5 text-zinc-500 shrink-0 mt-1"
-                  />
-                </div>
+                <Icon
+                  icon={row.icon}
+                  className={`h-3.5 w-3.5 shrink-0 ${active ? "text-accent" : ""}`}
+                />
+                <span className="min-w-0 flex-1 truncate text-2xs font-medium">{row.label}</span>
+                <span className="shrink-0 font-mono text-4xs text-zinc-500">{row.count}</span>
               </button>
+            );
+          })}
+        </div>
+        <div className="shrink-0 px-2 pb-3">
+          {/* Where to find more — real, external sources */}
+          <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/30 p-2.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-3xs font-semibold uppercase tracking-wider text-zinc-400">
+              <Icon icon={Info} className="w-3 h-3 shrink-0" />
+              Find more capabilities
+            </div>
+            {ECOSYSTEM_LINKS.map((link) => (
+              <a
+                key={link.url}
+                href={link.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="block group"
+              >
+                <div className="flex items-center gap-1 text-3xs text-zinc-300 group-hover:text-white">
+                  <span className="font-medium">{link.label}</span>
+                  <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
+                </div>
+                <div className="text-4xs text-zinc-500 leading-snug">{link.note}</div>
+              </a>
+            ))}
+            <div className="text-4xs text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
+              This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
+              servers (a command plus arguments). Remote/HTTP servers are not supported yet, and
+              skills are plain <span className="font-mono text-zinc-400">SKILL.md</span> files you
+              can also add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
+            </div>
+          </div>
+        </div>
+      </aside>
 
-              {expanded && (
+      {/* ── Catalogue ────────────────────────────────────────────────────── */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="shrink-0 px-5 pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="text-body font-semibold tracking-tight text-zinc-100">Marketplace</h1>
+              <p className="mt-1 max-w-2xl text-2xs leading-relaxed text-zinc-500">
+                {counts.total} skills and MCP servers for this harness, bundled ones first. Every
+                entry carries a real source you can read before installing anything.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={refreshInstalled}
+              title="Refresh installed capabilities"
+              aria-label="Refresh installed capabilities"
+              className="shrink-0 rounded-lg border border-hairline p-1.5 text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <Icon icon={RefreshCw} className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="relative mt-4">
+            <Icon
+              icon={Search}
+              className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500"
+            />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tools by name or what they do…"
+              aria-label="Search the marketplace"
+              className="w-full rounded-xl border border-hairline bg-workbench py-2.5 pl-9 pr-3 text-2xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-accent"
+            />
+          </div>
+
+          {message && (
+            <div
+              className={`mt-3 rounded-lg border px-2.5 py-1.5 text-2xs ${
+                message.ok
+                  ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
+                  : "border-amber-500/40 bg-amber-950/30 text-amber-200"
+              }`}
+            >
+              {message.text}
+            </div>
+          )}
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
+          {sections.length === 0 && (
+            <div className="py-10 text-center text-2xs text-zinc-500">
+              Nothing matches that. Try a shorter search, or another category.
+            </div>
+          )}
+
+          {sections.map((section) => (
+            <section key={section.key} className="mt-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-2xs font-semibold text-zinc-100">{section.title}</h2>
+                  <p className="mt-0.5 text-4xs text-zinc-500">{section.blurb}</p>
+                </div>
+                {section.filter && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKind(section.filter!.kind);
+                      setDomain(section.filter!.domain);
+                    }}
+                    className="shrink-0 text-4xs text-zinc-400 transition-colors hover:text-zinc-100"
+                  >
+                    All {section.entries.length} →
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-1.5 grid grid-cols-1 gap-x-8 xl:grid-cols-2">
+                {section.entries.map(({ item, rank }) => {
+                  const installed = isInstalled(item);
+                  const busy = busyId === item.id;
+                  const DomainIcon = DOMAIN_ICONS[item.domain] || Package;
+                  const tools = toolsById[item.id];
+                  const expanded = expandedId === item.id;
+                  const links = [
+                    { label: "Repository", url: item.repo },
+                    { label: "Docs", url: item.docs },
+                    { label: "Website", url: item.homepage },
+                  ].filter((l) => Boolean(l.url));
+                  const target = installTarget(item, projectRoot);
+                  const trustTone =
+                    item.trust === "built-in"
+                      ? "bg-sky-500/15 text-sky-300"
+                      : item.trust === "official"
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : "bg-amber-500/15 text-amber-300";
+                  return (
+                    <div
+                      key={item.id}
+                      className={`rounded-xl border transition-colors ${
+                        expanded
+                          ? "border-purple-500/40 bg-zinc-900/40"
+                          : "border-transparent hover:bg-white/[0.03]"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(expanded ? "" : item.id)}
+                        title={expanded ? "Hide details" : "Show details"}
+                        data-testid={`marketplace-item-${item.id}`}
+                        className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left"
+                      >
+                        <span className="w-3 shrink-0 text-right font-mono text-4xs text-zinc-500">
+                          {rank}
+                        </span>
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-hairline bg-workbench">
+                          <Icon icon={DomainIcon} className="h-3.5 w-3.5 text-purple-300" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="truncate text-2xs font-semibold text-zinc-100">
+                              {item.name}
+                            </span>
+                            <span className={`shrink-0 rounded px-1 font-mono text-4xs ${trustTone}`}>
+                              {TRUST_LABEL[item.trust]}
+                            </span>
+                            {installed && (
+                              <span className="shrink-0 rounded bg-emerald-500/15 px-1 font-mono text-4xs text-emerald-300">
+                                Installed
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-0.5 block truncate text-4xs text-zinc-500">
+                            {item.description}
+                          </span>
+                        </span>
+                        <span className="hidden shrink-0 font-mono text-4xs text-zinc-500 md:block">
+                          {item.author}
+                        </span>
+                        <Icon
+                          icon={ChevronRight}
+                          className={`h-3 w-3 shrink-0 text-zinc-500 transition-transform ${
+                            expanded ? "rotate-90" : ""
+                          }`}
+                        />
+                      </button>
+
+                      {expanded && (
                 <div className="px-2.5 pb-2.5 space-y-2 border-t border-zinc-800 pt-2">
                   {item.overview && (
                     <p className="text-3xs text-zinc-400 leading-relaxed">{item.overview}</p>
@@ -491,41 +638,14 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                   </div>
                 </div>
               )}
-            </div>
-          );
-        })}
-
-        {/* Where to find more — real, external sources */}
-        <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/30 p-2.5 space-y-2">
-          <div className="flex items-center gap-1.5 text-3xs font-semibold uppercase tracking-wider text-zinc-400">
-            <Icon icon={Info} className="w-3 h-3 shrink-0" />
-            Find more capabilities
-          </div>
-          {ECOSYSTEM_LINKS.map((link) => (
-            <a
-              key={link.url}
-              href={link.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="block group"
-            >
-              <div className="flex items-center gap-1 text-3xs text-zinc-300 group-hover:text-white">
-                <span className="font-medium">{link.label}</span>
-                <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
+                    </div>
+                  );
+                })}
               </div>
-              <div className="text-4xs text-zinc-500 leading-snug">{link.note}</div>
-            </a>
+            </section>
           ))}
-          <div className="text-4xs text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
-            This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
-            servers (a command plus arguments). Remote/HTTP servers are not supported yet, and
-            skills are plain <span className="font-mono text-zinc-400">SKILL.md</span> files you
-            can also add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
-          </div>
         </div>
       </div>
     </div>
   );
 }
-
-export default MarketplaceSidebar;

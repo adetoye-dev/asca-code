@@ -1183,6 +1183,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
           pinned={navPinned}
           onPinnedChange={setNavPinned}
           onOpenSettings={openSettings}
+          dirtyCount={dirtyTabPaths.size}
         />
 
         {/* Everything else: the titlebar, then the canvas. */}
