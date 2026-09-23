@@ -1214,15 +1214,27 @@ const DEFAULT_AI_SETTINGS: AISettings = {
  * deliberately not duplicated there). Hydrate the key, base URL and model from
  * the provider registry so editor AI and the pipeline always see the
  * credentials the user actually configured.
+ *
+ * Which provider is *active* is not decided here. The model picker writes that
+ * choice to `selected_model`, and this record keeps its own copy of it — and the
+ * two versions can drift, because nothing kept them in step. Found in the real
+ * database: `ai_settings.provider` was `ollama` / `qwen2.5-coder:7b` while the
+ * selection was `deepseek` / `deepseek-flash`, so the editor chat and the agent
+ * were silently pointed at different models, and "why didn't it use the
+ * DeepSeek key I configured?" had no answer on screen. The selection wins here,
+ * and the stale copy is repaired on boot.
  */
-function hydrateAiSettings(settings: AISettings): AISettings {
+export function hydrateAiSettings(settings: AISettings): AISettings {
   try {
     const providers = loadAllProviders() as Record<string, any>;
-    const cfg = providers?.[settings.provider];
+    const selected = getActiveSelectedModel();
+    const provider = selected?.providerId || settings.provider;
+    const cfg = providers?.[provider];
     if (!cfg) return settings;
     return {
       ...settings,
-      model: settings.model || cfg.selectedModel || "",
+      provider,
+      model: selected?.model || settings.model || cfg.selectedModel || "",
       apiKey: cfg.apiKey ?? settings.apiKey ?? "",
       baseUrl: cfg.baseUrl ?? settings.baseUrl ?? "",
     };
@@ -1325,6 +1337,22 @@ export function usePipeline(): UsePipelineReturn {
             /* storage disabled */
           }
         }
+        // Repair a drifted copy rather than only ignoring it. The writer below
+        // keeps appending its own provider/model to this record, so without this
+        // the database goes on holding a second, contradictory answer that
+        // whoever debugs the next "why didn't it use my key?" has to reconcile by
+        // hand. Repaired once, on boot, from the selection that actually decides.
+        const selection = getActiveSelectedModel();
+        if (savedAi?.provider && selection?.providerId && savedAi.provider !== selection.providerId) {
+          void appStore
+            .setSetting("ai_settings", {
+              ...savedAi,
+              provider: selection.providerId,
+              model: selection.model,
+            })
+            .catch(() => {});
+        }
+
         if (savedAi?.provider) {
           // Every saved field is restored, by spreading them in rather than
           // listing them. The list is what broke this: it silently dropped each
