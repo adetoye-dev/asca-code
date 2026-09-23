@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_RUNTIME_FLAGS, approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
+import { AGENT_BASE_INSTRUCTIONS, AGENT_RUNTIME_FLAGS, approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
+
+/**
+ * The instruction the app hands the agent through the model catalog on every run.
+ * Gap 5: asked to add priorities to a small project, a run spent most of ~6
+ * minutes building its own headless-browser harness, which nothing bounded.
+ */
+describe("the standing instruction handed to the agent", () => {
+  it("names a ceiling on self-verification", () => {
+    expect(AGENT_BASE_INSTRUCTIONS).toMatch(/project already has/);
+    expect(AGENT_BASE_INSTRUCTIONS).toMatch(/smallest change/);
+    expect(AGENT_BASE_INSTRUCTIONS).toMatch(/unless the task asks for it/);
+  });
+
+  it("still asks for verification, so it is not a licence to skip checking", () => {
+    expect(AGENT_BASE_INSTRUCTIONS).toMatch(/verify your changes/);
+  });
+});
 
 /**
  * The flags the app writes into the runtime's config.toml. These are the app's

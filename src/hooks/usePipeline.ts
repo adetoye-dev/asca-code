@@ -209,8 +209,7 @@ async function runAgent(params: {
           visibility: "list",
           supported_in_api: true,
           priority: 1,
-          base_instructions:
-            "You are a coding assistant. Help the user complete their task accurately, use available tools, and verify your changes.",
+          base_instructions: AGENT_BASE_INSTRUCTIONS,
           context_window: 131072,
           max_context_window: 131072,
           effective_context_window_percent: 95,
@@ -934,6 +933,29 @@ export const AGENT_RUNTIME_FLAGS: readonly string[] = [
   "features.plugins = false",
   "suppress_unstable_features_warning = true",
 ];
+
+/**
+ * The standing instruction the app hands the agent, written into the model
+ * catalog on every run because the runtime takes it from there.
+ *
+ * The second half is about cost, and it is the answer to a gap found in a live
+ * run: asked to add task priorities to a small project, the agent spent most of a
+ * ~6 minute turn writing its own headless-browser test harness — unprompted, and
+ * more elaborate than the change. The instinct is right and the result was good,
+ * but nothing bounded it, and a run that quietly triples its own length is
+ * indistinguishable from one that is stuck. So: verify with what the project
+ * already has (`npm run build`, its tests, its own dev server); build new
+ * verification only when the task asks for it.
+ *
+ * This is an expectation, not an enforcement. It cannot be proven by reading
+ * code, and a single run cannot show it works — the honest statement is that it
+ * sets the ceiling the agent was missing, and that a hard wall-clock cap would
+ * be the enforcing version of this.
+ */
+export const AGENT_BASE_INSTRUCTIONS =
+  "You are a coding assistant. Help the user complete their task accurately, use available tools, and verify your changes. " +
+  "Verify with the checks the project already has — its build, its tests, its own dev server — and prefer the smallest change that satisfies the request. " +
+  "Do not build new test harnesses or verification infrastructure unless the task asks for it.";
 
 import { appStore } from "../services/appStore";
 import {
