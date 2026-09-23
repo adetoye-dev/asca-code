@@ -191,8 +191,12 @@ try {
     const brand = img.getBoundingClientRect().width;
     return { iconBox: +box.toFixed(1), iconInk: +ink.toFixed(1), brand, brandInk: +(0.7695 * brand).toFixed(1) };
   })()`);
-  check("rail icons render at ~26px, not the Icon default",
-    scale && scale.iconBox >= 24, scale ? `icon ${scale.iconBox}px` : "no icon found");
+  // A band rather than an exact number: the rail's size is a single constant
+  // that gets tuned by eye, and this check exists to catch it falling back to
+  // the 16px default or drifting out of the rail's range — not to pin it.
+  check("rail icons are sized in the 20–30px band, not the Icon default",
+    scale && scale.iconBox >= 20 && scale.iconBox <= 30,
+    scale ? `icon ${scale.iconBox}px` : "no icon found");
   check("the brand mark is larger than the rail icons",
     scale && scale.brand > scale.iconBox && scale.brandInk > scale.iconInk,
     scale ? `brand ${scale.brand}px (ink ~${scale.brandInk}) vs icon ${scale.iconBox}px (ink ~${scale.iconInk})` : "no brand found");

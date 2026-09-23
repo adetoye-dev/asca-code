@@ -76,7 +76,7 @@ export const NAV_EXPANDED_WIDTH = 240;
  * column puts any size on the centre line. Expanded does: the row is inset 6px
  * (`mx-1.5`), so the padding makes up the rest of `NAV_COLLAPSED_WIDTH / 2`.
  */
-export const NAV_ICON_SIZE = 26;
+export const NAV_ICON_SIZE = 24;
 export const NAV_ICON_STROKE = 1.5;
 export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2;
 /** A cursor crossing the sidebar must not shove the editor across. */
