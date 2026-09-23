@@ -1323,6 +1323,48 @@ const MIN_SECRET_LEN: usize = 6;
 
 const MASK: &str = "***";
 
+/// What to do with one line of the child's stderr before the user reads it.
+enum AgentLine {
+    /// Show it as written (after redaction).
+    Keep,
+    /// Show this sentence instead.
+    Replace(String),
+}
+
+/// Rewrite the runtime's internal bookkeeping into something a person can act on.
+///
+/// The runtime logs to stderr in its own tracing format, and some of that is not
+/// news the user can use. The clearest case, measured on a real run of an
+/// eight-file task: DeepSeek emits a malformed freeform patch twice, the runtime's
+/// patch parser rejects it, and the rejection is handed back to the model as a
+/// tool error — which is why the model then fixes it and the files appear. Printed
+/// raw, with a tracing prefix and several hundred characters of the parser's own
+/// header grammar, that recovered retry reads as "this app is broken", and it is
+/// how a working outcome got reported as a defect.
+///
+/// Only the cause is kept, and the sentence says what is actually happening:
+/// rejected before it was applied, and being retried. Nothing is hidden that
+/// changes the outcome of the run — if the retry also fails, the agent says so in
+/// the transcript like any other failure.
+fn friendly_agent_line(line: &str) -> AgentLine {
+    if line.contains("apply_patch verification failed") {
+        let reason = line
+            .split("verification failed:")
+            .nth(1)
+            .map(|rest| {
+                // The parser appends its accepted-header grammar, which is a
+                // paragraph. Keep the first clause and drop the rest.
+                rest.split(" Valid ").next().unwrap_or(rest).trim()
+            })
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or("the patch did not parse");
+        return AgentLine::Replace(format!(
+            "patch rejected before it was applied ({reason}) — the agent is retrying with a corrected patch"
+        ));
+    }
+    AgentLine::Keep
+}
+
 /// Mask credential-shaped text before it reaches a panel the user may screenshot.
 ///
 /// The runtime's stderr is forwarded verbatim, and on purpose: it is the only
@@ -2622,7 +2664,11 @@ impl AgentSession {
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                     if !line.trim().is_empty() {
-                        stderr_emitter("agent:stderr", redact_for_display(&line, &known_secrets));
+                        let shown = match friendly_agent_line(&line) {
+                            AgentLine::Replace(message) => message,
+                            AgentLine::Keep => line.clone(),
+                        };
+                        stderr_emitter("agent:stderr", redact_for_display(&shown, &known_secrets));
                     }
                 }
             });
@@ -3253,9 +3299,19 @@ async fn codex_exec(
             );
         }
         let stderr_text = stderr_thread.join().unwrap_or_default();
+        // The same translation the streaming path applies: this is the same text,
+        // joined, and it would otherwise reappear raw in the exit line.
+        let shown = stderr_text
+            .lines()
+            .map(|line| match friendly_agent_line(line) {
+                AgentLine::Replace(message) => message,
+                AgentLine::Keep => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         let _ = stderr_handle.emit(
             "codex:exit",
-            redact_for_display(stderr_text.trim(), &known_secrets),
+            redact_for_display(shown.trim(), &known_secrets),
         );
     });
 
@@ -4010,6 +4066,49 @@ for line in sys.stdin:
         assert!(masked.contains("clé"), "text before kept: {masked}");
         assert!(masked.contains("fin"), "text after kept: {masked}");
         assert!(!masked.contains("abcdef123456"), "value masked: {masked}");
+    }
+
+    #[test]
+    fn a_rejected_patch_reads_as_a_retry_not_a_failure() {
+        // Copied from a real run: the tracing prefix, the parser's complaint, then
+        // a paragraph of the header grammar it will accept.
+        let raw = "2026-09-23T13:15:22.927139Z ERROR codex_core::tools::router: \
+error=apply_patch verification failed: invalid hunk at line 362, '' is not a valid hunk header. \
+Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'";
+        match friendly_agent_line(raw) {
+            AgentLine::Replace(message) => {
+                assert!(message.contains("invalid hunk at line 362"), "{message}");
+                assert!(!message.contains("Valid hunk headers"), "grammar dropped: {message}");
+                assert!(!message.contains("codex_core::tools::router"), "prefix dropped: {message}");
+                assert!(message.contains("retrying"), "says what is happening: {message}");
+            }
+            AgentLine::Keep => panic!("a rejected patch should be translated, not printed raw"),
+        }
+    }
+
+    #[test]
+    fn a_rejected_patch_with_no_cause_still_reads_as_a_retry() {
+        // The second shape seen in the same run: no reason after the colon.
+        match friendly_agent_line("ERROR codex_core::tools::router: error=apply_patch verification failed") {
+            AgentLine::Replace(message) => {
+                assert!(message.contains("did not parse"), "{message}");
+                assert!(message.contains("retrying"), "{message}");
+            }
+            AgentLine::Keep => panic!("expected a translation"),
+        }
+    }
+
+    #[test]
+    fn ordinary_stderr_is_not_rewritten() {
+        // The translation is display-only and must not swallow a real diagnosis.
+        for line in [
+            "warning: something the user can act on",
+            r#"{"type":"turn.completed","usage":{"input_tokens":10}}"#,
+            "apply_patch succeeded",
+            "error=apply_patch failed to find the file",
+        ] {
+            assert!(matches!(friendly_agent_line(line), AgentLine::Keep), "rewrote: {line}");
+        }
     }
 
     #[test]
