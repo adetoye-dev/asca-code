@@ -167,28 +167,12 @@ async function runAgent(params: {
     `approval_policy = "${approval.approvalPolicy}"`,
     `approvals_reviewer = "${approval.approvalsReviewer}"`,
     `sandbox_mode = "${approval.sandboxMode}"`,
-    // Host skills (`~/.agents/skills`) are left alone on purpose.
-    //
-    // They were the reason a run of "build a small todo app" stopped after a few
-    // read-only commands: `superpowers:brainstorming` told the agent to present a
-    // design and wait for a human, it did exactly that, and the transcript still
-    // read like a completed report. `features.skip_host_skill_discovery = true`
-    // was tried and *did not* stop it (the flag is still "under development"
-    // upstream), and skipping was the wrong instinct anyway — those skills encode
-    // a way of working that is worth having, and they only look broken because
-    // this app could not play the other half of the conversation.
-    //
-    // So the work is to support the interaction, not to suppress the skill: the
-    // runtime can ask the user (`ServerRequest::ToolRequestUserInput`, and a
-    // thread status of `waitingOnUserInput`), and the app has to answer. See
-    // `onWaitingForUser` below for what is wired up so far and what is not.
-    //
-    // `request_user_input` is gated to specific modes upstream, and the default
-    // mode is not one of them — so without this the agent can only ask in prose,
-    // which works (the reply resumes the thread) but cannot carry options or
-    // block the turn. Turning it on is the difference between the agent
-    // *describing* a question and the app being able to *ask* it.
-    "features.default_mode_request_user_input = true",
+    // Host skills, the plugin marketplace, the structured-question gate and the
+    // under-development warning. Each one, and why, is documented once on
+    // `AGENT_RUNTIME_FLAGS` — this app has been bitten twice by writing the
+    // wrong thing into this config, so it is asserted there rather than only
+    // appearing here.
+    ...AGENT_RUNTIME_FLAGS,
     ...(localProvider && !adapterBaseUrl
       ? []
       : [
@@ -910,6 +894,47 @@ function applyCodexEvent(
   }
 }
 import { hydrateChatHistory } from "../services/aiChatPersistence";
+
+/**
+ * The runtime flags this app always sets, in one place so they can be asserted
+ * rather than only appearing inside a large function.
+ *
+ * Every one of these exists because the runtime's default behaviour is wrong for
+ * a third-party provider, and each was found by reading what the runtime
+ * actually printed on a run:
+ *
+ * - `default_mode_request_user_input` — the runtime only lets the agent ask a
+ *   structured question in specific modes, and the default is not one of them.
+ *   Without it the agent can only ask in prose.
+ * - `features.plugins = false` — Codex's *plugin* marketplace. On every start
+ *   the runtime reached for OpenAI's curated plugin repo: a `featured plugin
+ *   ids cache` call to chatgpt.com (401 without an OpenAI login), a `git fetch`
+ *   of the curated repo, then a GitHub archive download when that timed out —
+ *   ~45s of a ~75s run, retrying on 30s timeouts, for something that can never
+ *   succeed off-provider. It governs Codex plugins, not what this app installs:
+ *   with the flag set, an `[mcp_servers.*]` entry still reports `enabled` from
+ *   `codex mcp list` and a mirrored skill still reaches the prompt.
+ * - `suppress_unstable_features_warning` — because the line above turns on an
+ *   under-development feature, the runtime warned about that on *every* start
+ *   ("may behave unpredictably"), which surfaced to the user as an error in
+ *   OUTPUT. The key is the runtime's own documented fix for it.
+ *
+ * Host skills (`~/.agents/skills`) are deliberately *not* suppressed. They were
+ * the reason a run of "build a small todo app" stopped after a few read-only
+ * commands: `superpowers:brainstorming` told the agent to present a design and
+ * wait for a human, it did exactly that, and the transcript still read like a
+ * completed report. `features.skip_host_skill_discovery = true` was tried and
+ * does not work (the flag is still "under development" upstream), and skipping
+ * was the wrong instinct anyway — those skills encode a way of working worth
+ * having, and they only looked broken because the app could not play the other
+ * half of the conversation.
+ */
+export const AGENT_RUNTIME_FLAGS: readonly string[] = [
+  "features.default_mode_request_user_input = true",
+  "features.plugins = false",
+  "suppress_unstable_features_warning = true",
+];
+
 import { appStore } from "../services/appStore";
 import {
   syncProjectIndex,

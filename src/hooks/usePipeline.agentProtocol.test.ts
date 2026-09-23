@@ -1,5 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
+import { AGENT_RUNTIME_FLAGS, approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
+
+/**
+ * The flags the app writes into the runtime's config.toml. These are the app's
+ * only lever on the runtime's own behaviour, and writing the wrong thing here is
+ * invisible except as wasted time or a confusing line in OUTPUT — which is
+ * exactly how the ~45s of doomed OpenAI plugin syncing went unnoticed.
+ */
+describe("the runtime flags", () => {
+  it("does not let the runtime chase OpenAI's plugin marketplace", () => {
+    // Measured on a real run without it: a 401 against chatgpt.com, a `git fetch`
+    // that timed out after 30s, and a GitHub 429 — retried for ~45s of a ~75s
+    // run, on a marketplace a third-party provider can never reach.
+    expect(AGENT_RUNTIME_FLAGS).toContain("features.plugins = false");
+  });
+
+  it("asks the runtime to stop warning about a feature this app switched on", () => {
+    // Turning on `default_mode_request_user_input` makes the runtime announce an
+    // under-development feature on every start, which the user sees as an error.
+    expect(AGENT_RUNTIME_FLAGS).toContain("suppress_unstable_features_warning = true");
+  });
+
+  it("keeps the structured question available to the agent", () => {
+    expect(AGENT_RUNTIME_FLAGS).toContain("features.default_mode_request_user_input = true");
+  });
+
+  it("does not suppress host skills", () => {
+    // The tempting fix for `superpowers:brainstorming` pausing a run was to stop
+    // host skill discovery. Two runs wrote nothing that way, and the transcript
+    // still read like a report. The app plays the other half of that
+    // conversation instead; this stops the bad fix being reintroduced.
+    expect(AGENT_RUNTIME_FLAGS.join("\n")).not.toMatch(/skip_host_skill_discovery/);
+  });
+});
 
 /**
  * The answer half of `request_user_input`.
