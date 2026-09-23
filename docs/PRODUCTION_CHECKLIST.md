@@ -118,6 +118,14 @@ whole workbench, the repository is a page that shows the diff beside the changes
 search-in-files was removed — the palette's file search covers it. Both new surfaces have render
 tests (`WorkbenchNav.test.tsx`, `GitDashboard.test.tsx`).
 
+**A GUI check exists.** `npm run gui:check` renders the workbench in headless
+Chrome and asserts what the unit suite cannot see: nothing overflows the window at
+three sizes, every screen paints with a way back, the sidebar's icons sit on the
+column's centre line in both states, and an entry's dialog opens without
+reshaping the marketplace grid. It starts its own Vite and browser, prints a
+report, and exits non-zero on failure. It is deliberately not in CI (it needs a
+browser) — run it before a release, and after touching layout.
+
 **Left in this phase — the rest of the surfaces.** The model picker and the z-index scale still have
 no render tests, and the pages behind the nav still carry their pre-identity spacing and hierarchy:
 the palette and type scale are single-sourced now, so a change lands everywhere, but nobody has
