@@ -604,6 +604,9 @@ export async function installSkill(
       body: JSON.stringify({
         name: item.id,
         content: item.skillContent,
+        // The entry's own description: the runtime shows it to the model to decide
+        // whether to open the skill, so a placeholder here wastes the entry.
+        description: item.description,
         scope,
         projectRoot,
       }),

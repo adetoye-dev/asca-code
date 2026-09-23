@@ -199,6 +199,7 @@ def import_skill(
     content: str,
     scope: str = "project",
     project_root: Optional[str] = None,
+    description: str = "",
 ) -> Skill:
     """Save a user or project imported skill markdown file."""
     clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", name).strip("-").lower()
@@ -218,10 +219,15 @@ def import_skill(
     target_file = target_dir / f"{clean_name}.md"
 
     if not content.startswith("---"):
+        # The caller's description if it has one. A marketplace entry knows what it
+        # is for, and the runtime shows the description to the model to decide
+        # whether to read the skill at all — a placeholder there makes every
+        # installed skill look equally vague.
+        summary = (description or "").strip() or f"Imported skill {clean_name}"
         header = (
             f"---\n"
             f"name: {clean_name}\n"
-            f"description: User imported skill {clean_name}\n"
+            f"description: {summary}\n"
             f"triggers: [\"/{clean_name}\", \"{clean_name}\"]\n"
             f"---\n\n"
         )

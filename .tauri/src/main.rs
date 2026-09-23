@@ -637,6 +637,11 @@ fn normalise_skill_markdown(raw: &str, fallback_name: &str) -> String {
 ///
 /// The destination is the app's own home (nothing else writes there), so it is
 /// rebuilt from the project each run: that is also what makes uninstalling work.
+///
+/// Checked against the bundled runtime rather than assumed: with a skill mirrored
+/// this way, `codex debug prompt-input` lists it in `<skills_instructions>` beside
+/// the host's own skills — `verify-skill: … (file: r0/verify-skill/SKILL.md)`,
+/// where `r0` is the CODEX_HOME this function writes into.
 fn sync_project_skills(codex_home: &Path, project_root: &Path) -> Result<usize, String> {
     let source = project_root.join(".acsa").join("skills");
     let dest = codex_home.join("skills");

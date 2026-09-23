@@ -253,6 +253,8 @@ async function runAgent(params: {
   // `[mcp_servers.x]` with either `command`+`args` or a streamable-HTTP `url`, and an
   // optional `[mcp_servers.x.env]` table. Read from our registry rather than written into
   // Codex's config by the engine, because this run regenerates that config each time.
+  // Checked against the bundled runtime: with this exact shape on disk,
+  // `codex mcp list` reports the server as `enabled`.
   let mcpToml = "";
   try {
     const { marketplaceFetch } = await import("../services/marketplaceClient");
