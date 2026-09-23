@@ -67,6 +67,18 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const NAV_COLLAPSED_WIDTH = 56;
 export const NAV_EXPANDED_WIDTH = 240;
+/**
+ * The rail's icon size and stroke, and the padding that keeps the icon on the
+ * column's centre line once the labels are out. Derived rather than typed twice,
+ * so changing the size is one number instead of three that must agree.
+ *
+ * Collapsed needs no padding: `justify-center` inside a square centred in the
+ * column puts any size on the centre line. Expanded does: the row is inset 6px
+ * (`mx-1.5`), so the padding makes up the rest of `NAV_COLLAPSED_WIDTH / 2`.
+ */
+export const NAV_ICON_SIZE = 26;
+export const NAV_ICON_STROKE = 1.5;
+export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2;
 /** A cursor crossing the sidebar must not shove the editor across. */
 export const NAV_HOVER_INTENT_MS = 140;
 
@@ -282,19 +294,20 @@ export function WorkbenchNav({
                 data-testid={`nav-item-${item.id}`}
                 className={`flex h-11 shrink-0 items-center rounded-xl text-left transition-colors ${
                   expanded
-                    ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5"
+                    ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pr-2.5"
                     : "mx-auto w-11 justify-center"
                 } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
+                style={expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : undefined}
               >
                 {/* Size only: the row's own colour carries the state, and the
-                    active screen takes the accent. 32px at weight 3 — the shared
-                    default of 1.5 is why every glyph here read as a hairline.
-                    `size` is deliberate: Icon writes its size as an inline style,
-                    so a `w-8 h-8` class alone would be silently ignored. */}
+                    active screen takes the accent. `size` and `strokeWidth` come
+                    from the rail's constants above, so the size lives in one
+                    place. Passing `size` is deliberate rather than a class:
+                    it is an explicit instruction, so it cannot be overridden. */}
                 <Icon
                   icon={item.icon}
-                  size={32}
-                  strokeWidth={3}
+                  size={NAV_ICON_SIZE}
+                  strokeWidth={NAV_ICON_STROKE}
                   className={`shrink-0 ${active ? "text-accent" : ""}`}
                 />
                 <span
@@ -369,10 +382,11 @@ function Row({
       aria-label={label}
       data-testid={testId}
       className={`flex h-11 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
-        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5" : "mx-auto w-11 justify-center"
+        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pr-2.5" : "mx-auto w-11 justify-center"
       }`}
+      style={expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : undefined}
     >
-      <Icon icon={icon} size={32} strokeWidth={3} className="shrink-0" />
+      <Icon icon={icon} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} className="shrink-0" />
       <span
         aria-hidden={!expanded}
         className={`truncate text-sm font-semibold ${labelClass} ${
