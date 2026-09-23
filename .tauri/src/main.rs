@@ -599,6 +599,84 @@ fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// A skill file with only the two keys the runtime documents. Our loader also
+/// writes `triggers`, and an unknown key in someone else's frontmatter parser is
+/// a gamble not worth taking with a file the agent has to load.
+fn normalise_skill_markdown(raw: &str, fallback_name: &str) -> String {
+    let trimmed = raw.trim_start_matches('\u{feff}');
+    let mut name = fallback_name.to_string();
+    let mut description = format!("Project skill {}", fallback_name);
+    let mut body = trimmed.to_string();
+
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            let front = &rest[..end];
+            body = rest[end + 4..].trim_start_matches(['\n', '\r']).to_string();
+            for line in front.lines() {
+                let Some((key, value)) = line.split_once(':') else { continue };
+                let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                match key.trim() {
+                    "name" if !value.is_empty() => name = value,
+                    "description" if !value.is_empty() => description = value,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    format!("---\nname: {}\ndescription: {}\n---\n\n{}", name, description, body.trim_start_matches(['\n', '\r']))
+}
+
+/// Copy the project's installed skills into the runtime's home.
+///
+/// The marketplace writes `<project>/.acsa/skills/<name>.md` — our loader's shape,
+/// one flat file per skill. The runtime reads `<CODEX_HOME>/skills/<name>/SKILL.md`,
+/// so a skill installed from the marketplace was invisible to the agent: the file
+/// was real, in the wrong shape, in the wrong place. MCP servers are handed over in
+/// the config; this is the same job for skills.
+///
+/// The destination is the app's own home (nothing else writes there), so it is
+/// rebuilt from the project each run: that is also what makes uninstalling work.
+fn sync_project_skills(codex_home: &Path, project_root: &Path) -> Result<usize, String> {
+    let source = project_root.join(".acsa").join("skills");
+    let dest = codex_home.join("skills");
+    std::fs::create_dir_all(&dest).map_err(|e| format!("could not create {}: {}", dest.display(), e))?;
+
+    let mut wanted: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&source) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|e| format!("could not read {}: {}", path.display(), e))?;
+            let dir = dest.join(stem);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {}", dir.display(), e))?;
+            std::fs::write(dir.join("SKILL.md"), normalise_skill_markdown(&raw, stem))
+                .map_err(|e| format!("could not write the skill {}: {}", stem, e))?;
+            wanted.push(stem.to_string());
+        }
+    }
+
+    // Anything we wrote last run that is no longer installed goes with it.
+    if let Ok(entries) = std::fs::read_dir(&dest) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            if !wanted.iter().any(|kept| kept == name) {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+    }
+
+    Ok(wanted.len())
+}
+
 /// Show a file or folder in the OS file manager, so "where is my data?" has an
 /// answer that does not require the user to read a path out of a text box.
 #[tauri::command]
@@ -2391,6 +2469,7 @@ fn prepare_agent_home(
     config_toml: &str,
     provider_id: &str,
     catalog_json: &str,
+    project_root: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let resource_dir = app_handle.path().resource_dir().ok();
     let program = resolve_codex_bin(resource_dir.as_deref()).ok_or_else(|| {
@@ -2426,6 +2505,16 @@ fn prepare_agent_home(
         };
         std::fs::write(codex_home.join("config.toml"), config)
             .map_err(|e| format!("could not write Codex config: {}", e))?;
+    }
+
+    if Path::new(project_root).is_dir() {
+        match sync_project_skills(&codex_home, &PathBuf::from(project_root)) {
+            Ok(count) if count > 0 => {
+                eprintln!("[ACSA Code] agent: {} project skill(s) mirrored for the runtime", count);
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("[ACSA Code] agent: could not mirror project skills: {}", error),
+        }
     }
 
     Ok((program, codex_home))
@@ -2680,7 +2769,8 @@ async fn agent_start(
     approvals_reviewer: String,
     sandbox_mode: String,
 ) -> Result<String, String> {
-    let (program, codex_home) = prepare_agent_home(&app_handle, &config_toml, &provider_id, &catalog_json)?;
+    let (program, codex_home) =
+        prepare_agent_home(&app_handle, &config_toml, &provider_id, &catalog_json, &project_root)?;
 
     let working_dir = if Path::new(&project_root).is_dir() {
         project_root.clone()
@@ -3015,6 +3105,7 @@ async fn codex_exec(
         &config_toml,
         &provider_id,
         &catalog_json,
+        &project_root,
     )?;
 
     if let Some(mut previous) = state.child.lock().map_err(|e| e.to_string())?.take() {
@@ -3252,6 +3343,80 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "acsa-skills-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_project_skill_reaches_the_runtime_in_the_shape_it_reads() {
+        let root = scratch("mirror");
+        let project = root.join("project");
+        let home = root.join("codex");
+        std::fs::create_dir_all(project.join(".acsa/skills")).unwrap();
+        // Our loader's shape: a flat file, with a key the runtime does not document.
+        std::fs::write(
+            project.join(".acsa/skills/code-review.md"),
+            "---\nname: code-review\ndescription: Reviews a diff\ntriggers: [\"/code-review\"]\n---\n\n# Steps\nRead it.",
+        )
+        .unwrap();
+
+        assert_eq!(sync_project_skills(&home, &project).unwrap(), 1);
+
+        let written = std::fs::read_to_string(home.join("skills/code-review/SKILL.md")).unwrap();
+        assert!(written.starts_with("---\nname: code-review\ndescription: Reviews a diff\n---"));
+        assert!(!written.contains("triggers"));
+        assert!(written.contains("# Steps"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_removed_skill_stops_being_offered() {
+        let root = scratch("stale");
+        let project = root.join("project");
+        let home = root.join("codex");
+        std::fs::create_dir_all(project.join(".acsa/skills")).unwrap();
+        std::fs::write(project.join(".acsa/skills/one.md"), "one").unwrap();
+        std::fs::write(project.join(".acsa/skills/two.md"), "two").unwrap();
+        assert_eq!(sync_project_skills(&home, &project).unwrap(), 2);
+
+        // Uninstall one, and re-run: the mirrored copy has to go too, or the agent
+        // keeps a skill the user removed.
+        std::fs::remove_file(project.join(".acsa/skills/two.md")).unwrap();
+        assert_eq!(sync_project_skills(&home, &project).unwrap(), 1);
+        assert!(home.join("skills/one/SKILL.md").exists());
+        assert!(!home.join("skills/two").exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_project_with_no_skills_is_not_an_error() {
+        let root = scratch("empty");
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        assert_eq!(sync_project_skills(&root.join("codex"), &project).unwrap(), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn frontmatter_without_a_description_still_parses() {
+        let out = normalise_skill_markdown("---\nname: plain\n---\n\nBody", "plain");
+        assert!(out.contains("name: plain"));
+        assert!(out.contains("description: Project skill plain"));
+        assert!(out.ends_with("Body"));
+    }
 
     #[test]
     fn only_http_urls_are_handed_to_the_os() {
