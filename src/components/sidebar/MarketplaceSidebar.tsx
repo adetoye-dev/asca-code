@@ -45,9 +45,27 @@ import { marketplaceFetch } from "../../services/marketplaceClient";
 import { useDialogA11y } from "../../hooks/useDialogA11y";
 import { openExternal } from "../../services/openExternal";
 import { TechLogo } from "../ui/TechLogos";
+import { AnthropicLogo, IdeBrandLogo } from "../ui/BrandLogos";
 
 interface MarketplaceSidebarProps {
   projectRoot?: string;
+}
+
+/** The mark for an entry: its tool's own logo, its publisher's, or ours. */
+function ItemMark({ item, className = "h-5 w-5" }: { item: MarketplaceItem; className?: string }) {
+  const domain = DOMAIN_ICONS[item.domain] || Package;
+  const fallback = <Icon icon={domain} strokeWidth={2} className={`${className} text-purple-300`} />;
+  if (item.logo?.kind === "acsa") return <IdeBrandLogo size={20} className={className} />;
+  if (item.logo?.kind === "brand" && item.logo.id === "anthropic") {
+    return <AnthropicLogo size={20} className={className} />;
+  }
+  return (
+    <TechLogo
+      techId={item.logo?.id ?? item.name}
+      className={`${className} object-contain`}
+      fallback={fallback}
+    />
+  );
 }
 
 const DOMAIN_ICONS: Record<MarketplaceDomain, any> = {
@@ -389,11 +407,10 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                 )}
               </div>
 
-              <div className="mt-2.5 grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
+              <div className="mt-2.5 grid grid-cols-1 gap-1.5 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {section.entries.map(({ item, rank }) => {
                   const installed = isInstalled(item);
                   const busy = busyId === item.id;
-                  const DomainIcon = DOMAIN_ICONS[item.domain] || Package;
                   const tools = toolsById[item.id];
                   const expanded = expandedId === item.id;
                   const links = [
@@ -431,11 +448,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                           {/* A real mark where the entry names one (Playwright,
                               Chrome, Git); the category's glyph otherwise, rather
                               than a logo we would have to invent. */}
-                          <TechLogo
-                            name={item.name}
-                            className="h-4 w-4 object-contain"
-                            fallback={<Icon icon={DomainIcon} className="h-4 w-4 text-purple-300" />}
-                          />
+                          <ItemMark item={item} />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
@@ -454,9 +467,6 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                           <span className="mt-0.5 block truncate text-xs text-zinc-400">
                             {item.description}
                           </span>
-                        </span>
-                        <span className="hidden shrink-0 font-mono text-body text-zinc-500 md:block">
-                          {item.author}
                         </span>
                         <Icon
                           icon={ChevronRight}
@@ -480,7 +490,10 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                             className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-hairline bg-workbench shadow-2xl"
                           >
                             <header className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3.5">
-                              <div className="min-w-0">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-hairline bg-canvas">
+                                <ItemMark item={item} className="h-6 w-6" />
+                              </span>
+                              <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <span className="truncate text-sm font-semibold text-zinc-100">
                                     {item.name}

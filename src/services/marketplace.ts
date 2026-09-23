@@ -49,6 +49,13 @@ export interface MarketplaceItem {
   overview?: string;
   /** What this can do on the machine, shown before install. */
   permissions?: string[];
+  /**
+   * The mark to show, where one honestly exists: the tool's own logo for a server
+   * that *is* a known tool (git, Playwright, Chrome), the publisher's for the
+   * reference servers (Anthropic ships them), and ours for our own skills. Left
+   * unset rather than filled with an invented logo.
+   */
+  logo?: { kind: "tech" | "brand" | "acsa"; id: string };
   /** Legacy field kept for display of the raw source string. */
   source: string;
   tags: string[];
@@ -209,6 +216,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
       "Built-in read-only workspace tools (list_files, read_file, search_code). Runs offline with zero install.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     license: "Same as this project",
     tags: ["workspace", "search", "offline"],
@@ -232,6 +240,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Scoped filesystem read/write tools from the official MCP reference set.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
     homepage: "https://modelcontextprotocol.io",
@@ -256,6 +265,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Persistent knowledge-graph memory the agent can carry across sessions.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
     homepage: "https://modelcontextprotocol.io",
@@ -279,6 +289,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Structured step-by-step reasoning scaffold for hard, multi-step problems.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
     homepage: "https://modelcontextprotocol.io",
@@ -302,6 +313,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Fetch a URL and convert the page to markdown for grounded research.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
     homepage: "https://modelcontextprotocol.io",
@@ -325,6 +337,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Read, search and change git repositories: log, diff, branch, commit.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "tech", id: "git" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
     homepage: "https://modelcontextprotocol.io",
@@ -349,6 +362,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Current time and timezone conversion, so \"tomorrow\" has a date.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/time",
     homepage: "https://modelcontextprotocol.io",
@@ -372,6 +386,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Reference server exercising prompts, resources and tools — useful for testing.",
     author: "modelcontextprotocol",
     trust: "official",
+    logo: { kind: "brand", id: "anthropic" },
     source: "github.com/modelcontextprotocol/servers",
     repo: "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
     homepage: "https://modelcontextprotocol.io",
@@ -397,6 +412,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Drive a real browser: navigate, click, fill forms and read the page.",
     author: "Microsoft",
     trust: "community",
+    logo: { kind: "tech", id: "playwright" },
     source: "github.com/microsoft/playwright-mcp",
     repo: "https://github.com/microsoft/playwright-mcp",
     docs: "https://github.com/microsoft/playwright-mcp#readme",
@@ -444,6 +460,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Inspect a Chrome page: DOM, console output and network activity.",
     author: "Google",
     trust: "community",
+    logo: { kind: "tech", id: "chrome" },
     source: "github.com/ChromeDevTools/chrome-devtools-mcp",
     repo: "https://github.com/ChromeDevTools/chrome-devtools-mcp",
     docs: "https://github.com/ChromeDevTools/chrome-devtools-mcp#readme",
@@ -470,6 +487,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Senior-engineer review focusing on correctness, safety and maintainability.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["review", "quality"],
     overview:
@@ -485,6 +503,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Find exploitable issues: injection, unsafe primitives, secrets, auth gaps.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["security", "audit"],
     overview:
@@ -500,6 +519,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Hierarchy, consistency, accessibility and state coverage for interfaces.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["design", "ux", "a11y"],
     overview:
@@ -515,6 +535,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Behaviour-preserving refactors planned as small verifiable steps.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["refactor", "planning"],
     overview:
@@ -530,6 +551,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Regression-catching tests with boundaries and error paths covered.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["tests", "quality"],
     overview:
@@ -545,6 +567,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Record decisions and rationale in .acsa/memory.md across sessions.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["memory", "decisions"],
     overview:
@@ -560,6 +583,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Actionable docs: what it does, minimal example, precise inputs/outputs.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["docs", "readme"],
     overview:
@@ -575,6 +599,7 @@ export const MARKETPLACE_ITEMS: MarketplaceItem[] = [
     description: "Measure-first optimisation of real hot paths, with before/after numbers.",
     author: "ACSA Code",
     trust: "built-in",
+    logo: { kind: "acsa", id: "acsa" },
     source: "built-in",
     tags: ["performance", "profiling"],
     overview:
