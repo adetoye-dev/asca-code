@@ -197,6 +197,28 @@ try {
     scale && scale.brand > scale.iconBox && scale.brandInk > scale.iconInk,
     scale ? `brand ${scale.brand}px (ink ~${scale.brandInk}) vs icon ${scale.iconBox}px (ink ~${scale.iconInk})` : "no brand found");
 
+  // 2c. A size class actually decides the size. This is the end-to-end form of
+  //     the Icon bug: the component used to inline a 16px width on every icon,
+  //     so a `w-3.5` class was dead. Only svgs with no inline size are counted —
+  //     an explicit `size` prop is *supposed* to win, and it writes one.
+  const classOnly = await session.eval(`(() => {
+    const rows = [];
+    for (const svg of document.querySelectorAll('svg')) {
+      if (svg.getAttribute('style')) continue;              // explicitly sized
+      const m = (svg.getAttribute('class') || '').match(/(?:^|\\s)w-\\[?([0-9.]+)(px|rem)?\\]?/);
+      if (!m) continue;
+      const r = svg.getBoundingClientRect();
+      if (!r.width) continue;
+      const declared = m[2] === 'px' ? parseFloat(m[1]) : m[2] === 'rem' ? parseFloat(m[1]) * 16 : parseFloat(m[1]) * 4;
+      rows.push({ cls: m[0].trim(), declared, rendered: +r.width.toFixed(1) });
+    }
+    return rows;
+  })()`);
+  const honoured = classOnly.length >= 5 && classOnly.every((r) => Math.abs(r.declared - r.rendered) <= 0.5);
+  check("a size class on an icon decides its size",
+    honoured,
+    `${classOnly.length} class-sized icons, e.g. ${classOnly.slice(0, 3).map((r) => `${r.cls} -> ${r.rendered}px`).join(", ")}`);
+
   await session.move(1000, 500);
   await sleep(500);
   await session.screenshot("sidebar");

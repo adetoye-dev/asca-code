@@ -7,7 +7,7 @@
  * keeps the two states from drifting apart.
  *
  * The rows also have exactly one *layout*. They are indented so the icon sits on
- * the centre line of the collapsed column (20px in a 56px column), and expanding
+ * the centre line of the collapsed column (x=28 in a 56px column), and expanding
  * only opens the width and fades the labels in — nothing re-flows per state. Two
  * layouts swapping while the width animated is what made opening and closing look
  * broken: the icons flew across the panel because the collapsed layout centred
@@ -280,10 +280,10 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`flex h-12 shrink-0 items-center rounded-xl text-left transition-colors ${
+                className={`flex h-11 shrink-0 items-center rounded-xl text-left transition-colors ${
                   expanded
                     ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5"
-                    : "mx-auto w-12 justify-center"
+                    : "mx-auto w-11 justify-center"
                 } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
               >
                 {/* Size only: the row's own colour carries the state, and the
@@ -368,8 +368,8 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className={`flex h-12 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
-        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5" : "mx-auto w-12 justify-center"
+      className={`flex h-11 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
+        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5" : "mx-auto w-11 justify-center"
       }`}
     >
       <Icon icon={icon} size={32} strokeWidth={3} className="shrink-0" />
