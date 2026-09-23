@@ -48,6 +48,8 @@ interface NavItem {
   label: string;
   shortcut?: string;
   icon: typeof Activity;
+  /** A hue per destination: six grey glyphs read as one undifferentiated column. */
+  tone: string;
 }
 
 /**
@@ -57,12 +59,12 @@ interface NavItem {
  * sidebar feel like one column that opened rather than a different one.
  */
 export const NAV_ITEMS: NavItem[] = [
-  { id: "editor", label: "Editor", shortcut: "⌘⇧E", icon: FolderTree },
-  { id: "git", label: "Repository", shortcut: "⌘⇧G", icon: GitBranch },
-  { id: "codeMap", label: "Code map", icon: Network },
-  { id: "aiManager", label: "Models", icon: Cpu },
-  { id: "marketplace", label: "Marketplace", shortcut: "⌘⇧X", icon: Package },
-  { id: "monitor", label: "Performance", icon: Activity },
+  { id: "editor", label: "Editor", shortcut: "⌘⇧E", icon: FolderTree, tone: "text-purple-300" },
+  { id: "git", label: "Repository", shortcut: "⌘⇧G", icon: GitBranch, tone: "text-emerald-400" },
+  { id: "codeMap", label: "Code map", icon: Network, tone: "text-sky-400" },
+  { id: "aiManager", label: "Models", icon: Cpu, tone: "text-amber-300" },
+  { id: "marketplace", label: "Marketplace", shortcut: "⌘⇧X", icon: Package, tone: "text-fuchsia-300" },
+  { id: "monitor", label: "Performance", icon: Activity, tone: "text-rose-400" },
 ];
 
 export const NAV_COLLAPSED_WIDTH = 56;
@@ -273,13 +275,15 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`mx-1.5 flex h-12 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
+                className={`group/row mx-1.5 flex h-12 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
                   active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
                 }`}
               >
                 <Icon
                   icon={item.icon}
-                  className={`h-[18px] w-[18px] shrink-0 ${active ? "text-accent" : ""}`}
+                  className={`h-5 w-5 shrink-0 transition-opacity ${item.tone} ${
+                    active ? "opacity-100" : "opacity-70 group-hover/row:opacity-100"
+                  }`}
                 />
                 <span
                   aria-hidden={!expanded}

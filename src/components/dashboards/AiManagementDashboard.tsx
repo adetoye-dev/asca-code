@@ -12,6 +12,7 @@
 import { useState, useEffect } from "react";
 import { Trash2, Globe, Star, CheckCircle2, RefreshCw, Eye, Download, Loader2, Zap, Play, Cpu, AlertCircle, ShieldCheck, ChevronDown } from "lucide-react";
 import { Icon } from "../ui/Icon";
+import { openExternal } from "../../services/openExternal";
 import { ProviderLogo } from "../ui/BrandLogos";
 import { OllamaSetupWizard } from "../ui/OllamaSetupWizard";
 import { HashProgressBar } from "../ui/HashProgressBar";
@@ -930,14 +931,13 @@ export function AiManagementDashboard({
                           </form>
                           <p className="text-3xs text-zinc-500 mt-1">
                             Supports any model tag from the official{" "}
-                            <a
-                              href="https://ollama.com/library"
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => void openExternal("https://ollama.com/library")}
                               className="text-purple-400 hover:underline"
                             >
                               Ollama Library
-                            </a>.
+                            </button>.
                           </p>
                         </div>
                       </div>

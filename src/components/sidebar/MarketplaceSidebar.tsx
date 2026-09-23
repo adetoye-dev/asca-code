@@ -42,6 +42,8 @@ import {
   type MarketplaceKind,
 } from "../../services/marketplace";
 import { marketplaceFetch } from "../../services/marketplaceClient";
+import { openExternal } from "../../services/openExternal";
+import { TechLogo } from "../ui/TechLogos";
 
 interface MarketplaceSidebarProps {
   projectRoot?: string;
@@ -313,19 +315,18 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               Find more
             </div>
             {ECOSYSTEM_LINKS.map((link) => (
-              <a
+              <button
                 key={link.url}
-                href={link.url}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="block group"
+                type="button"
+                onClick={() => void openExternal(link.url)}
+                className="block w-full text-left group"
               >
                 <div className="flex items-center gap-1 text-body text-zinc-300 group-hover:text-white">
                   <span className="font-medium">{link.label}</span>
                   <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
                 </div>
                 <div className="text-body text-zinc-500 leading-snug">{link.note}</div>
-              </a>
+              </button>
             ))}
             <div className="text-body text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
               This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
@@ -415,7 +416,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                 )}
               </div>
 
-              <div className="mt-1.5 grid grid-cols-1 gap-x-8 xl:grid-cols-2">
+              <div className="mt-2.5 grid grid-cols-1 gap-2 xl:grid-cols-2">
                 {section.entries.map(({ item, rank }) => {
                   const installed = isInstalled(item);
                   const busy = busyId === item.id;
@@ -439,8 +440,8 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                       key={item.id}
                       className={`rounded-xl border transition-colors ${
                         expanded
-                          ? "border-purple-500/40 bg-zinc-900/40"
-                          : "border-transparent hover:bg-white/[0.03]"
+                          ? "border-purple-500/40 bg-zinc-900/60"
+                          : "border-hairline bg-zinc-900/30 hover:border-zinc-600/70 hover:bg-zinc-900/50"
                       }`}
                     >
                       <button
@@ -454,7 +455,14 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                           {rank}
                         </span>
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline bg-workbench">
-                          <Icon icon={DomainIcon} className="h-4 w-4 text-purple-300" />
+                          {/* A real mark where the entry names one (Playwright,
+                              Chrome, Git); the category's glyph otherwise, rather
+                              than a logo we would have to invent. */}
+                          <TechLogo
+                            name={item.name}
+                            className="h-4 w-4 object-contain"
+                            fallback={<Icon icon={DomainIcon} className="h-4 w-4 text-purple-300" />}
+                          />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
@@ -511,16 +519,16 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                     {links.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5 pt-0.5">
                         {links.map((link) => (
-                          <a
+                          <button
                             key={link.label}
-                            href={link.url}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-zinc-700 text-body font-mono text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors"
+                            type="button"
+                            onClick={() => void openExternal(link.url as string)}
+                            title={link.url}
+                            className="inline-flex items-center gap-1 rounded-md border border-hairline px-2 py-1 font-mono text-body text-zinc-200 transition-colors hover:border-zinc-500 hover:text-white"
                           >
                             {link.label}
-                            <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
-                          </a>
+                            <Icon icon={ExternalLink} className="h-3 w-3" />
+                          </button>
                         ))}
                       </div>
                     ) : (

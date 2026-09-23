@@ -554,6 +554,51 @@ fn pick_open_file(prompt: String) -> Result<Option<String>, String> {
     }
 }
 
+/// Only http(s) ever reaches the OS opener. This takes a string from the page
+/// and hands it to `open`/`explorer`/`xdg-open`, so the scheme is checked here
+/// rather than trusted, and the argument is passed after `--` so a URL that
+/// begins with a dash cannot become a flag.
+fn is_openable_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://")) && !lower.contains('\n')
+}
+
+/// Open a link in the user's browser. The webview cannot do this itself: a plain
+/// anchor with `target="_blank"` is a dead click in a Tauri window, which is
+/// exactly how every marketplace link behaved.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !is_openable_url(&url) {
+        return Err(format!("refusing to open a non-http(s) url: {}", url));
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        // `start` is a shell builtin; `explorer` opens a URL without one.
+        std::process::Command::new("explorer")
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command.arg("--").arg(url.trim());
+    if command.status().is_err() {
+        // Some openers reject `--`; retry without it rather than failing the click.
+        #[cfg(target_os = "macos")]
+        let mut retry = std::process::Command::new("open");
+        #[cfg(target_os = "windows")]
+        let mut retry = std::process::Command::new("explorer");
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut retry = std::process::Command::new("xdg-open");
+        retry
+            .arg(url.trim())
+            .status()
+            .map_err(|error| format!("could not open {}: {}", url, error))?;
+    }
+    Ok(())
+}
+
 /// Show a file or folder in the OS file manager, so "where is my data?" has an
 /// answer that does not require the user to read a path out of a text box.
 #[tauri::command]
@@ -3149,6 +3194,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             fetch_system_metrics,
+            open_external,
             fetch_system_storage,
             fetch_system_processes,
             system_cleanup,
@@ -3206,6 +3252,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_http_urls_are_handed_to_the_os() {
+        // This is the whole guard between a page string and the OS opener.
+        assert!(is_openable_url("https://example.com/a?b=c"));
+        assert!(is_openable_url("http://example.com"));
+        assert!(is_openable_url("  https://example.com  "));
+        assert!(!is_openable_url("file:///etc/passwd"));
+        assert!(!is_openable_url("javascript:alert(1)"));
+        assert!(!is_openable_url("-R /Applications"));
+        assert!(!is_openable_url("https://example.com\nrm -rf /"));
+        assert!(!is_openable_url(""));
+    }
 
     #[test]
     fn base64_matches_the_reference_encoder() {
