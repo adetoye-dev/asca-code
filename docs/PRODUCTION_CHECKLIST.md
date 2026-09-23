@@ -84,6 +84,10 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | --- | --- | --- |
 | Transport | **[done]** | `app-server` is the default now, with `exec` as a fallback and still selectable. It is the only transport that can ask anything, so defaulting to `exec` meant most installs never saw the approval card, the question card or steering — all of which were built and verified and then hidden behind a setting. A runtime that cannot start the live session retries once on `exec` and says so in OUTPUT rather than swapping transports silently, and the approval mode is re-resolved per transport so `ask-me` cannot survive onto a run that would auto-deny. |
 | Local model tool support | **[done]** | `core-engine/responses_adapter.py` translates the Responses API the runtime requires into Ollama's native `/api/chat`, so a local model can actually run tools. Verified end to end, frozen into the engine sidecar, and covered by `tests/test_responses_adapter.py`. |
+| Runtime flags | **[done]** | The three flags the app writes into the runtime's config live in `AGENT_RUNTIME_FLAGS`, documented once and asserted. `features.plugins = false` is the load-bearing one: with it off, every start was spending ~45s of a ~75s run on OpenAI's curated plugin marketplace — a 401 at chatgpt.com, a `git fetch` that timed out after 30s, a GitHub 429 — for something a third-party provider can never reach. Verified at a cold `CODEX_HOME`: 1 plugin log line to 0, and an `[mcp_servers.*]` entry still reports `enabled` from `codex mcp list` with a mirrored skill still reaching the prompt. A turn's stderr is now also translated before the user reads it (`friendly_agent_line`): a rejected patch reads as a retry rather than a crash, and the runtime's internal model-metadata warning is dropped (see below). |
+| Turn limit | **[done]** | A wall-clock ceiling on one turn — 20 minutes by default, `No limit` first in the picker, set in Settings → AI Assistant → Agent. The clock stops while the turn is blocked on the user, because a turn waiting on an answer is not burning time and a limit that counted it would stop runs for asking a question. The composer shows `Working 4m 12s of 20m`; a stopped turn says why in OUTPUT and stops through the existing Stop path rather than a second cancel mechanism. Policy is pure and tested (`agentTurnLimit.ts`); the 20-minute stop itself has not been observed end to end. |
+| Active model | **[done]** | Two records described it — `selected_model`, which the picker writes and the agent reads, and a copy in `ai_settings`, which the editor chat reads — and nothing kept them in step. The real database had them disagreeing (`ai_settings.provider = ollama` on a 7B local model beside a `deepseek` selection), so the chat and the agent pointed at different models. Hydration now takes provider and model from the selection and repairs the stored copy on boot. |
+| Internal model warning | **[open]** | The runtime resolves a hardcoded model (`gpt-5.6-luna`) for auto-review and title generation and warns it has no metadata for it; the catalog's `auto_review_model_override` does not redirect it. Harmless — auto-review was verified working on DeepSeek with the warning present — and no longer shown, so this is informational only. |
 | Adapter lifecycle | **[partial]** | Started on demand and reused per provider. Nothing restarts it if it dies mid-run, and it is only reached when the resolved provider is local. |
 | Steering | **[open]** | `turn/steer` is not wired to the UI. |
 | Approval affordance | **[partial]** | The card renders in the composer, so on a long transcript it can start below the fold. Live experience, not theory: a run sat blocked for roughly six minutes and the only way to find out why was to read the accessibility tree — it was not visibly doing anything. Two card kinds now share that slot (approval and question), so it has got worse rather than better. It needs to be unmissable and reflected in the run's status. |
@@ -100,7 +104,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 Current plan, in order:
 
 **Done, in this order:** shipped the agent-flow work as `0.2.2`; made a blocked run unmissable;
-persisted the change log into the transcript; took both decisions (`app-server` is the default with
+took both decisions (`app-server` is the default with
 `exec` as a fallback, accounts removed rather than left dormant); then the identity — indigo,
 tagline, the Apex mark — and the accessibility pass, measured rather than eyeballed.
 
@@ -110,6 +114,24 @@ could write that stale buffer back over the new one), and a keystroke stopped re
 dockview layout. `0.2.4` carries the rest of that audit: the composer's text and the host's telemetry
 moved out of the workbench's state, the transcript and the editor sit behind memo boundaries, and the
 macOS bundle job stopped running on every push to `dev`.
+
+**Then a full end-to-end loop, run as a user would.** A scratch project, the real bundled runtime,
+the real DeepSeek key: build a small task board (8 files, `tsc && vite build` passes, 11/11 browser
+checks), then a follow-up multi-file change to add priorities (8/8 checks, no regression). The
+output was good and the multi-file edit worked — and the exercise still produced five fixes and one
+defect, all listed in the tables above and all of them about the *harness* rather than the model:
+the ~45s of doomed OpenAI plugin syncing (#1), a recovered patch rejection reported as a crash (#2),
+two records disagreeing about the active model (#3), approval copy that understated where the agent
+may write (#4), and no ceiling on self-verification (#5, now a wall-clock limit).
+
+The defect it shipped is worth recording because both the agent's own tests and mine missed it: the
+priority change squeezed the card title to a 2px column, so the title rendered one character per
+line — and *nothing overflowed*, so the overflow assertions passed. Behaviour was right; the layout
+was broken. That is the argument for the render checks above growing the way they have.
+
+One correction while reading back through this: the line above used to claim the change log was
+persisted into the transcript, which the status table contradicts (`[partial]`, live-only, and no
+change-log persistence exists in the code). The table is right; the claim is gone.
 
 **Layout — done.** The permanent activity bar and sidebar are gone, replaced by one collapsible
 navigation surface (`WorkbenchNav.tsx`): a rail that reveals a grouped panel on hover, collapses
@@ -121,10 +143,26 @@ tests (`WorkbenchNav.test.tsx`, `GitDashboard.test.tsx`).
 **A GUI check exists.** `npm run gui:check` renders the workbench in headless
 Chrome and asserts what the unit suite cannot see: nothing overflows the window at
 three sizes, every screen paints with a way back, the sidebar's icons sit on the
-column's centre line in both states, and an entry's dialog opens without
-reshaping the marketplace grid. It starts its own Vite and browser, prints a
-report, and exits non-zero on failure. It is deliberately not in CI (it needs a
-browser) — run it before a release, and after touching layout.
+column's centre line in both states, an entry's dialog opens without reshaping the
+marketplace grid, and the new-project dialog opens on step 1, fits a 1024×700
+window and shows its action. It also measures things a class scan cannot:
+
+- **a size class actually decides the size** — the `Icon` component used to write
+  its `size` as an inline style on every render, which beat every class, so 279
+  call sites that size an icon with `className="h-3.5 w-3.5"` were silently 16px
+  and a per-site size change did nothing;
+- **the brand outranks the rail icons** — compared on ink, not on box, because the
+  mark carries ~23% internal padding;
+- **the highlight hugs the icon** — row height minus icon size, over two;
+- **the primary action is readable against its own fill** — 4.5:1, computed in the
+  browser. This one was found at 1.05:1: `--action-primary` resolved through the
+  neutral "crisp zinc" accent, so every primary button was white on near-white,
+  and the class-scanning contrast gate could not see it because the colour arrives
+  through a var chain.
+
+It starts its own Vite and browser, prints a report, and exits non-zero on
+failure. It is deliberately not in CI (it needs a browser) — run it before a
+release, and after touching layout.
 
 **Left in this phase — the rest of the surfaces.** The model picker and the z-index scale still have
 no render tests, and the pages behind the nav still carry their pre-identity spacing and hierarchy:
