@@ -173,6 +173,30 @@ try {
   const aligned = (list) => list.every((c) => Math.abs(c - 28) <= 0.6);
   check("sidebar icons sit on the centre line when collapsed", aligned(geometry.centres), `centres ${geometry.centres.join(", ")}`);
   check("sidebar icons still sit on it when expanded", aligned(expanded.centres) && expanded.width > 100, `width ${expanded.width}, centres ${expanded.centres.join(", ")}`);
+
+  // 2b. The rail is big enough to read, and the brand outranks it.
+  //     `Icon` writes its size as an inline style, so a `w-8 h-8` class on a rail
+  //     icon is silently ignored — the rail must be sized by the `size` prop, and
+  //     this asserts the rendered box, not the class. The brand is an <img>: its
+  //     ink carries ~23% padding, so "bigger than the icons" must be checked
+  //     against ink, not against the box.
+  const scale = await session.eval(`(() => {
+    const nav = document.querySelector('[data-testid="workbench-nav"]');
+    const img = nav.querySelector('[data-testid="nav-brand"] img');
+    const icon = nav.querySelector('[data-testid^="nav-item-"] svg');
+    if (!img || !icon) return null;
+    const box = icon.getBoundingClientRect().width;
+    const unit = box / icon.viewBox.baseVal.width;
+    let ink = 0; try { ink = icon.getBBox().height * unit; } catch { /* unmeasurable */ }
+    const brand = img.getBoundingClientRect().width;
+    return { iconBox: +box.toFixed(1), iconInk: +ink.toFixed(1), brand, brandInk: +(0.7695 * brand).toFixed(1) };
+  })()`);
+  check("rail icons render at ~32px, not the Icon default",
+    scale && scale.iconBox >= 30, scale ? `icon ${scale.iconBox}px` : "no icon found");
+  check("the brand mark is larger than the rail icons",
+    scale && scale.brand > scale.iconBox && scale.brandInk > scale.iconInk,
+    scale ? `brand ${scale.brand}px (ink ~${scale.brandInk}) vs icon ${scale.iconBox}px (ink ~${scale.iconInk})` : "no brand found");
+
   await session.move(1000, 500);
   await sleep(500);
   await session.screenshot("sidebar");

@@ -226,19 +226,26 @@ export function WorkbenchNav({
         {/* ── Identity ─────────────────────────────────────────────────────
             The brand is the sidebar's, not a bar's: it is the icon alone when
             collapsed and the icon with the name when there is room. */}
-        <div className="relative flex h-10 shrink-0 items-center">
+        <div className="relative flex h-14 shrink-0 items-center">
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
             data-testid="nav-brand"
             aria-expanded={expanded}
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
-            className="mx-1.5 flex h-11 w-[calc(100%-0.75rem)] shrink-0 items-center gap-3 rounded-xl pl-[11px] pr-2.5 hover:bg-white/5"
+            className="mx-0.5 flex h-12 w-[calc(100%-0.25rem)] shrink-0 items-center gap-3 rounded-xl pl-1.5 pr-2.5 hover:bg-white/5"
           >
-            <IdeBrandLogo size={22} className="h-[22px] w-[22px] shrink-0" />
+            {/* The brand is deliberately the largest thing in the rail: it is
+                the identity, and at the nav rows' own icon size it read as just
+                another row. 40px, not 32 — the Apex artwork carries ~23% internal
+                padding (its ink spans 788 of a 1024 box), so a same-size box would
+                still paint a mark no bigger than the icons beside it. At 40px its
+                ink is ~34×31 against the icons' ~24–27. It sits on the same centre
+                line (x=28) as the icons below it, so the column stays one column. */}
+            <IdeBrandLogo size={40} className="h-10 w-10 shrink-0" />
             <span
               aria-hidden={!expanded}
-              className={`truncate text-body font-semibold tracking-tight text-zinc-100 ${labelClass}`}
+              className={`truncate text-sm font-semibold tracking-tight text-zinc-100 ${labelClass}`}
             >
               ACSA Code
             </span>
@@ -273,18 +280,22 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`flex h-11 shrink-0 items-center rounded-xl text-left transition-colors ${
+                className={`flex h-12 shrink-0 items-center rounded-xl text-left transition-colors ${
                   expanded
-                    ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-[14px] pr-2.5"
-                    : "mx-auto w-11 justify-center"
+                    ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5"
+                    : "mx-auto w-12 justify-center"
                 } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
               >
                 {/* Size only: the row's own colour carries the state, and the
-                    active screen takes the accent. */}
+                    active screen takes the accent. 32px at weight 3 — the shared
+                    default of 1.5 is why every glyph here read as a hairline.
+                    `size` is deliberate: Icon writes its size as an inline style,
+                    so a `w-8 h-8` class alone would be silently ignored. */}
                 <Icon
                   icon={item.icon}
-                  strokeWidth={2}
-                  className={`h-[22px] w-[22px] shrink-0 ${active ? "text-accent" : ""}`}
+                  size={32}
+                  strokeWidth={3}
+                  className={`shrink-0 ${active ? "text-accent" : ""}`}
                 />
                 <span
                   aria-hidden={!expanded}
@@ -357,11 +368,11 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className={`flex h-11 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
-        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-[14px] pr-2.5" : "mx-auto w-11 justify-center"
+      className={`flex h-12 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
+        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-1.5 pr-2.5" : "mx-auto w-12 justify-center"
       }`}
     >
-      <Icon icon={icon} strokeWidth={2} className="h-[22px] w-[22px] shrink-0" />
+      <Icon icon={icon} size={32} strokeWidth={3} className="shrink-0" />
       <span
         aria-hidden={!expanded}
         className={`truncate text-sm font-semibold ${labelClass} ${
