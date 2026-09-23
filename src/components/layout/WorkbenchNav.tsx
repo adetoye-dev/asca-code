@@ -79,6 +79,12 @@ export const NAV_EXPANDED_WIDTH = 240;
 export const NAV_ICON_SIZE = 24;
 export const NAV_ICON_STROKE = 1.5;
 export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2;
+/**
+ * The height of a row, and therefore also the width of the collapsed highlight
+ * — one square either way. Its distance from `NAV_ICON_SIZE` is the gutter: the
+ * smaller this is, the tighter the highlight hugs the glyph.
+ */
+export const NAV_ROW_HEIGHT = 40;
 /** A cursor crossing the sidebar must not shove the editor across. */
 export const NAV_HOVER_INTENT_MS = 140;
 
@@ -292,12 +298,15 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`flex h-11 shrink-0 items-center rounded-xl text-left transition-colors ${
+                className={`flex shrink-0 items-center rounded-xl text-left transition-colors ${
                   expanded
                     ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pr-2.5"
-                    : "mx-auto w-11 justify-center"
+                    : "mx-auto justify-center"
                 } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
-                style={expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : undefined}
+                style={{
+                  height: NAV_ROW_HEIGHT,
+                  ...(expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : { width: NAV_ROW_HEIGHT }),
+                }}
               >
                 {/* Size only: the row's own colour carries the state, and the
                     active screen takes the accent. `size` and `strokeWidth` come
@@ -381,10 +390,13 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className={`flex h-11 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
-        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pr-2.5" : "mx-auto w-11 justify-center"
+      className={`flex shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
+        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pr-2.5" : "mx-auto justify-center"
       }`}
-      style={expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : undefined}
+      style={{
+        height: NAV_ROW_HEIGHT,
+        ...(expanded ? { paddingLeft: NAV_ICON_PAD_LEFT } : { width: NAV_ROW_HEIGHT }),
+      }}
     >
       <Icon icon={icon} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} className="shrink-0" />
       <span

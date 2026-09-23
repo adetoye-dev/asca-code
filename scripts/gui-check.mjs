@@ -189,7 +189,8 @@ try {
     const unit = box / icon.viewBox.baseVal.width;
     let ink = 0; try { ink = icon.getBBox().height * unit; } catch { /* unmeasurable */ }
     const brand = img.getBoundingClientRect().width;
-    return { iconBox: +box.toFixed(1), iconInk: +ink.toFixed(1), brand, brandInk: +(0.7695 * brand).toFixed(1) };
+    const rowH = nav.querySelector('[data-testid^="nav-item-"]').getBoundingClientRect().height;
+    return { iconBox: +box.toFixed(1), iconInk: +ink.toFixed(1), brand, brandInk: +(0.7695 * brand).toFixed(1), rowH: +rowH.toFixed(1) };
   })()`);
   // A band rather than an exact number: the rail's size is a single constant
   // that gets tuned by eye, and this check exists to catch it falling back to
@@ -200,6 +201,12 @@ try {
   check("the brand mark is larger than the rail icons",
     scale && scale.brand > scale.iconBox && scale.brandInk > scale.iconInk,
     scale ? `brand ${scale.brand}px (ink ~${scale.brandInk}) vs icon ${scale.iconBox}px (ink ~${scale.iconInk})` : "no brand found");
+  // The highlight should hug the glyph: a row much taller than the icon reads as
+  // a padded bar, and a row at or below the icon size has no highlight at all.
+  const gutter = scale ? +((scale.rowH - scale.iconBox) / 2).toFixed(1) : null;
+  check("the highlight hugs the icon (2–12px gutter)",
+    gutter !== null && gutter >= 2 && gutter <= 12,
+    scale ? `row ${scale.rowH}px, icon ${scale.iconBox}px, gutter ${gutter}px` : "no rows found");
 
   // 2c. A size class actually decides the size. This is the end-to-end form of
   //     the Icon bug: the component used to inline a 16px width on every icon,
