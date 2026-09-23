@@ -329,10 +329,12 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
               </button>
             ))}
             <div className="text-body text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
-              This build connects to <span className="font-mono text-zinc-400">stdio</span> MCP
-              servers (a command plus arguments). Remote/HTTP servers are not supported yet, and
-              skills are plain <span className="font-mono text-zinc-400">SKILL.md</span> files you
-              can also add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
+              Installed MCP servers are handed to the agent in Codex&apos;s own config —{" "}
+              <span className="font-mono text-zinc-400">stdio</span> ones as a command plus
+              arguments, and streamable-HTTP ones given a{" "}
+              <span className="font-mono text-zinc-400">url</span>. Skills are plain{" "}
+              <span className="font-mono text-zinc-400">SKILL.md</span> files, which you can also
+              add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
             </div>
           </div>
         </div>
