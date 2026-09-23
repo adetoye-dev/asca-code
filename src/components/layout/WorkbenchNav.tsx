@@ -233,7 +233,7 @@ export function WorkbenchNav({
             data-testid="nav-brand"
             aria-expanded={expanded}
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
-            className="mx-1.5 flex h-10 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-3 pr-2.5 hover:bg-white/5"
+            className="mx-1.5 flex h-11 w-[calc(100%-0.75rem)] shrink-0 items-center gap-3 rounded-xl pl-[11px] pr-2.5 hover:bg-white/5"
           >
             <IdeBrandLogo size={22} className="h-[22px] w-[22px] shrink-0" />
             <span
@@ -255,7 +255,7 @@ export function WorkbenchNav({
             aria-label={pinned ? "Release the sidebar" : "Keep the sidebar open"}
             className={`absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${labelClass}`}
           >
-            <Icon icon={pinned ? PinOff : Pin} className="h-4 w-4" />
+            <Icon icon={pinned ? PinOff : Pin} strokeWidth={2} className="h-[18px] w-[18px]" />
           </button>
           )}
         </div>
@@ -273,19 +273,24 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`mx-1.5 flex h-12 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
-                  active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-                }`}
+                className={`flex h-11 shrink-0 items-center rounded-xl text-left transition-colors ${
+                  expanded
+                    ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-[14px] pr-2.5"
+                    : "mx-auto w-11 justify-center"
+                } ${active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"}`}
               >
                 {/* Size only: the row's own colour carries the state, and the
                     active screen takes the accent. */}
                 <Icon
                   icon={item.icon}
-                  className={`h-5 w-5 shrink-0 ${active ? "text-accent" : ""}`}
+                  strokeWidth={2}
+                  className={`h-[22px] w-[22px] shrink-0 ${active ? "text-accent" : ""}`}
                 />
                 <span
                   aria-hidden={!expanded}
-                  className={`min-w-0 flex-1 truncate text-sm font-semibold ${labelClass}`}
+                  className={`truncate text-sm font-semibold ${labelClass} ${
+                    expanded ? "min-w-0 flex-1" : "w-0 flex-none overflow-hidden"
+                  }`}
                 >
                   {item.label}
                 </span>
@@ -352,10 +357,17 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className="mx-1.5 flex h-12 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
+      className={`flex h-11 shrink-0 items-center rounded-xl text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${
+        expanded ? "mx-1.5 w-[calc(100%-0.75rem)] gap-3 pl-[14px] pr-2.5" : "mx-auto w-11 justify-center"
+      }`}
     >
-      <Icon icon={icon} className="h-[15px] w-[15px] shrink-0" />
-      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-sm font-semibold ${labelClass}`}>
+      <Icon icon={icon} strokeWidth={2} className="h-[22px] w-[22px] shrink-0" />
+      <span
+        aria-hidden={!expanded}
+        className={`truncate text-sm font-semibold ${labelClass} ${
+          expanded ? "min-w-0 flex-1" : "w-0 flex-none overflow-hidden"
+        }`}
+      >
         {label}
       </span>
       {shortcut && expanded && (

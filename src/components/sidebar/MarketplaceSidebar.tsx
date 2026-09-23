@@ -23,7 +23,6 @@ import {
   ChevronRight,
   ExternalLink,
   ShieldCheck,
-  Info,
   FileText,
 } from "lucide-react";
 import {
@@ -281,70 +280,6 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
 
   return (
     <div className="flex h-full w-full min-h-0 bg-canvas text-zinc-300">
-      {/* ── Categories ───────────────────────────────────────────────────── */}
-      <aside className="flex w-[clamp(12rem,16vw,16.5rem)] shrink-0 flex-col border-r border-hairline bg-workbench">
-        <div className="px-4 pb-1 pt-4 text-body font-semibold uppercase tracking-wider text-zinc-500">
-          Categories
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {categoryRows.map((row) => {
-            const active = kind === row.kind && domain === row.domain;
-            return (
-              <button
-                key={row.key}
-                type="button"
-                onClick={() => {
-                  setKind(row.kind);
-                  setDomain(row.domain);
-                }}
-                data-testid={`marketplace-category-${row.key}`}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left transition-colors ${
-                  active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
-                }`}
-              >
-                <Icon
-                  icon={row.icon}
-                  className={`h-4 w-4 shrink-0 ${active ? "text-accent" : ""}`}
-                />
-                <span className="min-w-0 flex-1 truncate text-body font-medium">{row.label}</span>
-                <span className="shrink-0 font-mono text-body text-zinc-500">{row.count}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="shrink-0 px-2 pb-3">
-          {/* Where to find more — real, external sources */}
-          <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/30 p-2.5 space-y-2">
-            <div className="flex items-center gap-1.5 text-body font-semibold uppercase tracking-wider text-zinc-400">
-              <Icon icon={Info} className="w-3 h-3 shrink-0" />
-              Find more
-            </div>
-            {ECOSYSTEM_LINKS.map((link) => (
-              <button
-                key={link.url}
-                type="button"
-                onClick={() => void openExternal(link.url)}
-                className="block w-full text-left group"
-              >
-                <div className="flex items-center gap-1 text-body text-zinc-300 group-hover:text-white">
-                  <span className="font-medium">{link.label}</span>
-                  <Icon icon={ExternalLink} className="w-2.5 h-2.5" />
-                </div>
-                <div className="text-body text-zinc-500 leading-snug">{link.note}</div>
-              </button>
-            ))}
-            <div className="text-body text-zinc-500 leading-snug border-t border-zinc-800 pt-1.5">
-              Installed MCP servers are handed to the agent in Codex&apos;s own config —{" "}
-              <span className="font-mono text-zinc-400">stdio</span> ones as a command plus
-              arguments, and streamable-HTTP ones given a{" "}
-              <span className="font-mono text-zinc-400">url</span>. Skills are plain{" "}
-              <span className="font-mono text-zinc-400">SKILL.md</span> files, which you can also
-              add by hand to <span className="font-mono text-zinc-400">.acsa/skills</span>.
-            </div>
-          </div>
-        </div>
-      </aside>
-
       {/* ── Catalogue ────────────────────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="shrink-0 px-5 pt-5">
@@ -367,7 +302,38 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
             </button>
           </div>
 
-          <div className="relative mt-4">
+          {/* Categories are tabs here rather than a column: the catalogue is one
+              list you filter, and a full-height column of one-line rows spent a
+              third of the page width saying what seven chips can say. */}
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
+            {categoryRows.map((row) => {
+              const active = kind === row.kind && domain === row.domain;
+              return (
+                <button
+                  key={row.key}
+                  type="button"
+                  onClick={() => {
+                    setKind(row.kind);
+                    setDomain(row.domain);
+                  }}
+                  data-testid={`marketplace-category-${row.key}`}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-body font-medium transition-colors ${
+                    active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
+                  }`}
+                >
+                  <Icon
+                    icon={row.icon}
+                    strokeWidth={2}
+                    className={`h-4 w-4 ${active ? "text-accent" : ""}`}
+                  />
+                  <span>{row.label}</span>
+                  <span className="font-mono text-3xs text-zinc-500">{row.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative mt-3">
             <Icon
               icon={Search}
               className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
@@ -423,7 +389,7 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                 )}
               </div>
 
-              <div className="mt-2.5 grid grid-cols-1 gap-2 xl:grid-cols-2">
+              <div className="mt-2.5 grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
                 {section.entries.map(({ item, rank }) => {
                   const installed = isInstalled(item);
                   const busy = busyId === item.id;
@@ -703,6 +669,26 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                 })}
               </div>
             </section>
+          ))}
+        </div>
+
+        {/* Real places to find more, in one line: the paragraph that used to sit
+            under them explained a limitation that no longer exists. */}
+        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-hairline px-5 pb-5 pt-4">
+          <span className="text-4xs font-semibold uppercase tracking-wider text-zinc-500">
+            Find more
+          </span>
+          {ECOSYSTEM_LINKS.map((link) => (
+            <button
+              key={link.url}
+              type="button"
+              onClick={() => void openExternal(link.url)}
+              title={link.note}
+              className="flex items-center gap-1.5 text-body text-zinc-400 transition-colors hover:text-zinc-100"
+            >
+              {link.label}
+              <Icon icon={ExternalLink} className="h-3.5 w-3.5" />
+            </button>
           ))}
         </div>
       </div>
