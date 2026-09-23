@@ -235,7 +235,7 @@ export function WorkbenchNav({
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
             className="mx-1.5 flex h-10 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-3 pr-2.5 hover:bg-white/5"
           >
-            <IdeBrandLogo size={20} className="h-5 w-5 shrink-0" />
+            <IdeBrandLogo size={22} className="h-[22px] w-[22px] shrink-0" />
             <span
               aria-hidden={!expanded}
               className={`truncate text-body font-semibold tracking-tight text-zinc-100 ${labelClass}`}
@@ -255,13 +255,13 @@ export function WorkbenchNav({
             aria-label={pinned ? "Release the sidebar" : "Keep the sidebar open"}
             className={`absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100 ${labelClass}`}
           >
-            <Icon icon={pinned ? PinOff : Pin} className="w-3.5 h-3.5" />
+            <Icon icon={pinned ? PinOff : Pin} className="h-4 w-4" />
           </button>
           )}
         </div>
 
         {/* ── Screens ───────────────────────────────────────────────────── */}
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden pb-2 pt-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden pb-2 pt-5">
           {NAV_ITEMS.map((item) => {
             const active = screen === item.id;
             return (
@@ -273,17 +273,17 @@ export function WorkbenchNav({
                 aria-label={item.label}
                 title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`}
                 data-testid={`nav-item-${item.id}`}
-                className={`mx-1.5 flex h-10 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
+                className={`mx-1.5 flex h-12 w-[calc(100%-0.75rem)] shrink-0 items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left transition-colors ${
                   active ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
                 }`}
               >
                 <Icon
                   icon={item.icon}
-                  className={`h-[15px] w-[15px] shrink-0 ${active ? "text-accent" : ""}`}
+                  className={`h-[18px] w-[18px] shrink-0 ${active ? "text-accent" : ""}`}
                 />
                 <span
                   aria-hidden={!expanded}
-                  className={`min-w-0 flex-1 truncate text-xs font-semibold ${labelClass}`}
+                  className={`min-w-0 flex-1 truncate text-sm font-semibold ${labelClass}`}
                 >
                   {item.label}
                 </span>
@@ -291,13 +291,13 @@ export function WorkbenchNav({
                   <span
                     data-testid="nav-dirty-count"
                     title={`${dirtyCount} unsaved ${dirtyCount === 1 ? "file" : "files"}`}
-                    className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-accent px-1 font-mono text-4xs font-semibold text-zinc-950"
+                    className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1 font-mono text-3xs font-semibold text-zinc-950"
                   >
                     {dirtyCount}
                   </span>
                 )}
                 {item.shortcut && expanded && (
-                  <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>
+                  <span className={`shrink-0 font-mono text-3xs text-zinc-500 ${labelClass}`}>
                     {item.shortcut}
                   </span>
                 )}
@@ -350,14 +350,14 @@ function Row({
       title={label}
       aria-label={label}
       data-testid={testId}
-      className="mx-1.5 flex h-10 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
+      className="mx-1.5 flex h-12 w-[calc(100%-0.75rem)] items-center gap-2.5 rounded-lg pl-[14px] pr-2.5 text-left text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
     >
       <Icon icon={icon} className="h-[15px] w-[15px] shrink-0" />
-      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-xs font-semibold ${labelClass}`}>
+      <span aria-hidden={!expanded} className={`min-w-0 flex-1 truncate text-sm font-semibold ${labelClass}`}>
         {label}
       </span>
       {shortcut && expanded && (
-        <span className={`shrink-0 font-mono text-4xs text-zinc-500 ${labelClass}`}>{shortcut}</span>
+        <span className={`shrink-0 font-mono text-3xs text-zinc-500 ${labelClass}`}>{shortcut}</span>
       )}
     </button>
   );
