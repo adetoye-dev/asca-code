@@ -50,6 +50,7 @@ import { ConfirmDialog } from "../ui/ConfirmDialog";
 import type { AgentQuestion, PendingFileChange, ProjectIndexState } from "../../hooks/usePipeline";
 import { approvalSummary, countDiffLines } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
+import { formatDuration } from "../../services/agentTurnLimit";
 
 interface AiAssistantChatProps {
   status: PipelineStatus;
@@ -75,6 +76,15 @@ interface AiAssistantChatProps {
   noFileChanges?: boolean;
   /** The runtime's own name for a state where it is blocked on the human. */
   waitingForUser?: string;
+  /**
+   * Working time on the current turn, excluding time blocked on the human. Owned
+   * by the pipeline rather than counted here: the turn *limit* has to exclude the
+   * same time, and two counters that disagree about what they measure are worse
+   * than one.
+   */
+  turnElapsedMs?: number;
+  /** The ceiling applied to one turn, in minutes. Zero means no limit. */
+  turnLimitMinutes?: number;
   /** A request the agent is blocked on, waiting for the user's answer. */
   pendingApproval?: {
     id: unknown;
@@ -135,7 +145,8 @@ interface ChatTranscriptProps {
   streamingAnswer: string;
   streamingThought: string;
   agentSteps: AgentStep[];
-  agentElapsedSeconds: number;
+  agentElapsedMs: number;
+  turnLimitMinutes: number;
   currentAgentPhase: string;
   blockedOn: string;
   turnChanges: PendingFileChange[];
@@ -167,7 +178,8 @@ const ChatTranscript = memo(function ChatTranscript({
   streamingAnswer,
   streamingThought,
   agentSteps,
-  agentElapsedSeconds,
+  agentElapsedMs,
+  turnLimitMinutes,
   currentAgentPhase,
   blockedOn,
   turnChanges,
@@ -404,7 +416,11 @@ const ChatTranscript = memo(function ChatTranscript({
                     blockedOn ? "bg-amber-400 animate-pulse" : "bg-purple-400 animate-pulse"
                   }`}
                 />
-                {blockedOn ? `Waiting for ${blockedOn}` : `Working (${agentElapsedSeconds}s)`}
+                {blockedOn
+                  ? `Waiting for ${blockedOn}`
+                  : turnLimitMinutes > 0
+                  ? `Working ${formatDuration(agentElapsedMs)} of ${turnLimitMinutes}m`
+                  : `Working ${formatDuration(agentElapsedMs)}`}
               </span>
             </div>
 
@@ -415,7 +431,7 @@ const ChatTranscript = memo(function ChatTranscript({
                 thinking={streamingThought}
                 isLive={true}
                 hasSummary={Boolean(streamingAnswer && streamingAnswer.trim())}
-                elapsedSeconds={agentElapsedSeconds}
+                elapsedSeconds={Math.floor(agentElapsedMs / 1000)}
                 blockedOn={blockedOn}
               />
 
@@ -511,6 +527,8 @@ export function AiAssistantChat({
   waitingForUser = "",
   pendingApproval = null,
   respondToApproval,
+  turnElapsedMs = 0,
+  turnLimitMinutes = 0,
   pendingQuestion = null,
   respondToQuestion,
   turnChanges = NO_CHANGES,
@@ -579,8 +597,6 @@ export function AiAssistantChat({
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
-  const [agentElapsedSeconds, setAgentElapsedSeconds] = useState(0);
-  const agentStartedAtRef = useRef<number | null>(null);
   const isStreamingRef = useRef(false);
 
   // Multimodal image attachment state
@@ -660,18 +676,9 @@ export function AiAssistantChat({
     ? "Task failed"
     : "Ready";
 
-  useEffect(() => {
-    if (status !== "running") {
-      agentStartedAtRef.current = null;
-      setAgentElapsedSeconds(0);
-      return;
-    }
-    agentStartedAtRef.current ??= Date.now();
-    const timer = window.setInterval(() => {
-      setAgentElapsedSeconds(Math.floor((Date.now() - (agentStartedAtRef.current || Date.now())) / 1000));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [status]);
+  // The clock for the running turn is the pipeline's (`turnElapsedMs`) — it has
+  // to stop while the agent is waiting on an answer, because the turn *limit*
+  // stops then too, and a second counter here used to keep running.
 
   const prevStatusRef = useRef(status);
   useEffect(() => {
@@ -1869,7 +1876,8 @@ Click to re-index project.`}
           streamingAnswer={streamingAnswer}
           streamingThought={streamingThought}
           agentSteps={agentSteps}
-          agentElapsedSeconds={agentElapsedSeconds}
+          agentElapsedMs={turnElapsedMs}
+          turnLimitMinutes={turnLimitMinutes}
           currentAgentPhase={currentAgentPhase}
           blockedOn={blockedOn}
           turnChanges={turnChanges}

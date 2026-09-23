@@ -194,6 +194,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     pendingApproval,
     pendingQuestion,
     respondToQuestion,
+    turnElapsedMs,
+    turnLimitMinutes,
     turnChanges,
     openDiff,
     reviewDiff,
@@ -874,6 +876,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     failureDetail,
     pendingApproval,
     respondToApproval,
+    turnElapsedMs,
+    turnLimitMinutes,
     onClose: () => setIsCenterChatOpen(false),
     onPopOutWide: () => {
       // Leave full canvas and dock the assistant back to the side tool window.
@@ -1475,6 +1479,8 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               waitingForUser={waitingForUser}
               pendingApproval={pendingApproval}
               respondToApproval={respondToApproval}
+              turnElapsedMs={turnElapsedMs}
+              turnLimitMinutes={turnLimitMinutes}
               pendingQuestion={pendingQuestion}
               respondToQuestion={respondToQuestion}
               turnChanges={turnChanges}

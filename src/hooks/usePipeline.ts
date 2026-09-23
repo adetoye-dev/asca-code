@@ -33,6 +33,11 @@ import {
   type ApprovalDecision,
 } from "../services/agentApproval";
 import { ensureProvidersHydrated } from "../services/aiModelManager";
+import {
+  DEFAULT_TURN_LIMIT_MINUTES,
+  shouldStopTurn,
+  turnLimitNotice,
+} from "../services/agentTurnLimit";
 
 /**
  * The provider id a local run uses once the tool adapter is in front of it.
@@ -1179,6 +1184,10 @@ export interface UsePipelineReturn {
    * before running something. Empty when it is not waiting.
    */
   waitingForUser: string;
+  /** Working time on the current turn, excluding time blocked on the human. */
+  turnElapsedMs: number;
+  /** The ceiling applied to one turn, in minutes; zero means no limit. */
+  turnLimitMinutes: number;
   isIndexing: boolean;
   syncIndex: () => Promise<void>;
 
@@ -2314,6 +2323,54 @@ export function usePipeline(): UsePipelineReturn {
     setStatus("idle");
   }, [isTauriAvailable]);
 
+  /**
+   * How long the current turn has actually been working.
+   *
+   * Ticks only while a turn is running and is *not* blocked on the human, so the
+   * clock matches what the user is waiting for. It is shown in the composer
+   * beside the stop button, because "rolling for 500s with no idea what is
+   * happening" is the complaint this answers, and it is what the limit reads.
+   */
+  const [turnElapsedMs, setTurnElapsedMs] = useState(0);
+  useEffect(() => {
+    if (status !== "running" || waitingForUser) return;
+    const startedAt = Date.now() - turnElapsedMs;
+    const id = window.setInterval(() => setTurnElapsedMs(Date.now() - startedAt), 1000);
+    return () => window.clearInterval(id);
+    // `turnElapsedMs` is deliberately not a dependency: it is the accumulated
+    // value at the moment this effect starts, and re-running on every tick would
+    // rebuild the interval each second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, waitingForUser]);
+
+  // A new turn starts from zero, and a finished one stops showing a clock.
+  useEffect(() => {
+    setTurnElapsedMs(0);
+  }, [status]);
+
+  /**
+   * The ceiling. Stops the turn through the same path as the Stop button — this
+   * adds a reason, not a second way to cancel — and says why in OUTPUT so a
+   * stopped run is never indistinguishable from a crashed one.
+   */
+  const turnLimitMinutes = aiSettings.turnLimitMinutes ?? DEFAULT_TURN_LIMIT_MINUTES;
+  useEffect(() => {
+    if (status !== "running") return;
+    if (!shouldStopTurn({ elapsedMs: turnElapsedMs, limitMinutes: turnLimitMinutes, blockedOnUser: Boolean(waitingForUser) })) {
+      return;
+    }
+    setActivityLog((prev) => [
+      ...prev,
+      {
+        line_number: prev.length + 1,
+        content: turnLimitNotice(turnLimitMinutes),
+        stream: "stderr" as const,
+        is_json: false,
+      },
+    ]);
+    void cancelPipeline();
+  }, [status, turnElapsedMs, turnLimitMinutes, waitingForUser, cancelPipeline]);
+
   const clearLog = useCallback(() => {
     setActivityLog([]);
   }, []);
@@ -2353,6 +2410,8 @@ export function usePipeline(): UsePipelineReturn {
     indexStatus,
     noFileChanges,
     waitingForUser,
+    turnElapsedMs,
+    turnLimitMinutes,
     isIndexing,
     syncIndex,
     sliders,
