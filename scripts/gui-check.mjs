@@ -258,7 +258,96 @@ try {
     `rows ${before.join("/")} -> ${after.rows.join("/")}`);
   await session.screenshot("marketplace-detail");
 
-  // 5. Nothing threw along the way.
+  // 5. The new-project dialog is a two-step wizard that fits the window it opens
+  //    in. The single-step version stacked six template rows, two fields and the
+  //    actions into one column taller than a laptop window, so the commit button
+  //    was the thing you scrolled to find. Asserted at the shortest window the
+  //    app is expected to run in.
+  await session.send("Emulation.setDeviceMetricsOverride", { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+  await session.send("Page.navigate", { url: APP });
+  await sleep(2200);
+  await session.eval(`document.querySelector('[data-testid="project-switcher"]').click()`);
+  await sleep(300);
+  await session.eval(`document.querySelector('[data-testid="project-switcher-new"]').click()`);
+  await sleep(500);
+  const wizard = await session.eval(`(() => {
+    const d = document.querySelector('[role="dialog"]');
+    if (!d) return null;
+    const r = d.getBoundingClientRect();
+    const byText = (re) => [...d.querySelectorAll('button')].find((b) => re.test(b.textContent || ''));
+    const fits = (el) => { const b = el && el.getBoundingClientRect(); return Boolean(b) && b.top >= 0 && b.bottom <= window.innerHeight && b.width > 0; };
+    return {
+      templates: d.querySelectorAll('[role="group"] button').length,
+      fitsWindow: r.top >= 0 && r.bottom <= window.innerHeight,
+      continueVisible: fits(byText(/continue/i)),
+      nameFieldYet: Boolean(d.querySelector('input[type="text"]')),
+      step1: /step 1 of 2/i.test(d.textContent || ''),
+    };
+  })()`);
+  check("the new-project dialog opens on step 1, fits a 1024x700 window and shows its action",
+    wizard && wizard.templates === 6 && wizard.fitsWindow && wizard.continueVisible && wizard.step1 && !wizard.nameFieldYet,
+    wizard ? JSON.stringify(wizard) : "dialog did not open");
+  await session.screenshot("new-project-step1");
+
+  await session.eval(`[...document.querySelectorAll('[role="dialog"] button')].find((b) => /continue/i.test(b.textContent || '')).click()`);
+  await sleep(400);
+  // React tracks the value on the DOM node, so the native setter is how you type
+  // into a controlled input from outside React.
+  await session.eval(`(() => {
+    const input = document.querySelector('[role="dialog"] input[type="text"]');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'My New App');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(400);
+  const step2 = await session.eval(`(() => {
+    const d = document.querySelector('[role="dialog"]');
+    const r = d.getBoundingClientRect();
+    const b = [...d.querySelectorAll('button')].find((x) => /create project/i.test(x.textContent || ''));
+    const bb = b && b.getBoundingClientRect();
+    return {
+      step2: /step 2 of 2/i.test(d.textContent || ''),
+      destination: d.querySelector('[data-testid="projectmodal-destination"]') ? d.querySelector('[data-testid="projectmodal-destination"]').textContent : null,
+      fitsWindow: r.bottom <= window.innerHeight,
+      createVisible: Boolean(bb) && bb.top >= 0 && bb.bottom <= window.innerHeight,
+    };
+  })()`);
+  check("step 2 names the folder the two fields add up to, and still fits",
+    step2 && step2.step2 && step2.destination === '~/AcsaProjects/my-new-app' && step2.fitsWindow && step2.createVisible,
+    step2 ? JSON.stringify(step2) : "step 2 did not render");
+
+  // 5b. The primary action has to be readable. `--action-primary` used to resolve
+  //     through the neutral "crisp zinc" accent, so every primary button was white
+  //     text on a near-white fill — 1.05:1, which the class-scanning contrast gate
+  //     could not see because the colour arrives through a var chain, not a class.
+  const cta = await session.eval(`(() => {
+    const b = [...document.querySelectorAll('[role="dialog"] button')].find((x) => /create project/i.test(x.textContent || ''));
+    if (!b) return null;
+    const s = getComputedStyle(b);
+    // A colour-mix comes back as "color(srgb 0..1 ...)"; a plain fill as
+    // "rgb(0..255 ...)". Normalise before the transfer function.
+    const lum = (css) => {
+      const m = css.match(/[\\d.]+/g);
+      if (!m || m.length < 3) return null;
+      const scale = /^color\\(/.test(css.trim()) ? 1 : 255;
+      const [r, g, bb] = m.slice(0, 3).map((n) => {
+        const v = Number(n) / scale;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bb;
+    };
+    const a = lum(s.color), c = lum(s.backgroundColor);
+    if (a === null || c === null) return { parseFailed: true, color: s.color, bg: s.backgroundColor };
+    const ratio = (Math.max(a, c) + 0.05) / (Math.min(a, c) + 0.05);
+    return { color: s.color, bg: s.backgroundColor, ratio: +ratio.toFixed(2) };
+  })()`);
+  check("the primary action is readable against its own fill",
+    cta && cta.ratio >= 4.5,
+    cta ? `${cta.color} on ${cta.bg} = ${cta.ratio}:1` : "no primary action found");
+
+  await session.screenshot("new-project-step2");
+
+  // 6. Nothing threw along the way.
   check("no uncaught errors in the console", session.errors.length === 0, session.errors.slice(0, 3).join(" | "));
 } finally {
   ws.close();
