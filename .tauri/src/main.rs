@@ -1329,6 +1329,8 @@ enum AgentLine {
     Keep,
     /// Show this sentence instead.
     Replace(String),
+    /// Do not show it at all.
+    Hide,
 }
 
 /// Rewrite the runtime's internal bookkeeping into something a person can act on.
@@ -1361,6 +1363,18 @@ fn friendly_agent_line(line: &str) -> AgentLine {
         return AgentLine::Replace(format!(
             "patch rejected before it was applied ({reason}) — the agent is retrying with a corrected patch"
         ));
+    }
+    // The runtime resolves a model for its own internals — `gpt-5.6-luna`, for
+    // auto-review and title generation — and warns that it has no metadata for it.
+    // That is never the user's model: the app writes every one of the user's
+    // models into `model_catalog_json` on each run, so an unknown slug here is
+    // always one this app did not ask for, and the fallback metadata it warns
+    // about is only that. Verified rather than assumed: auto-review still works
+    // on a third-party provider with this warning present (a read-only sandbox
+    // forced an approval and the write was approved). It was, however, the line
+    // the user read as "the metadata errors".
+    if line.contains("codex_models_manager") && line.contains("fallback model metadata") {
+        return AgentLine::Hide;
     }
     AgentLine::Keep
 }
@@ -2667,6 +2681,7 @@ impl AgentSession {
                         let shown = match friendly_agent_line(&line) {
                             AgentLine::Replace(message) => message,
                             AgentLine::Keep => line.clone(),
+                            AgentLine::Hide => continue,
                         };
                         stderr_emitter("agent:stderr", redact_for_display(&shown, &known_secrets));
                     }
@@ -3303,9 +3318,10 @@ async fn codex_exec(
         // joined, and it would otherwise reappear raw in the exit line.
         let shown = stderr_text
             .lines()
-            .map(|line| match friendly_agent_line(line) {
-                AgentLine::Replace(message) => message,
-                AgentLine::Keep => line.to_string(),
+            .filter_map(|line| match friendly_agent_line(line) {
+                AgentLine::Replace(message) => Some(message),
+                AgentLine::Keep => Some(line.to_string()),
+                AgentLine::Hide => None,
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -4083,6 +4099,7 @@ Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Upda
                 assert!(message.contains("retrying"), "says what is happening: {message}");
             }
             AgentLine::Keep => panic!("a rejected patch should be translated, not printed raw"),
+            AgentLine::Hide => panic!("a rejected patch should be translated, not hidden"),
         }
     }
 
@@ -4095,6 +4112,7 @@ Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Upda
                 assert!(message.contains("retrying"), "{message}");
             }
             AgentLine::Keep => panic!("expected a translation"),
+            AgentLine::Hide => panic!("expected a translation, not a hide"),
         }
     }
 
@@ -4109,6 +4127,25 @@ Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Upda
         ] {
             assert!(matches!(friendly_agent_line(line), AgentLine::Keep), "rewrote: {line}");
         }
+    }
+
+    #[test]
+    fn the_runtimes_own_model_metadata_warning_is_dropped() {
+        // The line the user read as "the metadata errors". The app writes every
+        // model the user picked into the catalog on each run, so an unknown slug
+        // here is always one of the runtime's own internals, and the warning says
+        // it falls back to metadata — it is not actionable.
+        let raw = "2026-09-23T14:06:26.977051Z  WARN codex_models_manager::model_info: \
+Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
+        assert!(matches!(friendly_agent_line(raw), AgentLine::Hide));
+    }
+
+    #[test]
+    fn a_model_warning_the_user_could_act_on_is_kept() {
+        // Anything else from the same logger is left alone, so this does not
+        // become a blanket silence on model problems.
+        let raw = "WARN codex_models_manager::model_info: model provider timed out";
+        assert!(matches!(friendly_agent_line(raw), AgentLine::Keep));
     }
 
     #[test]
