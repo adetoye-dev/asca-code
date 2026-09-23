@@ -6,7 +6,7 @@
  *  - MCP servers -> written to .acsa/mcp.json (consumed by the MCP client)
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../ui/Icon";
 import {
   Package,
@@ -41,7 +41,9 @@ import {
   type MarketplaceItem,
   type MarketplaceKind,
 } from "../../services/marketplace";
+import { X } from "lucide-react";
 import { marketplaceFetch } from "../../services/marketplaceClient";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 import { openExternal } from "../../services/openExternal";
 import { TechLogo } from "../ui/TechLogos";
 
@@ -102,7 +104,10 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
   const [installedServers, setInstalledServers] = useState<Record<string, any>>({});
   const [toolsById, setToolsById] = useState<Record<string, string[]>>({});
   /** Which entry's detail view is open (one at a time keeps the sidebar calm). */
+  /** The entry whose detail is open — a dialog, not an expanded row. */
   const [expandedId, setExpandedId] = useState<string>("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogA11y(dialogRef, () => setExpandedId(""), Boolean(expandedId));
 
   const refreshInstalled = async () => {
     try {
@@ -495,8 +500,50 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                         />
                       </button>
 
+                      {/* No click-outside handler: the app's other dialogs close on
+                          Escape and on a button, and a backdrop that is itself
+                          clickable is one more thing for a keyboard user to miss. */}
                       {expanded && (
-                <div className="px-2.5 pb-2.5 space-y-2 border-t border-zinc-800 pt-2">
+                        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-6">
+                          <div
+                            ref={dialogRef}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label={item.name}
+                            data-testid="marketplace-detail"
+                            className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-hairline bg-workbench shadow-2xl"
+                          >
+                            <header className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3.5">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate text-sm font-semibold text-zinc-100">
+                                    {item.name}
+                                  </span>
+                                  <span
+                                    className={`shrink-0 rounded px-1 font-mono text-2xs ${trustTone}`}
+                                  >
+                                    {TRUST_LABEL[item.trust]}
+                                  </span>
+                                  {installed && (
+                                    <span className="shrink-0 rounded bg-emerald-500/15 px-1 font-mono text-2xs text-emerald-300">
+                                      Installed
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 text-body text-zinc-500">{item.description}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedId("")}
+                                aria-label="Close"
+                                className="shrink-0 rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+                              >
+                                <Icon icon={X} className="h-4 w-4" />
+                              </button>
+                            </header>
+
+                            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="space-y-3">
                   {item.overview && (
                     <p className="text-body text-zinc-400 leading-relaxed">{item.overview}</p>
                   )}
@@ -647,7 +694,10 @@ export function MarketplaceSidebar({ projectRoot = "" }: MarketplaceSidebarProps
                     )}
                   </div>
                 </div>
-              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
