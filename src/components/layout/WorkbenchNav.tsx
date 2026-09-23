@@ -76,7 +76,7 @@ export const NAV_EXPANDED_WIDTH = 240;
  * column puts any size on the centre line. Expanded does: the row is inset 6px
  * (`mx-1.5`), so the padding makes up the rest of `NAV_COLLAPSED_WIDTH / 2`.
  */
-export const NAV_ICON_SIZE = 24;
+export const NAV_ICON_SIZE = 20;
 export const NAV_ICON_STROKE = 1.5;
 export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2;
 /**
@@ -84,7 +84,7 @@ export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2
  * — one square either way. Its distance from `NAV_ICON_SIZE` is the gutter: the
  * smaller this is, the tighter the highlight hugs the glyph.
  */
-export const NAV_ROW_HEIGHT = 40;
+export const NAV_ROW_HEIGHT = 38;
 /** A cursor crossing the sidebar must not shove the editor across. */
 export const NAV_HOVER_INTENT_MS = 140;
 
