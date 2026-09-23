@@ -1497,6 +1497,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
         indexStatus={indexStatus}
         isIndexing={isIndexing}
         onSyncIndex={syncIndex}
+        agentBlockedOn={waitingForUser}
       />
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}

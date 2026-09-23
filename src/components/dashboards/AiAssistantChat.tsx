@@ -680,6 +680,33 @@ export function AiAssistantChat({
   // to stop while the agent is waiting on an answer, because the turn *limit*
   // stops then too, and a second counter here used to keep running.
 
+  /**
+   * Put the cursor on the card the turn is blocked on.
+   *
+   * The card was already pinned above the composer, so it could be seen — but
+   * nothing announced it and nothing moved focus, which is why a run parked for
+   * six minutes was diagnosed by reading the accessibility tree. A blocking prompt
+   * has to be where the keyboard is, not only where the pixels are. Fired once per
+   * card (`announcedCardRef`), so moving focus elsewhere does not yank it back.
+   */
+  const announcedCardRef = useRef("");
+  useEffect(() => {
+    const key = pendingApproval
+      ? `approval:${String(pendingApproval.id)}`
+      : pendingQuestion
+      ? `question:${String(pendingQuestion.id)}`
+      : "";
+    if (!key) {
+      announcedCardRef.current = "";
+      return;
+    }
+    if (announcedCardRef.current === key) return;
+    const card = composerRef.current?.querySelector<HTMLElement>("[data-pending-card]");
+    if (!card) return;
+    announcedCardRef.current = key;
+    card.focus();
+  }, [pendingApproval, pendingQuestion]);
+
   const prevStatusRef = useRef(status);
   useEffect(() => {
     if (prevStatusRef.current === "running" && (status === "success" || status === "failed" || status === "error")) {
@@ -936,8 +963,14 @@ export function AiAssistantChat({
 
   // Auto-focus the input textarea when panel opens or model changes
   useEffect(() => {
+    // Never steal focus from the card the turn is blocked on. This effect runs
+    // after the card's own focus effect, so without this, opening the chat while
+    // a turn was already parked on an approval put the cursor in the input and
+    // left the thing that needed an answer unannounced. When the card clears, the
+    // input takes focus back, which is where the user is going next anyway.
+    if (pendingApproval || pendingQuestion) return;
     textareaRef.current?.focus();
-  }, [selectedModelItem, workflowMode]);
+  }, [selectedModelItem, workflowMode, pendingApproval, pendingQuestion]);
 
   // Keyboard shortcut listeners (Cmd+L for Chat mode, Shift+Cmd+I for Agent mode)
   useEffect(() => {
@@ -1904,10 +1937,17 @@ Click to re-index project.`}
                 read "APPROVAL NEEDED … $ item/tool/requestUserInput", which told
                 the user nothing and could not be answered correctly. */}
             {pendingQuestion && pendingQuestion.questions.length > 0 && (
-              <div className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
+              <div
+                data-pending-card
+                role="alertdialog"
+                aria-modal="false"
+                aria-labelledby="agent-question-heading"
+                tabIndex={-1}
+                className="mb-3 p-3 rounded-2xl bg-[#111827]/95 border border-purple-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto focus:outline-none"
+              >
                 <div className="flex items-center gap-2 text-purple-300 font-semibold text-2xs tracking-wider uppercase mb-2">
                   <Icon icon={HelpCircle} className="w-3.5 h-3.5 text-purple-300 shrink-0" />
-                  <span>The agent is asking</span>
+                  <span id="agent-question-heading">The agent is asking</span>
                 </div>
                 {pendingQuestion.questions.map((question) => (
                   <div key={question.id} className="mb-3 last:mb-1">
@@ -1966,10 +2006,17 @@ Click to re-index project.`}
             )}
 
             {pendingApproval && (
-              <div className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto">
+              <div
+                data-pending-card
+                role="alertdialog"
+                aria-modal="false"
+                aria-labelledby="agent-approval-heading"
+                tabIndex={-1}
+                className="mb-3 p-3 rounded-2xl bg-[#1c1917]/95 border border-amber-500/60 shadow-2xl backdrop-blur-xl max-h-[45vh] overflow-y-auto focus:outline-none"
+              >
                 <div className="flex items-center gap-2 text-amber-400 font-semibold text-2xs tracking-wider uppercase mb-1.5">
                   <Icon icon={Shield} className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Approval needed</span>
+                  <span id="agent-approval-heading">Approval needed</span>
                 </div>
                 <p className="text-xs text-zinc-300 mb-2 leading-relaxed">
                   {pendingApproval.reason ||

@@ -138,3 +138,60 @@ describe("the chat transcript's render boundary", () => {
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("half a thought");
   });
 });
+
+/**
+ * The card the turn is blocked on.
+ *
+ * It was pinned above the composer, so it could be seen — but it carried no role
+ * and nothing moved focus, which is why a run parked for six minutes was
+ * diagnosed by reading the accessibility tree. These pin the two properties that
+ * make it a prompt rather than a decoration: it is announced as the blocking
+ * dialog it is, and the keyboard lands on it when it appears.
+ */
+describe("the card that blocks the turn", () => {
+  const approval = {
+    id: "appr-1",
+    method: "item/commandExecution/requestApproval",
+    reason: "The agent wants to run a command.",
+    command: "rm -rf build",
+  };
+
+  it("is announced as a dialog, not an anonymous box on screen", () => {
+    render(<AiAssistantChat {...baseProps} pendingApproval={approval} />);
+    const card = screen.getByRole("alertdialog");
+    expect(card.getAttribute("aria-labelledby")).toBe("agent-approval-heading");
+    // `aria-modal="false"` on purpose: it does not take over the screen, it sits
+    // where the input is, and claiming modality it does not have is worse than
+    // claiming none.
+    expect(card.getAttribute("aria-modal")).toBe("false");
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+  });
+
+  it("takes the keyboard when it appears", () => {
+    // `status: "running"` is the real state here: a turn blocked on an approval is
+    // still a running turn, and that is also what makes the composer render at all.
+    render(<AiAssistantChat {...baseProps} status="running" pendingApproval={approval} />);
+    const card = screen.getByRole("alertdialog");
+    expect(document.activeElement).toBe(card);
+  });
+
+  it("announces a question as a dialog too, and names it as one", () => {
+    render(
+      <AiAssistantChat
+        {...baseProps}
+        pendingQuestion={{
+          id: "q1",
+          questions: [{ id: "approval", header: "Design", question: "Which one?", options: [] }],
+        }}
+      />,
+    );
+    const card = screen.getByRole("alertdialog");
+    expect(card.getAttribute("aria-labelledby")).toBe("agent-question-heading");
+    expect(screen.getByText("The agent is asking")).toBeTruthy();
+  });
+
+  it("does not exist when nothing is pending", () => {
+    render(<AiAssistantChat {...baseProps} />);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+});
