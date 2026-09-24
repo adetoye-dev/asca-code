@@ -38,6 +38,7 @@ import {
   type OllamaProgressEvent,
 } from "../../services/ollamaSetup";
 import { aiFetch } from "../../services/aiClient";
+import { explainProviderFailure } from "../../services/providerErrors";
 
 interface AiManagementDashboardProps {
   onModelSettingsChanged?: () => void;
@@ -244,7 +245,15 @@ export function AiManagementDashboard({
 
       if (res.ok) {
         const data = await res.json();
-        setTestResult(data);
+        // The engine reports a failure in `error`; this used to store the payload
+        // whole and then render only `.message`, which is absent on every failure —
+        // so a rejected key, an account with no credit and a dead network all read
+        // "Connection failed. Please check endpoint or API key." `explainProviderFailure`
+        // turns the reason into the fix, and falls back to the provider's own words.
+        const reason =
+          explainProviderFailure(String(data?.error ?? "")) ?? String(data?.error ?? data?.message ?? "");
+        setTestResult({ ok: Boolean(data?.success ?? data?.ok), latencyMs: data?.latencyMs, message: reason });
+        const success = Boolean(data?.success ?? data?.ok);
         const rawList = data.models && data.models.length > 0 ? data.models : activeProvider.availableModels;
         const newModels: string[] = curateProviderModels(activeProvider.id, rawList);
         const currentModel = selectedModel || activeProvider.selectedModel;
@@ -256,7 +265,7 @@ export function AiManagementDashboard({
           ...activeProvider,
           apiKey: apiKeyInput.trim() || activeProvider.apiKey,
           baseUrl: (baseUrlInput || activeProvider.baseUrl || "").trim(),
-          isConnected: !!data.ok,
+          isConnected: success,
           latencyMs: data.latencyMs,
           availableModels: newModels,
           selectedModel: resolvedModel,
@@ -1029,7 +1038,7 @@ export function AiManagementDashboard({
                       <label htmlFor="aimanagementdashboard-api-key-secret-token-stored-in-the-app-3" className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                         <span>API Key / Secret Token</span>
                         <span className="text-2xs text-zinc-500 font-normal">
-                          Stored in the app database on this device — never read back into the page
+                          Stored in your system keychain — never read back into the page
                         </span>
                       </label>
                       <div className="flex items-center gap-2">
@@ -1125,7 +1134,7 @@ export function AiManagementDashboard({
                 </div>
                 {activeProvider.category === "cloud" && (
                   <p className="text-3xs text-zinc-500">
-                    API keys are stored in the app database on this device and used by the agent, editor review and inline edit. They are write-only across the app's own API: the page can set or clear a key and ask whether one exists, but never receives the value.
+                    API keys are kept in your operating system's keychain — macOS Keychain, Windows Credential Manager, Linux Secret Service — and used by the agent, editor review and inline edit. Where a keychain is unavailable the key falls back to the app database with `0600` permissions, and the save reports which happened. They are write-only across the app's own API: the page can set or clear a key and ask whether one exists, but never receives the value.
                   </p>
                 )}
 

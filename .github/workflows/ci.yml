@@ -62,6 +62,19 @@ jobs:
       - name: Production build
         run: npm run build
 
+      # The Rust shell was otherwise only compiled by the `desktop` job, which is
+      # skipped on pushes to `dev` — so a shell change reached CI for the first time
+      # at a *tag*, and that is where a keychain dependency silently took a Tauri
+      # plugin past its npm package and failed the bundle. `--locked` also asserts
+      # the lockfile agrees with Cargo.toml, which is how that drift would be caught
+      # here instead of at release time. The system packages are what the keychain
+      # crate links against on Linux.
+      - name: Rust shell compiles
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev libssl-dev pkg-config
+          cargo check --manifest-path .tauri/Cargo.toml --locked
+
   sidecar:
     name: Frozen engine sidecar
     runs-on: ubuntu-latest

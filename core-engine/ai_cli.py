@@ -85,6 +85,37 @@ def _get(url: str, headers: dict[str, str], timeout: float = 12.0):
         return 0, {"error": str(exc)}
 
 
+def _error_text(body: object) -> str:
+    """A provider's failure, as one string.
+
+    Every hosted provider nests the reason differently — OpenAI and Anthropic put a
+    `message` inside an `error` object, others return a bare string, Gemini returns a
+    list of attempts — and this used to hand whatever it found straight to the UI. A
+    dict arrived as "[object Object]", and the settings page reads `.message`, so the
+    real reason was dropped and every failure read "Connection failed. Please check
+    endpoint or API key." whatever had actually happened. Which is what a person sees
+    when a key is rejected, when an account has no credit, and when the network is
+    down — the same sentence for three different fixes.
+    """
+    if isinstance(body, str):
+        return body.strip()
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    if isinstance(error, str):
+        return error.strip()
+    if isinstance(error, dict):
+        for key in ("message", "detail", "reason"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("message", "detail", "reason", "error_description"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _names(payload: dict) -> list[str]:
     """OpenAI-shaped `{"data": [{"id": ...}]}` or Gemini's `{"models": [...]}`."""
     entries = payload.get("data") or payload.get("models") or []
@@ -116,7 +147,7 @@ def test_connection(payload: dict) -> dict:
                 "ok": False,
                 "success": False,
                 "latencyMs": latency,
-                "error": body.get("error") or "Ollama is not reachable on 127.0.0.1:11434.",
+                "error": _error_text(body) or "Ollama is not reachable on 127.0.0.1:11434.",
             }
         return {
             "ok": True,
@@ -150,7 +181,11 @@ def test_connection(payload: dict) -> dict:
             "ok": False,
             "success": False,
             "latencyMs": latency,
-            "error": body.get("error") or f"Provider returned HTTP {status or 'unreachable'}",
+            "error": (
+                f"HTTP {status or 'unreachable'}: {_error_text(body)}"
+                if _error_text(body)
+                else f"Provider returned HTTP {status or 'unreachable'}"
+            ),
         }
 
     models = _names(body)
