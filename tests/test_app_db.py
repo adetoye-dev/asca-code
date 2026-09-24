@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -252,6 +253,45 @@ class UsageLedgerTests(AppDbTestCase):
     def test_local_models_are_free(self):
         app_db.record_usage("ollama", "qwen2.5-coder:7b", 10_000, 10_000)
         self.assertEqual(app_db.usage_summary()["recent"][0]["cost_usd"], 0.0)
+
+    def test_the_ledger_does_not_grow_without_bound(self):
+        # The one table nothing bounded: the chat is trimmed to its most recent
+        # messages, but every call ever made stayed here forever — a row per model
+        # call, each with a project path and a model name. A slow leak rather than a
+        # bug, which is why it survived: nothing breaks until a database nobody
+        # looks at is large.
+        old = time.time() - (app_db.USAGE_RETENTION_DAYS + 10) * 86_400
+        with app_db.connect() as conn:
+            conn.execute(
+                "INSERT INTO usage_events (ts, provider, model, prompt_tokens,"
+                " completion_tokens, latency_ms, cost_usd)"
+                " VALUES (?, 'deepseek', 'deepseek-flash', 1, 1, 1, 0)",
+                (old,),
+            )
+
+        # Writing a call is what prunes, so there is no schedule to forget.
+        app_db.record_usage("deepseek", "deepseek-flash", 10, 5)
+
+        with app_db.connect() as conn:
+            remaining = conn.execute("SELECT ts FROM usage_events").fetchall()
+        self.assertEqual(len(remaining), 1, "the out-of-window row should be gone")
+        self.assertGreater(remaining[0]["ts"], old)
+
+    def test_pruning_keeps_the_window_the_page_draws(self):
+        # Fourteen days are drawn; ninety are kept. A row inside the window must
+        # survive, or the Performance page would lose history it is meant to show.
+        inside = time.time() - 20 * 86_400
+        with app_db.connect() as conn:
+            conn.execute(
+                "INSERT INTO usage_events (ts, provider, model, prompt_tokens,"
+                " completion_tokens, latency_ms, cost_usd)"
+                " VALUES (?, 'deepseek', 'deepseek-flash', 1, 1, 1, 0)",
+                (inside,),
+            )
+        app_db.record_usage("deepseek", "deepseek-flash", 10, 5)
+        with app_db.connect() as conn:
+            kept = conn.execute("SELECT COUNT(*) AS n FROM usage_events").fetchone()["n"]
+        self.assertEqual(kept, 2)
 
 
 class DatabaseCliTests(AppDbTestCase):
