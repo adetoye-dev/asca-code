@@ -1,7 +1,7 @@
 {
   "name": "acsa-code",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -64,7 +64,7 @@
     "vite": "^6.1.0",
     "vitest": "^5.0.1"
   },
-  "description": "ACSA Code \u2014 a local-first AI engineering workbench: autonomous coding with deterministic verification.",
+  "description": "ACSA Code — a local-first AI engineering workbench: autonomous coding with deterministic verification.",
   "license": "MIT",
   "author": "Adetoye Adewoye",
   "repository": {
