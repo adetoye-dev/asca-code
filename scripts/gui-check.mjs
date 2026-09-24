@@ -347,7 +347,33 @@ try {
 
   await session.screenshot("new-project-step2");
 
-  // 6. Nothing threw along the way.
+  // 6. Reduced motion is honoured. Nothing here respected it: a spinner, a pulsing
+  //    status dot, an entrance animation on every dialog and a sidebar that
+  //    animates its own width were all unavoidable. Asserted on the rail's width
+  //    transition because it is always present, unlike a spinner.
+  // Measured before the emulation, so the assertion is about the *change* rather
+  // than a threshold: with the rule, `0.15s` becomes `0.00001s`; without it, both
+  // readings are `0.15s` and this fails.
+  const normalMotion = await session.eval(`(() => {
+    const rail = document.querySelector('[data-testid="workbench-nav"]');
+    return rail ? getComputedStyle(rail).transitionDuration : null;
+  })()`);
+  await session.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+  await session.send("Page.navigate", { url: APP });
+  await sleep(2200);
+  const reduced = await session.eval(`(() => {
+    const rail = document.querySelector('[data-testid="workbench-nav"]');
+    return rail ? { duration: getComputedStyle(rail).transitionDuration } : null;
+  })()`);
+  check("reduced motion is honoured (transitions collapse)",
+    Boolean(reduced && normalMotion) && parseFloat(reduced.duration) < parseFloat(normalMotion) / 2,
+    reduced ? `rail transition-duration ${normalMotion} -> ${reduced.duration}` : "no rail found");
+  // Put it back, so the checks after this one see the normal page.
+  await session.send("Emulation.setEmulatedMedia", { features: [] });
+
+  // 7. Nothing threw along the way.
   check("no uncaught errors in the console", session.errors.length === 0, session.errors.slice(0, 3).join(" | "));
 } finally {
   ws.close();
