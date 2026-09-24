@@ -3385,6 +3385,37 @@ fn free_local_port() -> Option<u16> {
         .map(|addr| addr.port())
 }
 
+/// Is the local tool adapter on `port` answering?
+///
+/// A bare TCP connect is not enough. The adapter is reused across runs, and one that
+/// has died leaves either nothing listening or — worse — a socket that accepts and
+/// then says nothing, which passes a connect test and fails the first real request.
+/// So this asks the adapter's own `/health` for a 200, with short timeouts: a wedged
+/// process must not be able to hang the start of a run.
+fn adapter_alive(port: u16) -> bool {
+    use std::io::{Read, Write};
+
+    let timeout = std::time::Duration::from_millis(750);
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    if stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    // `Connection: close` means the adapter hangs up, so read to EOF rather than
+    // guessing a length — the response is two lines.
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+}
+
 /// Start (or reuse) the adapter for one provider and return its Responses base URL.
 #[tauri::command]
 async fn local_adapter_start(
@@ -3395,7 +3426,12 @@ async fn local_adapter_start(
     {
         let guard = state.server.lock().map_err(|e| e.to_string())?;
         if let Some(existing) = guard.as_ref() {
-            if existing.provider_id == provider_id {
+            // Alive as well as matching: this used to return the cached URL on the
+            // provider id alone, so an adapter that had died between runs handed the
+            // next run a port with nothing behind it, and every tool call in it
+            // failed as though the model were at fault. Asking it is cheap and it is
+            // the only way to know.
+            if existing.provider_id == provider_id && adapter_alive(existing.port) {
                 return Ok(format!("http://127.0.0.1:{}/v1", existing.port));
             }
         }
@@ -3434,7 +3470,10 @@ async fn local_adapter_start(
     // listener and dies with a connection error that reads like a provider fault.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        // `/health`, not a bare connect: a socket that accepts and then says nothing
+        // passes a connect test and fails the first real request, which is the same
+        // race in a different disguise.
+        if adapter_alive(port) {
             break;
         }
         if let Ok(Some(status)) = child.try_wait() {
@@ -4787,6 +4826,52 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
             .expect("the fake echoed the steer params");
         assert!(echo.contains("stop and do X instead"), "{echo}");
         assert!(echo.contains("expectedTurnId"), "{echo}");
+    }
+
+    /// A one-shot HTTP server for the adapter's health check: it answers exactly one
+    /// connection with `status_line` and then drops it, which is also what makes
+    /// `Connection: close` observable.
+    fn mock_health_server(status_line: &'static str) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a port");
+        let port = listener.local_addr().expect("a local address").port();
+        // Not joined, on purpose: if the code under test never connects, joining
+        // would hang the suite instead of failing it. The thread dies with the
+        // process, and the only thing it owns is a listener on a random port.
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut discard = [0u8; 512];
+                let _ = stream.read(&mut discard);
+                let _ = stream.write_all(status_line.as_bytes());
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_port_nothing_is_listening_on_is_not_alive() {
+        // The case that mattered: an adapter that died between runs left this in the
+        // cache, and the next run was handed a URL with nothing behind it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(!adapter_alive(port));
+    }
+
+    #[test]
+    fn a_healthy_adapter_is_alive() {
+        let port = mock_health_server(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+        );
+        assert!(adapter_alive(port));
+    }
+
+    #[test]
+    fn a_socket_that_accepts_but_does_not_answer_health_is_not_alive() {
+        // The disguise a bare connect test falls for: the port is open, so `connect`
+        // succeeds, and the first real request is the one that fails.
+        let port = mock_health_server("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        assert!(!adapter_alive(port));
     }
 
     /// An in-memory `SecretStore` for the migration tests.
