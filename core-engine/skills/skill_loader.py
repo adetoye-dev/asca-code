@@ -20,7 +20,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("acsa.skills")
+# One shared setup: the same JSON line to stdout and to a rotating file in the
+# data directory, with the component taken from the logger name rather than
+# written into a format string per module. See core-engine/log_setup.py.
+from log_setup import configure
+
+logger = configure("acsa.skills")
 
 
 @dataclass

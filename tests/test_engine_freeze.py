@@ -31,6 +31,17 @@ class EngineFreezeTests(unittest.TestCase):
         return set(re.findall(r"--hidden-import\s+([A-Za-z_][A-Za-z0-9_]*)", script))
 
     def test_every_subcommand_module_is_frozen(self):
+        """The modules that must be named, and why only these.
+
+        `acsa_engine` reaches its subcommands through `importlib`, so PyInstaller's
+        static analysis cannot see them and they have to be named. Everything else
+        the engine imports is a plain module-level import inside one of those, which
+        PyInstaller follows by itself — the frozen sidecar's own `selftest` imports
+        each subcommand, and it is what proves the transitive imports arrived. (That
+        is why `tree_sitter_cfg` has never been in this list and has never broken,
+        and why requiring a complete inventory here would be stricter than the
+        freeze actually is.)
+        """
         frozen = self.frozen_modules()
         missing = {
             name: module
