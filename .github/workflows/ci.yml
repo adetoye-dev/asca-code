@@ -67,12 +67,19 @@ jobs:
       # at a *tag*, and that is where a keychain dependency silently took a Tauri
       # plugin past its npm package and failed the bundle. `--locked` also asserts
       # the lockfile agrees with Cargo.toml, which is how that drift would be caught
-      # here instead of at release time. The system packages are what the keychain
-      # crate links against on Linux.
+      # here instead of at release time.
+      #
+      # The packages are Tauri's own Linux prerequisites plus the Secret Service
+      # headers the keychain crate links against — a Linux compile of a Tauri app
+      # needs the whole webview stack, which is the real cost of checking the shell
+      # on every push rather than in the `desktop` job.
       - name: Rust shell compiles
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev libssl-dev pkg-config
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev libdbus-1-dev \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
           cargo check --manifest-path .tauri/Cargo.toml --locked
 
   sidecar:
