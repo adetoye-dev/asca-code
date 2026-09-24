@@ -73,6 +73,7 @@ mkdir -p .tauri/binaries
   --hidden-import crash_log \
   --hidden-import backup \
   --hidden-import support \
+  --hidden-import snapshot_cli \
   core-engine/acsa_engine.py
 
 ENGINE_BIN=".tauri/engine/acsa-engine/acsa-engine"
