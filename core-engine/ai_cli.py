@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import tls_context
+
 # Vendors that speak the OpenAI wire format (`GET /models`, bearer token).
 OPENAI_COMPATIBLE = {
     "openai",
@@ -71,7 +73,11 @@ def _resolve_key(provider: str, explicit: str) -> str:
 def _get(url: str, headers: dict[str, str], timeout: float = 12.0):
     request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # The engine ships frozen, and the interpreter that froze it decides
+        # whether TLS can verify anything at all. See tls_context.
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=tls_context.https_context()
+        ) as response:
             return response.status, json.loads(response.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -203,7 +209,11 @@ def _post_json(url: str, headers: dict[str, str], body: dict, timeout: float):
         url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # The engine ships frozen, and the interpreter that froze it decides
+        # whether TLS can verify anything at all. See tls_context.
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=tls_context.https_context()
+        ) as response:
             return response.status, json.loads(response.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         return exc.code, {"error": f"HTTP {exc.code}"}
@@ -710,7 +720,9 @@ def _stream_completion(provider, model, base_url, api_key, messages, images, on_
         request = urllib.request.Request(
             url, data=json.dumps(payload_body).encode("utf-8"), headers=headers, method="POST"
         )
-        return urllib.request.urlopen(request, timeout=300.0)
+        return urllib.request.urlopen(
+            request, timeout=300.0, context=tls_context.https_context()
+        )
 
     try:
         try:
