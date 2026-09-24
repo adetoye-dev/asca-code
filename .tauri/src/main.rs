@@ -2747,37 +2747,57 @@ async fn secrets_list(app_handle: tauri::AppHandle) -> Result<Vec<String>, Strin
 
 /// Resolve a provider credential, preferring the OS keychain.
 ///
-/// **Stage one of the keychain migration, and deliberately non-destructive.** A
-/// value found in the old store is *copied* into the keychain and read back to
-/// prove the copy landed, but the original stays where it is. Nothing is deleted
-/// until a *signed* build has been shown to read the keychain back: macOS binds
-/// Keychain access to the app's signing identity, and the dev binary is ad-hoc
-/// signed with a per-build identifier, so "it worked in dev" is no evidence at all
-/// about the shipped app. Deleting on that evidence could lose a key while looking
-/// successful. See the encryption-at-rest row in `docs/PRODUCTION_CHECKLIST.md`.
+/// A value found only in the old store is *copied* into the keychain, read back
+/// through a fresh entry to prove it landed, and only then is `after_copy` allowed
+/// to let the plaintext original go. That gate is the whole reason the delete waited:
+/// a copy that cannot be read back is not a copy, and deleting on that evidence would
+/// lose a key while looking successful. It was held open until a *hardened,
+/// Developer-ID-signed* build demonstrated the round trip — measured on one
+/// (`flags=0x10000(runtime)`, `TeamIdentifier=TFNTZSW82U`), which is the execution
+/// context the app actually runs in. See the encryption-at-rest row in
+/// `docs/PRODUCTION_CHECKLIST.md`.
 ///
 /// Copying is best effort in the other direction too: a keychain that refuses — a
 /// headless Linux box with no Secret Service, a locked keyring — must not stop a run
-/// we already have a credential for. The failure is silent here on purpose; the
-/// read path is what matters, and it still has the old copy to fall back on.
+/// we already have a credential for. The failure is silent here on purpose; the read
+/// path is what matters, and the old copy survives precisely because the copy failed.
 fn resolve_provider_key(
     store: &dyn SecretStore,
     provider: &str,
     from_old_store: impl FnOnce() -> Option<String>,
+    after_copy: impl FnOnce(&str),
 ) -> Option<String> {
     let name = secret_name_for_provider(provider);
     if let Some(key) = store.get(&name) {
         return Some(key);
     }
     let key = from_old_store()?;
-    let _ = store.set(&name, &key);
+    if store.set(&name, &key).is_ok() && store.get(&name).as_deref() == Some(key.as_str()) {
+        after_copy(&name);
+    }
     Some(key)
 }
 
 fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<String> {
-    resolve_provider_key(&KeychainStore, provider, || {
-        engine_resolve_key_from_old_store(app_handle, provider)
-    })
+    resolve_provider_key(
+        &KeychainStore,
+        provider,
+        || engine_resolve_key_from_old_store(app_handle, provider),
+        |name| engine_forget_old_store(app_handle, name),
+    )
+}
+
+/// Drop the engine's plaintext copy of a credential the keychain now holds.
+///
+/// Best effort, and only ever reached once the keychain has been shown to return the
+/// value: if this fails the key simply stays in both places and the next run tries
+/// again, which is the state every release before this one shipped in.
+fn engine_forget_old_store(app_handle: &tauri::AppHandle, name: &str) {
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "db");
+    argv.push("secrets.delete".to_string());
+    argv.push(format!("{{\"name\":\"{}\"}}", name));
+    let _ = Command::new(&program).args(&argv).output();
 }
 
 /// The database-backed lookup this replaces. Kept as the fallback until the
@@ -4889,6 +4909,10 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
     struct MemoryStore {
         values: std::sync::Mutex<std::collections::HashMap<String, String>>,
         refuse_writes: bool,
+        /// Accepts a write and does not keep it — what `keyring` does when no
+        /// platform backend is compiled in, and the reason 0.2.6 put every
+        /// credential in the database while the page said "keychain".
+        lose_writes: bool,
     }
 
     impl SecretStore for MemoryStore {
@@ -4899,6 +4923,9 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         fn set(&self, name: &str, value: &str) -> Result<(), String> {
             if self.refuse_writes {
                 return Err("the keychain is not available".to_string());
+            }
+            if self.lose_writes {
+                return Ok(());
             }
             self.values.lock().unwrap().insert(name.to_string(), value.to_string());
             Ok(())
@@ -4915,10 +4942,15 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         let store = MemoryStore::default();
         store.set("deepseek_api_key", "sk-from-keychain").unwrap();
         let mut asked = false;
-        let resolved = resolve_provider_key(&store, "deepseek", || {
-            asked = true;
-            Some("sk-from-the-database".to_string())
-        });
+        let resolved = resolve_provider_key(
+            &store,
+            "deepseek",
+            || {
+                asked = true;
+                Some("sk-from-the-database".to_string())
+            },
+            |_| panic!("nothing was copied, so nothing may be deleted"),
+        );
         assert_eq!(resolved.as_deref(), Some("sk-from-keychain"));
         // Once the keychain has it, the old store is not consulted at all — which
         // matters because that lookup spawns the engine.
@@ -4926,26 +4958,35 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
     }
 
     #[test]
-    fn a_value_from_the_old_store_is_copied_into_the_keychain_and_kept_where_it_was() {
+    fn a_value_from_the_old_store_is_copied_and_only_then_let_go() {
         let store = MemoryStore::default();
         let old = std::sync::Mutex::new(Some("sk-from-the-database".to_string()));
+        let dropped = std::sync::Mutex::new(Vec::<String>::new());
 
-        let resolved = resolve_provider_key(&store, "deepseek", || old.lock().unwrap().clone());
+        let resolved = resolve_provider_key(
+            &store,
+            "deepseek",
+            || old.lock().unwrap().clone(),
+            |name| {
+                dropped.lock().unwrap().push(name.to_string());
+                *old.lock().unwrap() = None;
+            },
+        );
 
         assert_eq!(resolved.as_deref(), Some("sk-from-the-database"));
-        // The copy is additive. Nothing here deletes, and that is deliberate: the
-        // delete waits until a *signed* build has been shown to read the keychain
-        // back, because macOS binds Keychain access to the signing identity and the
-        // dev binary is ad-hoc signed with a per-build identifier.
         assert_eq!(
             store.get("deepseek_api_key").as_deref(),
             Some("sk-from-the-database"),
             "the value should have been copied into the keychain"
         );
-        assert!(
-            old.lock().unwrap().is_some(),
-            "the old copy must survive the migration"
+        // The plaintext copy is released only after the keychain was shown to hold
+        // the value, and the run still gets its credential from this call.
+        assert_eq!(
+            dropped.lock().unwrap().as_slice(),
+            ["deepseek_api_key"],
+            "the copy should have been let go exactly once, and under its own name"
         );
+        assert!(old.lock().unwrap().is_none(), "the old copy should be gone");
     }
 
     #[test]
@@ -4953,15 +4994,51 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         // A headless Linux box with no Secret Service, or a locked keyring: the run
         // has a credential and must not be stopped because a copy failed.
         let store = MemoryStore { refuse_writes: true, ..Default::default() };
-        let resolved = resolve_provider_key(&store, "deepseek", || Some("sk-old".to_string()));
+        let resolved = resolve_provider_key(
+            &store,
+            "deepseek",
+            || Some("sk-old".to_string()),
+            |_| panic!("the keychain never held it, so the only copy must survive"),
+        );
         assert_eq!(resolved.as_deref(), Some("sk-old"));
         assert_eq!(store.get("deepseek_api_key"), None);
     }
 
     #[test]
+    fn a_store_that_loses_the_write_keeps_the_only_copy() {
+        // The failure that shipped in 0.2.6: the store reports success, a fresh
+        // entry cannot see the value, and the old copy is therefore the only real
+        // one. The read-back check is what stands between that and a deleted key.
+        let store = MemoryStore { lose_writes: true, ..Default::default() };
+        let old = std::sync::Mutex::new(Some("sk-only-copy".to_string()));
+
+        let resolved = resolve_provider_key(
+            &store,
+            "deepseek",
+            || old.lock().unwrap().clone(),
+            |_| *old.lock().unwrap() = None,
+        );
+
+        assert_eq!(resolved.as_deref(), Some("sk-only-copy"));
+        assert!(store.get("deepseek_api_key").is_none(), "nothing was stored");
+        assert!(
+            old.lock().unwrap().is_some(),
+            "the store never proved it held the value, so the only copy must survive"
+        );
+    }
+
+    #[test]
     fn a_missing_credential_resolves_to_nothing_and_writes_nothing() {
         let store = MemoryStore::default();
-        assert_eq!(resolve_provider_key(&store, "deepseek", || None), None);
+        assert_eq!(
+            resolve_provider_key(
+                &store,
+                "deepseek",
+                || None,
+                |_| panic!("nothing was copied, so nothing may be deleted"),
+            ),
+            None
+        );
         // Especially not an empty string: a stored "" would then read as "present".
         assert_eq!(store.get("deepseek_api_key"), None);
     }
