@@ -80,7 +80,19 @@ jobs:
             build-essential pkg-config libssl-dev libdbus-1-dev \
             libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev
-          cargo check --manifest-path .tauri/Cargo.toml --locked
+          # `tauri::generate_context!()` refuses to expand while any
+          # `bundle.resources` path is missing, and two of them are gitignored
+          # build output: `engine/` (the ~22 MB Python freeze) and
+          # `engine-codex/` (a ~212 MB download). The macro only stats the path,
+          # so an empty directory satisfies it — and building them for real here
+          # would put a PyInstaller freeze and a 212 MB fetch on the critical
+          # path of every push, which is the `sidecar` job's work, not this one's.
+          mkdir -p .tauri/engine .tauri/engine-codex
+          # `--all-targets` also compiles the `#[cfg(test)]` module in main.rs,
+          # which is the only place the shell's 43 tests live. Without it a
+          # test-only break waited for a PR or a tag, since `cargo test` is in
+          # the `desktop` job, which `dev` pushes skip.
+          cargo check --manifest-path .tauri/Cargo.toml --locked --all-targets
 
   sidecar:
     name: Frozen engine sidecar
