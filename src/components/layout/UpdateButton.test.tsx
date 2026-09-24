@@ -14,6 +14,9 @@ vi.mock("../../services/appUpdater", () => ({
   checkForUpdate: vi.fn(async () => available),
   installUpdate: vi.fn(async (onProgress?: (n: number) => void) => onProgress?.(100)),
   restartApp: vi.fn(async () => undefined),
+  // The real channel name: the component subscribes to it, so the mock has to
+  // carry the same string or nothing crosses the boundary in a test.
+  UPDATE_ANNOUNCEMENT: "acsa:update",
 }));
 
 const { UpdateButton } = await import("./UpdateButton");
@@ -68,5 +71,35 @@ describe("the titlebar update button", () => {
     expect(updater.restartApp).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /restart now/i }));
     expect(updater.restartApp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("an update found on another surface", () => {
+  it("shows the button immediately, without waiting for a relaunch", async () => {
+    // Reported: Settings → About said "0.2.8 is available — the button is in the
+    // titlebar" while no button existed, because this component only looked at
+    // mount. The announcement is what makes the two agree.
+    vi.mocked(updater.checkForUpdate).mockResolvedValueOnce(null);
+    const { container } = render(<UpdateButton />);
+    await new Promise((r) => setTimeout(r, 3000));
+    expect(container.innerHTML).toBe("");
+
+    window.dispatchEvent(
+      new CustomEvent("acsa:update", { detail: { kind: "available", update: available } }),
+    );
+    expect(await findButton()).toBeTruthy();
+  });
+
+  it("offers the restart, not a second download, when another surface installed it", async () => {
+    render(<UpdateButton />);
+    await findButton();
+
+    window.dispatchEvent(
+      new CustomEvent("acsa:update", { detail: { kind: "installed", version: available.version } }),
+    );
+    fireEvent.click(await findButton());
+
+    expect(await screen.findByRole("button", { name: /restart now/i })).toBeTruthy();
+    expect(updater.installUpdate).not.toHaveBeenCalled();
   });
 });

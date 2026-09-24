@@ -13,7 +13,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../ui/Icon";
 import { ArrowDownToLine, RefreshCw, X, AlertCircle, Check } from "lucide-react";
-import { checkForUpdate, installUpdate, restartApp, autoCheckEnabled, type AvailableUpdate } from "../../services/appUpdater";
+import {
+  checkForUpdate,
+  installUpdate,
+  restartApp,
+  autoCheckEnabled,
+  UPDATE_ANNOUNCEMENT,
+  type AvailableUpdate,
+  type UpdateAnnouncement,
+} from "../../services/appUpdater";
 
 /** Long enough that it never competes with the first paint. */
 const STARTUP_DELAY_MS = 2500;
@@ -37,6 +45,31 @@ export function UpdateButton() {
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
+  }, []);
+
+  // A check anywhere else — the Settings → About pane, or a later one on launch —
+  // shows or clears this button immediately. Without it, finding an update in
+  // Settings left the button hidden until the next launch, which made "check now"
+  // look like it had done nothing.
+  useEffect(() => {
+    const onAnnouncement = (event: Event) => {
+      const detail = (event as CustomEvent<UpdateAnnouncement>).detail;
+      if (!detail) return;
+      if (detail.kind === "available") {
+        setUpdate(detail.update);
+        setPhase("idle");
+        setDetail("");
+      } else if (detail.kind === "none") {
+        setUpdate(null);
+      } else {
+        // Another surface ran the install: this one must offer the restart, not
+        // the download it just watched finish.
+        setPhase("ready");
+        setPercent(100);
+      }
+    };
+    window.addEventListener(UPDATE_ANNOUNCEMENT, onAnnouncement);
+    return () => window.removeEventListener(UPDATE_ANNOUNCEMENT, onAnnouncement);
   }, []);
 
   // Click-away, so an open panel is never something you have to hunt a close

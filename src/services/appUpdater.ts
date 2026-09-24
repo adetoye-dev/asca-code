@@ -29,6 +29,32 @@ export interface AvailableUpdate {
 let cached: AvailableUpdate | null = null;
 let lastCheckAt = 0;
 
+/**
+ * What a check concludes, announced rather than held.
+ *
+ * `cached` is module state and a component cannot see it change, which is how the
+ * About pane could find an update while the titlebar button stayed hidden until
+ * the next launch — the pane said "the button is in the titlebar" and there was no
+ * button. Every surface that shows update state listens here instead, so finding
+ * one anywhere makes it appear everywhere.
+ */
+export type UpdateAnnouncement =
+  | { kind: "available"; update: AvailableUpdate }
+  | { kind: "none" }
+  | { kind: "installed"; version: string };
+
+export const UPDATE_ANNOUNCEMENT = "acsa:update";
+
+function announce(announcement: UpdateAnnouncement): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(UPDATE_ANNOUNCEMENT, { detail: announcement }));
+    }
+  } catch {
+    /* no window (tests, or a non-DOM host): the returned outcome still carries it */
+  }
+}
+
 /** Whether the app may look for updates without being asked. */
 export function autoCheckEnabled(): boolean {
   try {
@@ -85,6 +111,7 @@ export async function checkForUpdateDetailed(
     lastCheckAt = Date.now();
     if (!update?.available) {
       cached = null;
+      announce({ kind: "none" });
       return { kind: "current" };
     }
     cached = {
@@ -93,6 +120,7 @@ export async function checkForUpdateDetailed(
       notes: String(update.body ?? "").slice(0, 2000),
       date: update.date ? String(update.date) : undefined,
     };
+    announce({ kind: "available", update: cached });
     return { kind: "available", update: cached };
   } catch (error) {
     lastCheckAt = Date.now();
@@ -135,6 +163,10 @@ export async function installUpdate(onProgress?: (percent: number) => void): Pro
       onProgress?.(100);
     }
   });
+  // Announced, not merely cleared: another surface may be the one showing the
+  // update, and it has to switch to "restart to finish" rather than offer the
+  // download it just completed.
+  announce({ kind: "installed", version: String(update.version) });
   cached = null;
 }
 
