@@ -3005,6 +3005,73 @@ async fn agent_interrupt(
     Ok(())
 }
 
+/// The `turn/steer` params, built in one place.
+///
+/// `expectedTurnId` is the field worth having a test for: the schema marks it
+/// required and calls it a precondition — "the request fails when it does not
+/// match the currently active turn" — so a steer is refused rather than silently
+/// becoming a new turn when the turn it was aimed at has finished.
+fn steer_params(thread_id: &str, turn_id: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "threadId": thread_id,
+        "expectedTurnId": turn_id,
+        "input": [{ "type": "text", "text": text }],
+    })
+}
+
+/// Add a message to the turn that is already running, instead of starting another.
+///
+/// The schema is read, not inferred (`codex app-server generate-json-schema`):
+/// `TurnSteerParams` requires `threadId`, the `input` array, and — the part worth
+/// knowing — `expectedTurnId`, described there as a "required active turn id
+/// precondition. The request fails when it does not match the currently active
+/// turn." So this names the turn it believes is running, and a steer aimed at a
+/// turn that has since finished is refused by the runtime rather than silently
+/// becoming a new turn.
+///
+/// It can still be refused for a reason the caller has to show: a turn that cannot
+/// accept same-turn steering (`/review`, manual `/compact`) answers
+/// `ActiveTurnNotSteerable`. That error travels back to the composer, which says
+/// so rather than dropping the message.
+#[tauri::command]
+async fn agent_steer(
+    state: State<'_, AgentState>,
+    text: String,
+) -> Result<(), String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no agent session is running")?;
+    let thread_id = session
+        .thread_id
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .filter(|id| !id.is_empty())
+        .ok_or("no thread is open")?;
+    let turn_id = session
+        .turn_id
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .filter(|id| !id.is_empty())
+        // Same reason as the interrupt: the schema marks it required, so a
+        // request without it is discarded.
+        .ok_or("no turn is running to steer")?;
+
+    let reply = session.request(
+        "turn/steer",
+        steer_params(&thread_id, &turn_id, &text),
+        std::time::Duration::from_secs(30),
+    )?;
+    // The reply names the turn the message landed in. It should be the same one,
+    // and storing it keeps the slot right if the runtime ever reports otherwise.
+    if let Some(id) = reply.pointer("/result/turnId").and_then(|v| v.as_str()) {
+        if let Ok(mut slot) = session.turn_id.lock() {
+            *slot = Some(id.to_string());
+        }
+    }
+    Ok(())
+}
+
 /// A local-model tool adapter, if one is running.
 ///
 /// It speaks the Responses API to the runtime and Ollama's native `/api/chat` to
@@ -3390,6 +3457,7 @@ fn main() {
             agent_turn,
             agent_respond,
             agent_interrupt,
+            agent_steer,
             agent_stop,
             local_adapter_start,
             local_adapter_stop,
@@ -3623,6 +3691,12 @@ for line in sys.stdin:
                          "startedAtMs": 0}})
         note("item/completed", {"item": {"type": "agentMessage", "text": "done", "id": "m1"}})
         note("turn/completed", {"threadId": "fake-thread-1", "turn": turn})
+    elif method == "turn/steer":
+        # Echo the params back, so a test can prove the request carried the
+        # thread, the *expected* turn id and the message — the three required
+        # fields, one of which is a precondition rather than a name.
+        note("acsa/test/steerParams", msg.get("params"))
+        send({"id": rid, "result": {"turnId": "fake-turn-1"}})
     elif method == "turn/interrupt":
         send({"id": rid, "result": {}})
 "#,
@@ -4359,5 +4433,66 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         assert!(result.is_err(), "an unknown template must not silently succeed");
         // Nothing half-made left behind, and above all no stray main.py.
         assert!(!root.exists(), "an unknown template created {}", root.display());
+    }
+
+    #[test]
+    fn a_steer_names_the_turn_it_expects() {
+        // The schema marks `expectedTurnId` required and calls it a precondition,
+        // so this is the field a wrong guess would silently turn into a second
+        // turn. Read from `codex app-server generate-json-schema`, not inferred.
+        let params = steer_params("thread-7", "turn-9", "actually, use tabs");
+        assert_eq!(params["threadId"], "thread-7");
+        assert_eq!(params["expectedTurnId"], "turn-9");
+        assert_eq!(params["input"][0]["type"], "text");
+        assert_eq!(params["input"][0]["text"], "actually, use tabs");
+        // Exactly the three required keys, so nothing is sent that the runtime
+        // would have to ignore.
+        let keys: Vec<&String> = params.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 3, "unexpected keys: {keys:?}");
+    }
+
+    #[test]
+    fn a_steer_reaches_the_runtime_and_its_message_survives_the_pipe() {
+        let script = fake_app_server();
+        let events: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let emitter: AgentEmitter = std::sync::Arc::new(move |name: &str, line: String| {
+            sink.lock().unwrap().push((name.to_string(), line));
+        });
+
+        let mut session = AgentSession::spawn(&script, &std::env::temp_dir(), ".", &[], emitter)
+            .expect("spawn the fake runtime");
+        session
+            .request("initialize", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("initialize answers");
+        session
+            .request("thread/start", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("thread/start answers");
+        let turn = session
+            .request("turn/start", serde_json::json!({}), std::time::Duration::from_secs(5))
+            .expect("turn/start answers");
+        let turn_id = turn["result"]["turn"]["id"].as_str().unwrap().to_string();
+
+        let reply = session
+            .request(
+                "turn/steer",
+                steer_params("fake-thread-1", &turn_id, "stop and do X instead"),
+                std::time::Duration::from_secs(5),
+            )
+            .expect("turn/steer answers");
+        // The reply names the turn the message landed in, which is what the command
+        // writes back into the session's turn slot.
+        assert_eq!(reply["result"]["turnId"], "fake-turn-1");
+
+        // And the runtime saw the message itself, not just the envelope.
+        let seen = events.lock().unwrap();
+        let echo = seen
+            .iter()
+            .find(|(name, line)| name == "agent:event" && line.contains("acsa/test/steerParams"))
+            .map(|(_, line)| line.clone())
+            .expect("the fake echoed the steer params");
+        assert!(echo.contains("stop and do X instead"), "{echo}");
+        assert!(echo.contains("expectedTurnId"), "{echo}");
     }
 }

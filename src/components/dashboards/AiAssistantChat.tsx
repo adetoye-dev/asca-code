@@ -64,6 +64,11 @@ interface AiAssistantChatProps {
     images?: string[]
   ) => void;
   onCancelPipeline: () => void;
+  /**
+   * Send a message into the turn that is already running. Resolves to `null` on
+   * success, or a sentence to show — and to put the unsent text back for.
+   */
+  onSteerPipeline?: (text: string) => Promise<string | null>;
   projectRoot?: string;
   /** Current git branch of the active project (shown on the hero welcome screen). */
   branch?: string;
@@ -516,6 +521,7 @@ export function AiAssistantChat({
   activityLog,
   onRunPipeline,
   onCancelPipeline,
+  onSteerPipeline,
   projectRoot = "",
   branch = "",
   onClose,
@@ -596,6 +602,8 @@ export function AiAssistantChat({
   const draft = useChatDraft();
   const [confirmClearChat, setConfirmClearChat] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  /** Why the last steer did not send, if it did not. Cleared on the next send. */
+  const [steerError, setSteerError] = useState<string | null>(null);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
   const isStreamingRef = useRef(false);
 
@@ -1058,7 +1066,35 @@ export function AiAssistantChat({
     const promptToSend = trimmed || (currentImages ? "Please analyze the attached image(s)." : "");
 
     if (workflowMode === "agent") {
-      if (status === "running") return;
+      if (status === "running") {
+        // Steering, not a second turn: the runtime takes a message into the turn
+        // that is already running. This used to `return` here, so pressing Enter
+        // mid-run did nothing at all and said nothing about it.
+        if (!onSteerPipeline) return;
+        setSteerError(null);
+        const failure = await onSteerPipeline(promptToSend);
+        if (failure) {
+          // The text stays in the composer: a message that did not send must not
+          // look like one that did, and retyping it is the tax this avoids.
+          setSteerError(failure);
+          return;
+        }
+        const steered: ChatMessage = {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: promptToSend,
+          timestamp: Date.now(),
+        };
+        setChatMessages((prev) => {
+          const next = [...prev, steered];
+          saveChatHistory(next, projectRoot);
+          return next;
+        });
+        chatDraft.set("");
+        // Attachments are deliberately kept: a steer carries text only, so they
+        // were not sent and are still the user's to send with the next turn.
+        return;
+      }
       const providers = loadAllProviders();
       const activeProvider = selectedModelItem ? providers[selectedModelItem.providerId] : undefined;
 
@@ -1930,6 +1966,19 @@ Click to re-index project.`}
           className={`p-3 border-t border-[var(--vscode-border)] bg-[#18181b] shrink-0 font-sans ${isWide ? "py-4" : ""}`}
         >
           <div className={isWide ? "max-w-3xl lg:max-w-4xl mx-auto w-full" : "w-full"}>
+            {/* Why a steer did not send. Above the input, where the text it
+                refers to still is — the message is kept, so this explains rather
+                than reports a loss. */}
+            {steerError && (
+              <div
+                role="alert"
+                data-testid="steer-error"
+                className="mb-2 flex items-start gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 px-3 py-2 text-2xs leading-relaxed text-amber-100"
+              >
+                <Icon icon={AlertCircle} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300" />
+                <span className="break-words">{steerError}</span>
+              </div>
+            )}
             {/* The agent is blocked until this is answered. */}
             {/* A question, not a permission request. The runtime's own
                 `request_user_input` carries options and free text, and the answer
@@ -2241,14 +2290,39 @@ Click to re-index project.`}
                 {/* Right: Send / Stop icon button */}
                 <div className="flex items-center gap-1 shrink-0">
                   {(isStreaming || status === "running") ? (
-                    <button
-                      type="button"
-                      onClick={handleStopStream}
-                      className="flex items-center justify-center w-7 h-7 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 transition-colors shadow-sm"
-                      title="Stop Generation"
-                    >
-                      <Icon icon={Square} className="w-3.5 h-3.5" />
-                    </button>
+                    <>
+                      {/* Steering. The composer used to offer only Stop while a
+                          turn ran, so a message typed mid-run had nowhere to go
+                          and Enter did nothing at all. Text only: the runtime
+                          accepts images in a steer, this command does not send
+                          them, and saying so beats dropping them. */}
+                      <button
+                        type="button"
+                        onClick={() => handleSend()}
+                        disabled={!draft.trim()}
+                        className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all shadow-sm shrink-0 ${
+                          draft.trim()
+                            ? "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20 cursor-pointer"
+                            : "bg-zinc-800/40 border border-zinc-800/80 text-zinc-500 cursor-not-allowed"
+                        }`}
+                        title={
+                          draft.trim()
+                            ? "Send into the running turn (Enter) — text only"
+                            : "Type a message to steer the running turn"
+                        }
+                        aria-label="Steer the running turn"
+                      >
+                        <Icon icon={ArrowUp} className="w-3.5 h-3.5 stroke-[2.5]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopStream}
+                        className="flex items-center justify-center w-7 h-7 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 transition-colors shadow-sm"
+                        title="Stop Generation"
+                      >
+                        <Icon icon={Square} className="w-3.5 h-3.5" />
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"

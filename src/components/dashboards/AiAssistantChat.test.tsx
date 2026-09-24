@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // jsdom implements neither of these; the transcript scrolls its tail into view on
 // every append, and the send button measures nothing.
@@ -193,5 +193,57 @@ describe("the card that blocks the turn", () => {
   it("does not exist when nothing is pending", () => {
     render(<AiAssistantChat {...baseProps} />);
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+});
+
+/**
+ * Steering: a message sent while a turn is running goes *into* that turn.
+ *
+ * The composer used to offer only Stop while running, and `handleSend` returned
+ * early on `status === "running"` — so pressing Enter mid-run did nothing and
+ * said nothing. The runtime takes `turn/steer`; these pin that the app uses it,
+ * and that a refusal does not swallow the message.
+ */
+describe("steering a running turn", () => {
+  const steerButton = () => screen.getByRole("button", { name: /steer the running turn/i });
+
+  it("sends the message into the running turn instead of starting another", async () => {
+    const steer = vi.fn().mockResolvedValue(null);
+    const run = vi.fn();
+    render(
+      <AiAssistantChat
+        {...baseProps}
+        status="running"
+        onRunPipeline={run}
+        onSteerPipeline={steer}
+      />,
+    );
+    act(() => chatDraft.set("use tabs instead"));
+    fireEvent.click(steerButton());
+
+    await waitFor(() => expect(steer).toHaveBeenCalledWith("use tabs instead"));
+    // Not a second turn, and the composer is cleared only because it sent.
+    expect(run).not.toHaveBeenCalled();
+    expect(chatDraft.get()).toBe("");
+  });
+
+  it("keeps the text and says why when the turn refuses to be steered", async () => {
+    // The runtime's own refusal for `/review` and manual `/compact`.
+    const refusal = "This turn cannot be steered — a review or a compaction is running. Wait for it to finish.";
+    const steer = vi.fn().mockResolvedValue(refusal);
+    render(<AiAssistantChat {...baseProps} status="running" onSteerPipeline={steer} />);
+    act(() => chatDraft.set("change of plan"));
+    fireEvent.click(steerButton());
+
+    await waitFor(() => expect(screen.getByTestId("steer-error")).toBeTruthy());
+    expect(screen.getByText(refusal)).toBeTruthy();
+    // The message is still there to resend: a failed send must not look like one
+    // that worked, and must not cost the user their typing.
+    expect(chatDraft.get()).toBe("change of plan");
+  });
+
+  it("offers no steer control when nothing is running", () => {
+    render(<AiAssistantChat {...baseProps} onSteerPipeline={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /steer the running turn/i })).toBeNull();
   });
 });

@@ -1221,6 +1221,11 @@ export interface UsePipelineReturn {
     images?: string[]
   ) => Promise<void>;
   cancelPipeline: () => void;
+  /**
+   * Add a message to the turn that is already running. Resolves to `null` on
+   * success, or a sentence to show the user — and to put the unsent text back for.
+   */
+  steerPipeline: (text: string) => Promise<string | null>;
   clearLog: () => void;
   isTauriAvailable: boolean;
 }
@@ -2375,6 +2380,39 @@ export function usePipeline(): UsePipelineReturn {
     setActivityLog([]);
   }, []);
 
+  /**
+   * Add a message to the turn that is already running.
+   *
+   * Returns `null` on success, or a sentence to show on failure — it does not
+   * throw, because every failure here is one the user can act on and the caller
+   * needs to put the unsent text back rather than lose it.
+   *
+   * The failures are real and distinguishable. The runtime refuses a steer whose
+   * `expectedTurnId` no longer matches ("the turn moved on"), and refuses one
+   * aimed at a turn that cannot accept same-turn steering — `/review` and manual
+   * `/compact` answer `ActiveTurnNotSteerable`. Say which, rather than leaving a
+   * message that appeared to send and did nothing.
+   */
+  const steerPipeline = useCallback(async (text: string): Promise<string | null> => {
+    const message = text.trim();
+    if (!message) return "There is nothing to send.";
+    if (!isTauriAvailable) return DESKTOP_REQUIRED_MESSAGE;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("agent_steer", { text: message });
+      return null;
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      if (/ActiveTurnNotSteerable|not steerable/i.test(raw)) {
+        return "This turn cannot be steered — a review or a compaction is running. Wait for it to finish.";
+      }
+      if (/expectedTurnId|precondition|no turn is running/i.test(raw)) {
+        return "That turn had already finished, so the message was not sent.";
+      }
+      return `Could not send: ${raw}`;
+    }
+  }, [isTauriAvailable]);
+
   return {
     activeProject,
     projectFiles,
@@ -2422,6 +2460,7 @@ export function usePipeline(): UsePipelineReturn {
     setActiveCenterView,
     runPipeline,
     cancelPipeline,
+    steerPipeline,
     clearLog,
     isTauriAvailable,
     streamingAnswer,
