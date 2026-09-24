@@ -3140,6 +3140,12 @@ async fn agent_start(
     project_root: String,
     config_toml: String,
     provider_id: String,
+    // The id the runtime routes with, which is not always the provider's own name.
+    // `openai` is built into the runtime and cannot be overridden — offering a
+    // `[model_providers.openai]` table is a hard config error, so the caller
+    // namespaces it. `provider_id` stays the real name because that is what the
+    // credential lookup and the catalog file are keyed by.
+    runtime_provider_id: String,
     catalog_json: String,
     model: String,
     resume_thread_id: Option<String>,
@@ -3208,7 +3214,7 @@ async fn agent_start(
     let resuming = resume_thread_id.as_deref().map(str::trim).unwrap_or("").to_string();
     let mut thread_params = serde_json::json!({
         "model": model,
-        "modelProvider": provider_id,
+        "modelProvider": runtime_provider_id,
         "cwd": working_dir,
         "approvalPolicy": approval_policy,
         "approvalsReviewer": approvals_reviewer,
@@ -3566,6 +3572,9 @@ async fn codex_exec(
     project_root: String,
     config_toml: String,
     provider_id: String,
+    // The id the runtime routes with. Separate from `provider_id` for the same
+    // reason as `agent_start`: the reserved built-in names are not ours to use.
+    runtime_provider_id: String,
     catalog_json: String,
     // The model the run should use. Needed as a CLI argument for local runs,
     // where `--oss` would otherwise choose (and download) its own default.
@@ -3624,7 +3633,7 @@ async fn codex_exec(
         // name is already the `[model_providers.*]` table we write.
         command
             .arg("-c")
-            .arg(format!("model_provider=\"{}\"", provider_id.trim()));
+            .arg(format!("model_provider=\"{}\"", runtime_provider_id.trim()));
     } else if let Some(local) = local_provider.as_deref().filter(|p| !p.trim().is_empty()) {
         // `-m` is not optional here. `--oss` has its own default model and will go
         // and download it — verified the hard way: without this, a run against the

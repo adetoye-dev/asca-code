@@ -50,6 +50,37 @@ import { restoreTurnSnapshot, takeTurnSnapshot } from "../services/turnSnapshot"
 const LOCAL_ADAPTER_PROVIDER_ID = "acsa-local";
 
 /**
+ * Provider ids the runtime ships itself. Offering one as our own
+ * `[model_providers.*]` table does not just lose to the built-in — it is a **hard
+ * config error**, so the whole config is refused and the run silently proceeds
+ * against whatever the runtime defaults to. Asked the binary directly, offering
+ * all thirteen of our ids in one file, it names exactly these:
+ *
+ *     Error loading config.toml: model_providers contains reserved built-in
+ *     provider IDs: `lmstudio`, `ollama`, `openai`
+ *
+ * That is why OpenAI models answered in prose and touched no files while
+ * DeepSeek edited them: only `openai` of our hosted ids is reserved. Verified by
+ * running one task headlessly against both providers with nothing else changed —
+ * with the id renamed, `gpt-5.3-codex` made 12 command calls and changed the file.
+ *
+ * The list is asserted in `usePipeline.agentProtocol.test.ts`, so a new id here
+ * fails the suite rather than the user's run.
+ */
+export const RESERVED_RUNTIME_PROVIDER_IDS = ["openai", "ollama", "lmstudio"] as const;
+
+/**
+ * The id our generated provider table uses for a hosted provider.
+ *
+ * Every hosted id is namespaced, not only the reserved ones: the runtime's
+ * built-in list is not ours to keep up with, and a collision costs a confusing
+ * silent fallback rather than an error the user could act on.
+ */
+export function hostedProviderId(providerId: string): string {
+  return `acsa-${providerId}`;
+}
+
+/**
  * Start the local-model tool adapter and return its Responses base URL.
  *
  * Best effort by design: a build without the adapter still runs, just without
@@ -169,7 +200,7 @@ async function runAgent(params: {
   // With the adapter the provider is a plain Responses endpoint, so it gets a
   // table like any hosted provider — under a name of its own, because `ollama`
   // is reserved and cannot be overridden.
-  const runtimeProviderId = adapterBaseUrl ? LOCAL_ADAPTER_PROVIDER_ID : providerId;
+  const runtimeProviderId = adapterBaseUrl ? LOCAL_ADAPTER_PROVIDER_ID : hostedProviderId(providerId);
   const runtimeBaseUrl = adapterBaseUrl ?? provider.baseUrl;
   const runtimeProviderName = adapterBaseUrl ? "Local models (ACSA tool adapter)" : provider.name || providerId;
   const configToml = [
@@ -282,8 +313,10 @@ async function runAgent(params: {
       prompt: params.prompt,
       projectRoot: params.projectRoot,
       configToml: configToml + mcpToml,
-      // Same id the exec path uses, so both transports reach the same provider.
-      providerId: runtimeProviderId,
+      // Same two ids the exec path uses, so both transports reach the same provider
+      // and resolve the same credential.
+      providerId,
+      runtimeProviderId,
       catalogJson,
       model,
       approvalMode: params.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
@@ -390,10 +423,11 @@ async function runAgent(params: {
         prompt: params.prompt,
         projectRoot: params.projectRoot,
         configToml: configToml + mcpToml,
-        // The id the *runtime* sees. With the adapter it is a normal Responses
-        // provider, so the runtime's own `--oss` local-provider switch must not
-        // also fire — `localProvider: null` is what stops it.
-        providerId: runtimeProviderId,
+        // Two ids, because they answer different questions. `providerId` keys the
+        // credential we resolve shell-side (`{provider}_api_key`); `runtimeProviderId`
+        // is what the generated table and the runtime's routing use.
+        providerId,
+        runtimeProviderId,
         catalogJson,
         model,
         localProvider: adapterBaseUrl ? null : localProvider,
@@ -478,7 +512,10 @@ async function runAgentOnAppServer(params: {
   prompt: string;
   projectRoot: string;
   configToml: string;
+  /** Keys the credential, shell-side. */
   providerId: string;
+  /** Routes inside the runtime; namespaced so it cannot be a built-in name. */
+  runtimeProviderId: string;
   catalogJson: string;
   model: string;
   approvalMode: AgentApprovalMode;
@@ -646,6 +683,7 @@ async function runAgentOnAppServer(params: {
         projectRoot: params.projectRoot,
         configToml: params.configToml,
         providerId: params.providerId,
+        runtimeProviderId: params.runtimeProviderId,
         catalogJson: params.catalogJson,
         model: params.model,
         resumeThreadId: params.resumeThreadId ?? null,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_BASE_INSTRUCTIONS, AGENT_RUNTIME_FLAGS, approvalSummary, countDiffLines, summarizeItemChanges, userInputResponse } from "./usePipeline";
+import { AGENT_BASE_INSTRUCTIONS, AGENT_RUNTIME_FLAGS, RESERVED_RUNTIME_PROVIDER_IDS, approvalSummary, countDiffLines, hostedProviderId, summarizeItemChanges, userInputResponse } from "./usePipeline";
 
 /**
  * The instruction the app hands the agent through the model catalog on every run.
@@ -158,5 +158,40 @@ describe("counting a diff", () => {
   it("is zero for nothing at all", () => {
     expect(countDiffLines("")).toEqual({ added: 0, removed: 0 });
     expect(countDiffLines("--- a/src/x.ts\n+++ b/src/x.ts")).toEqual({ added: 0, removed: 0 });
+  });
+});
+
+/**
+ * The provider id we hand the runtime, which is a config matter rather than a
+ * rendering one: a reserved built-in name is a *hard error*, so the entire config
+ * is refused and the run continues against the runtime's default instead. That is
+ * how OpenAI models came to answer in prose and touch no files while DeepSeek
+ * edited them — measured with one headless run per provider, where renaming the
+ * id alone made `gpt-5.3-codex` perform 12 command calls and change the file.
+ */
+describe("the provider id our generated config offers the runtime", () => {
+  const hosted = [
+    "openai", "anthropic", "google", "groq", "mistral", "deepseek", "xai",
+    "moonshot", "cohere", "perplexity", "huggingface", "together", "openrouter",
+  ];
+
+  it("never collides with a name the runtime reserves", () => {
+    const reserved = new Set<string>(RESERVED_RUNTIME_PROVIDER_IDS);
+    for (const id of hosted) {
+      const emitted = hostedProviderId(id);
+      expect(reserved.has(emitted), `${emitted} is reserved by the runtime`).toBe(false);
+      expect(emitted).toMatch(/^acsa-/);
+    }
+    // The local adapter has its own id and `ollama` is reserved, which is why it
+    // cannot reuse the provider's own name either.
+    expect(reserved.has("acsa-local")).toBe(false);
+  });
+
+  it("lists the reserved ids for real, so an empty list cannot pass this file", () => {
+    // If this list were emptied — the tempting way to make the check above pass —
+    // the hazard it documents would be invisible again.
+    const reserved = new Set<string>(RESERVED_RUNTIME_PROVIDER_IDS);
+    expect(hosted.some((id) => reserved.has(id))).toBe(true);
+    expect(reserved.has("openai")).toBe(true);
   });
 });
