@@ -96,7 +96,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 | Blocked-on-human states | **[done]** | `thread/status/changed` was not consumed at all, so `waitingOnUserInput` and `waitingOnApproval` were invisible and a paused run looked finished. Now a waiting turn says so and says where to answer; the flag clears when the wait is over. |
 | Change log | **[done]** | After a turn that changed files the chat shows "Edited N files +X −Y" with a row per file, and a row opens that file two-sided in the diff viewer. The counts come from the runtime's own item diffs, so they describe *this turn* where a `git diff` would also count the user's own uncommitted edits. This is the deliberate answer to "should every write need approval?": log it, do not gate it. Verified live: a two-file edit reported +9 −0 and the files were a 5-line comment and a 4-line one. |
 | Undo a turn | **[done]** | The snapshot exists now, which was the condition for shipping this. The runtime cannot do it and says so — `thread/rollback` ("does not revert local file changes ... Clients are responsible") and its replacement `thread/revert` ("It does not revert local file changes") — so the engine captures the pre-turn state itself. It captures only the files that were already dirty, because a file that was clean then has its pre-turn content in HEAD; that is also what makes the undo safe rather than destructive, since the user's own edits *are* the thing snapshotted rather than the casualty that `git checkout --` would have made of them. Two refusals are honest rather than partial: an incomplete snapshot (a file over the cap) will not restore at all, and a missing one says so. The affordance appears only for the turn that just finished and only when it changed something, because snapshots are pruned and "undo" after two more turns would be a surprise. Not yet exercised against a live agent turn — the engine half and the wiring are tested, the end-to-end run is not. |
-| Change log in the transcript | **[partial]** | It is live-only, so it answers "what did it just do?" and not "what did it do an hour ago?". A log that scrolls back needs it persisted as a transcript entry. |
+| Change log in the transcript | **[done]** | **This row was wrong, and it was wrong in a way worth recording.** The change log was already persisted: `save_chat` stores the whole message object in `payload` and `load_chat` merges it back, so a turn's file list rides on the message and scrolls back with it, and the transcript renders the card from the message rather than from live state. Verified rather than assumed, then pinned with a test — `tests/test_app_db.py::test_a_turns_change_log_survives_the_round_trip` — because the failure would be silent: the card would simply be absent on older messages, which reads as "nothing happened" rather than as a lost field. **Correction to a correction:** earlier in this document's history I removed the Suggested-order line claiming the change log was persisted, on the strength of *this table* saying `[partial]` and of a grep that missed it. The prose was right and the table was wrong, and I changed the wrong one. |
 | Workspace index refresh | **[done]** | The tree refreshed after a write and the symbol index did not, so Code Map and symbol search kept describing the project as it was before the run — the status bar read "3 files synced" before a turn that created two `.tsx` files and still read 3 afterwards. Create, delete and agent turns now refresh both. Re-indexing is a full walk but a cheap one (0.28s for 123 files, 0.39s for 172 through the frozen engine), so it is done rather than guessed at. |
 
 ## Suggested order
@@ -104,7 +104,7 @@ Anything marked open is a real gap for shipping to someone else's machine.
 Current plan, in order:
 
 **Done, in this order:** shipped the agent-flow work as `0.2.2`; made a blocked run unmissable;
-took both decisions (`app-server` is the default with
+persisted the change log into the transcript; took both decisions (`app-server` is the default with
 `exec` as a fallback, accounts removed rather than left dormant); then the identity — indigo,
 tagline, the Apex mark — and the accessibility pass, measured rather than eyeballed.
 
@@ -129,9 +129,13 @@ priority change squeezed the card title to a 2px column, so the title rendered o
 line — and *nothing overflowed*, so the overflow assertions passed. Behaviour was right; the layout
 was broken. That is the argument for the render checks above growing the way they have.
 
-One correction while reading back through this: the line above used to claim the change log was
-persisted into the transcript, which the status table contradicts (`[partial]`, live-only, and no
-change-log persistence exists in the code). The table is right; the claim is gone.
+One correction while reading back through this, and then a correction to that correction. The line
+above was removed because the status table contradicted it, saying the change log was `[partial]` and
+live-only. That was the wrong one to trust: the change log *is* persisted — the message's `payload`
+carries it and the transcript renders the card from the message — so the sentence is back, the table
+row is `[done]`, and the row says how it was checked. The lesson is the one this document keeps
+teaching: when a table and a sentence disagree, settle it by reading the code, not by picking the
+source that looks more authoritative.
 
 **Layout — done.** The permanent activity bar and sidebar are gone, replaced by one collapsible
 navigation surface (`WorkbenchNav.tsx`): a rail that reveals a grouped panel on hover, collapses

@@ -299,6 +299,25 @@ class DatabaseCliTests(AppDbTestCase):
         _, out = self._run("chat.load", json.dumps({"projectPath": "/tmp/x"}))
         self.assertEqual(out["data"][0]["content"], "hi")
 
+    def test_a_turns_change_log_survives_the_round_trip(self):
+        # The checklist called this "live-only ... a log that scrolls back needs it
+        # persisted as a transcript entry". It already is: `save_chat` stores the
+        # whole message object in `payload` and `load_chat` merges it back, so the
+        # file counts a turn reported are still on the message after a relaunch.
+        # Pinned because the failure would be silent — the card would simply not be
+        # there on the older messages, which reads as "nothing happened" rather than
+        # as a lost field.
+        changes = [{"path": "src/a.ts", "added": 3, "removed": 1}]
+        self._run("chat.save", json.dumps({
+            "projectPath": "/tmp/x",
+            "messages": [{
+                "id": "m1", "role": "assistant", "content": "Done.", "timestamp": 2,
+                "changes": changes,
+            }],
+        }))
+        _, out = self._run("chat.load", json.dumps({"projectPath": "/tmp/x"}))
+        self.assertEqual(out["data"][0]["changes"], changes)
+
     def test_the_accounts_surface_is_gone_not_dormant(self):
         # Removed on purpose, so this pins the removal: an unreachable endpoint
         # with no screen is a claim the app cannot back, and it is the sort of
