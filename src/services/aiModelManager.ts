@@ -473,13 +473,24 @@ export async function persistProviderConfig(config: AIProviderConfig): Promise<v
   });
 }
 
-/** Store a cloud credential. An empty value is ignored — use clearProviderApiKey. */
-export async function setProviderApiKey(providerId: AIProviderId, apiKey: string): Promise<void> {
+/**
+ * Store a cloud credential. An empty value is ignored — use clearProviderApiKey.
+ *
+ * Returns which store took it, because "stored" is not a detail: `keychain` means
+ * the operating system is holding it encrypted, `file` means it went to the plain
+ * `0600` database instead — and until this was returned, a build whose keychain
+ * could not be reached looked identical to one whose could.
+ */
+export async function setProviderApiKey(
+  providerId: AIProviderId,
+  apiKey: string,
+): Promise<{ stored: "keychain" | "file" | "removed"; reason?: string } | null> {
   const trimmed = (apiKey || "").trim();
-  if (!trimmed) return;
-  await appStore.setSecret(`${providerId}_api_key`, trimmed);
+  if (!trimmed) return null;
+  const result = await appStore.setSecret(`${providerId}_api_key`, trimmed);
   if (providerCache?.[providerId]) providerCache[providerId].isConnected = true;
   notifyModelsUpdated();
+  return result;
 }
 
 /** Remove a stored cloud credential. */

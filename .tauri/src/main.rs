@@ -2684,7 +2684,12 @@ async fn secrets_set(
             // value is stored as it always was, in the `0600` file.
             let payload = serde_json::json!({ "name": name, "value": value }).to_string();
             engine_json(&app_handle, "db", &["secrets.set".to_string(), payload])
-                .map(|_| serde_json::json!({ "stored": "file" }))
+                // The reason travels with the answer. Without it this fallback is
+                // invisible: the settings page said the key was in the keychain
+                // while every key sat in the database, and the cause — a `keyring`
+                // built with no platform backend — took a `cargo tree` and a
+                // signed rebuild to find. A user hitting this deserves the sentence.
+                .map(|_| serde_json::json!({ "stored": "file", "reason": keychain_error }))
                 .ok_or_else(|| format!("could not store the credential: {keychain_error}"))
         }
     }
@@ -4996,6 +5001,39 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
                 "sk-live".to_string()
             )]
         );
+    }
+
+    /// The real keychain, end to end: write, read back through a fresh entry, delete.
+    ///
+    /// Ignored by default because it needs an actual OS keychain — and because on a
+    /// machine without one it would fail for a reason that has nothing to do with
+    /// this code. Run it deliberately on a Mac:
+    ///
+    ///     cargo test --manifest-path .tauri/Cargo.toml -- --ignored --nocapture
+    ///
+    /// It is the test that would have caught the missing `keyring` features. With
+    /// no backend compiled in the crate falls back to a store that keeps its data
+    /// *inside each credential object*: `set_password` returns `Ok`, and a fresh
+    /// `Entry` for the same name then answers `NoEntry`. So the write looks like it
+    /// worked, `KeychainStore::set`'s read-back check correctly rejects it, and every
+    /// credential lands in the database while the settings page says "stored in your
+    /// system keychain". `cargo tree -p keyring -e features` showed only `log` — that
+    /// is the one-line check to repeat if this ever regresses, because nothing else
+    /// in the build can tell the difference.
+    #[test]
+    #[ignore = "needs a real OS keychain; run explicitly on a Mac"]
+    fn the_os_keychain_round_trips_a_credential() {
+        let store = KeychainStore;
+        let name = "acsa-self-test";
+        let value = "round-trip-probe";
+
+        store.set(name, value).expect(
+            "the keychain refused the write — see the doc comment: this is the \
+             signature of a `keyring` build with no platform backend",
+        );
+        assert_eq!(store.get(name).as_deref(), Some(value));
+        store.delete(name).expect("delete should succeed");
+        assert_eq!(store.get(name), None, "the probe entry should be gone");
     }
 
     /// Opt-in, like the real-runtime tests: it needs a real OS keychain and it

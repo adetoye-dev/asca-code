@@ -26,6 +26,7 @@ import {
   addCustomModelToProvider,
   curateProviderModels,
   saveActiveSelectedModel,
+  setProviderApiKey,
 } from "../../services/aiModelManager";
 import {
   checkOllamaStatus,
@@ -55,6 +56,10 @@ export function AiManagementDashboard({
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; message?: string } | null>(null);
+  // Which store took the last credential, and why it was not the keychain. Without
+  // this the fallback is silent, and a build with no working keychain looks exactly
+  // like one whose keys are encrypted by the OS.
+  const [keyStorage, setKeyStorage] = useState<{ stored: "keychain" | "file"; reason?: string } | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [isStartingOllama, setIsStartingOllama] = useState(false);
   const [showOllamaWizard, setShowOllamaWizard] = useState(false);
@@ -193,7 +198,7 @@ export function AiManagementDashboard({
     }
   };
 
-  const handleSaveProvider = (modelValue = selectedModel, baseUrlValue = baseUrlInput) => {
+  const handleSaveProvider = async (modelValue = selectedModel, baseUrlValue = baseUrlInput) => {
     let isConnected = false;
     if (activeProvider.id === "ollama") {
       isConnected = ollamaStatus?.running ?? activeProvider.isConnected;
@@ -201,9 +206,13 @@ export function AiManagementDashboard({
       isConnected = !!(apiKeyInput && apiKeyInput.trim().length > 3);
     }
 
+    const key = apiKeyInput.trim();
     const updated: AIProviderConfig = {
       ...activeProvider,
-      apiKey: apiKeyInput.trim(),
+      // Deliberately empty: the credential is written below, awaited, so the
+      // destination is known. Passing it here would be a second, unobserved write —
+      // `saveProviderConfig` fires that one off with `void … .catch(() => {})`.
+      apiKey: "",
       baseUrl: baseUrlValue.trim(),
       selectedModel: modelValue,
       isConnected,
@@ -215,6 +224,19 @@ export function AiManagementDashboard({
     }
     setProviders(newMap);
     onModelSettingsChanged?.();
+
+    if (activeProvider.category === "cloud" && key) {
+      try {
+        const result = await setProviderApiKey(activeProvider.id, key);
+        setKeyStorage(
+          result?.stored === "file"
+            ? { stored: "file", reason: result.reason }
+            : { stored: "keychain" },
+        );
+      } catch (error) {
+        setKeyStorage({ stored: "file", reason: String((error as Error)?.message || error) });
+      }
+    }
   };
 
   const handleSetDefault = () => {
@@ -1048,6 +1070,14 @@ export function AiManagementDashboard({
                             value={apiKeyInput}
                             onChange={(e) => setApiKeyInput(e.target.value)}
                             placeholder="sk-••••••••••••••••••••••••"
+                            // A credential is not prose. Measured: with "Show key" on,
+                            // WebKit capitalised the first character and the app saved
+                            // `Sk-…` — a key that looks right and authenticates as 401.
+                            // Nothing about a key wants autocapitalisation, autocorrect
+                            // or spellcheck, and none of them can be recovered from.
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-purple-500/60 transition-colors"
                           />
                           <button
@@ -1067,6 +1097,21 @@ export function AiManagementDashboard({
                           Save Key
                         </button>
                       </div>
+                      {keyStorage && (
+                        <p
+                          className={
+                            keyStorage.stored === "keychain"
+                              ? "mt-2 text-2xs text-emerald-300/80"
+                              : "mt-2 text-2xs text-amber-300/90"
+                          }
+                        >
+                          {keyStorage.stored === "keychain"
+                            ? "Saved to your system keychain."
+                            : `Saved to the app database, not your keychain — ${
+                                keyStorage.reason || "the keychain was not usable here"
+                              }`}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-start gap-2.5">

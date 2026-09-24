@@ -231,7 +231,7 @@ export const appStore = {
    * nothing pretends the second case is the first.
    */
   setSecret: (name: string, value: string) =>
-    request<{ stored: "keychain" | "file" | "removed" }>("/api/app/secrets", {
+    request<{ stored: "keychain" | "file" | "removed"; reason?: string }>("/api/app/secrets", {
       method: "POST",
       body: JSON.stringify({ name, value }),
     }),

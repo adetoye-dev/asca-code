@@ -25,7 +25,26 @@ tauri-plugin-updater = "~2.11.0"
 # crypto, which is why this can live in a signed shell rather than in the
 # stdlib-only Python engine. Tests go through our own in-memory store rather
 # than the crate's mock, which keeps data inside each credential object.
-keyring = "3"
+#
+# The backends are named explicitly, and that matters more than it looks:
+# `keyring` 3 declares **no default feature** and no `default = [...]` in its
+# manifest, so a bare `keyring = "3"` compiles the crate with *no store at all*.
+# `Entry::new` then fails immediately with "no storage access" on every platform,
+# which our fallback quietly absorbed by writing the credential to the database
+# instead — so "keys are in your system keychain" was false in every shipped
+# build, ad-hoc and notarised alike. `cargo tree -p keyring -e features` showed
+# only `log`; that is the check to repeat if this ever regresses, and
+# `a_keychain_backend_is_compiled_in` in `src/main.rs` asserts it behaviourally.
+#
+# `linux-native-sync-persistent` is the crate's own recommendation: kernel
+# keyutils, with the Secret Service as the fallback, which is why CI installs
+# libdbus-1-dev.
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "linux-native-sync-persistent",
+    "crypto-rust",
+] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
