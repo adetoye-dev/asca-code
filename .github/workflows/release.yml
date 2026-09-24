@@ -264,5 +264,12 @@ jobs:
           body: |
             Built from ${{ github.sha }}.
 
-            Auto-update artifacts are not produced yet — see
-            `docs/RELEASING.md` for the signing key and manifest host that step needs.
+            **Download:** `ACSA-Code.app.zip` — signed with a Developer ID,
+            notarised and stapled, so it opens without the Gatekeeper prompt.
+            Unzip and drag `ACSA Code.app` to Applications.
+
+            **Already installed?** The app checks `latest.json` on launch and
+            offers an update in the title bar, and the zip above can simply be
+            replaced. The updater's own artifacts (`ACSA-Code.app.tar.gz` and its
+            `.sig`) and the manifest are attached for that check; the `.sig` is
+            minisign, verified against the public key compiled into the app.
