@@ -27,7 +27,7 @@ import { Activity, Save, Folder, Search, GitPullRequest, GitFork, Download, Pane
 import { Icon } from "../ui/Icon";
 import { FileIcon } from "../ui/FileIcon";
 
-import { StatusBar } from "./StatusBar";
+import { StatusBar, blockedLabel } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { DockviewWatermark } from "./DockviewWatermark";
 import { ProjectSetupCard } from "./ProjectSetupCard";
@@ -832,6 +832,13 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // ── Full-Canvas Chat Props ────────────────────────────────────────────────
   // Rendered as an overlay above the editor grid (see the center-stage render
   // below), so it is a normal React child and always receives fresh props.
+  /**
+   * The agent is stopped waiting on an answer, and the chat panel is not on
+   * screen to show it. The status bar says *that* something is waiting; this is
+   * what says where to answer.
+   */
+  const agentNeedsYou = Boolean(waitingForUser) && !isRightPanelOpen && !isCenterChatOpen;
+
   const centerChatProps = {
     status,
     activityLog,
@@ -1267,14 +1274,33 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
                 }
               }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                isRightPanelOpen || isCenterChatOpen
+                // A blocked turn outranks the open/closed styling: this is the one
+                // control that says *where* to answer, and the status bar only says
+                // *that* something is waiting.
+                agentNeedsYou
+                  ? "bg-amber-950/50 text-amber-200 border border-amber-500/70 shadow-sm"
+                  : isRightPanelOpen || isCenterChatOpen
                   ? "bg-zinc-800 text-zinc-100 border border-zinc-700/60 shadow-sm"
                   : "text-zinc-300 hover:text-white hover:bg-zinc-800/80 border border-transparent"
               }`}
-              title="Toggle AI Chat Panel (Cmd+L)"
+              title={
+                agentNeedsYou
+                  ? `${blockedLabel(waitingForUser)} — open Chat (Cmd+L)`
+                  : "Toggle AI Chat Panel (Cmd+L)"
+              }
+              aria-label={agentNeedsYou ? `${blockedLabel(waitingForUser)} — open Chat` : undefined}
             >
-              <Icon icon={MessageSquare} className="w-3.5 h-3.5 text-zinc-300" />
+              <Icon
+                icon={MessageSquare}
+                className={`w-3.5 h-3.5 ${agentNeedsYou ? "text-amber-300" : "text-zinc-300"}`}
+              />
               <span>Chat</span>
+              {/* Static, not animated: the colour change already says "look here",
+                  and motion that a reduced-motion preference cannot switch off is
+                  a worse trade than a dot that does not move. */}
+              {agentNeedsYou && (
+                <span data-testid="chat-needs-you" className="h-2 w-2 rounded-full bg-amber-400" />
+              )}
             </button>
 
             {/* Appears only when there is a newer release, and installs only on a

@@ -196,3 +196,38 @@ describe("the workbench shell", () => {
     await waitFor(() => expect(screen.getByText("No files in directory.")).toBeTruthy());
   });
 });
+
+/**
+ * The other half of the "blocked run is invisible" problem.
+ *
+ * The status bar now says *that* the agent is waiting. This is the control that
+ * says *where* to answer, and it matters most when the chat panel is closed — the
+ * case the status bar cannot cover on its own.
+ */
+describe("the chat toggle, while the agent is blocked on the user", () => {
+  const renderBlocked = () =>
+    render(<IdeLayout {...{ ...pipeline(), waitingForUser: "waitingOnApproval" }} />);
+
+  it("is quiet while the panel that holds the card is open", () => {
+    // The panel defaults open, so the card is on screen and a second signal would
+    // be noise.
+    renderBlocked();
+    expect(screen.queryByTestId("chat-needs-you")).toBeNull();
+  });
+
+  it("marks the toggle once the panel is closed, and names what it wants", () => {
+    renderBlocked();
+    fireEvent.click(screen.getByRole("button", { name: /^chat$/i }));
+
+    expect(screen.getByTestId("chat-needs-you")).toBeTruthy();
+    // The accessible name carries the state, not only the colour.
+    const toggle = screen.getByRole("button", { name: /waiting for your approval/i });
+    expect(toggle).toBeTruthy();
+  });
+
+  it("stays quiet when nothing is waiting, even with the panel closed", () => {
+    render(<IdeLayout {...pipeline()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^chat$/i }));
+    expect(screen.queryByTestId("chat-needs-you")).toBeNull();
+  });
+});
