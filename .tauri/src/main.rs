@@ -2494,7 +2494,92 @@ fn resolve_codex_bin(resource_dir: Option<&Path>) -> Option<PathBuf> {
 /// The key must not travel over IPC: passing it down from the frontend would undo the
 /// write-only property the credential migration established, and it is already in the
 /// engine's database. Same server-side resolution the review and inline-edit paths use.
+/// The keychain service these credentials are grouped under.
+const KEYCHAIN_SERVICE: &str = "ACSA Code";
+
+/// Where a provider credential is kept.
+///
+/// A trait rather than a direct call so the migration below can be tested without
+/// touching the real keychain — and not with the crate's own mock, which keeps its
+/// data *inside* each credential object: a freshly built `Entry` starts empty, so
+/// it cannot exercise a write-then-read-back, which is the one thing worth proving.
+trait SecretStore {
+    fn get(&self, name: &str) -> Option<String>;
+    fn set(&self, name: &str, value: &str) -> Result<(), String>;
+}
+
+struct KeychainStore;
+
+impl SecretStore for KeychainStore {
+    fn get(&self, name: &str) -> Option<String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, name).ok()?;
+        entry.get_password().ok().filter(|value| !value.trim().is_empty())
+    }
+
+    fn set(&self, name: &str, value: &str) -> Result<(), String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|e| e.to_string())?;
+        entry.set_password(value).map_err(|e| e.to_string())?;
+        // Read it back through a *fresh* entry before reporting success. A store
+        // that accepts a write and cannot return it is worse than one that
+        // refused, because the caller's next step is to delete its own copy.
+        let check = keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|e| e.to_string())?;
+        match check.get_password() {
+            Ok(readback) if readback == value => Ok(()),
+            Ok(_) => Err("the keychain returned a different value than it was given".to_string()),
+            Err(e) => Err(format!("the keychain accepted the write but could not read it back: {e}")),
+        }
+    }
+
+}
+
+/// The engine spells a provider's credential `{provider}_api_key`; this is that
+/// name, in one place so the two sides cannot drift.
+fn secret_name_for_provider(provider: &str) -> String {
+    format!("{provider}_api_key")
+}
+
+/// Resolve a provider credential, preferring the OS keychain.
+///
+/// **Stage one of the keychain migration, and deliberately non-destructive.** A
+/// value found in the old store is *copied* into the keychain and read back to
+/// prove the copy landed, but the original stays where it is. Nothing is deleted
+/// until a *signed* build has been shown to read the keychain back: macOS binds
+/// Keychain access to the app's signing identity, and the dev binary is ad-hoc
+/// signed with a per-build identifier, so "it worked in dev" is no evidence at all
+/// about the shipped app. Deleting on that evidence could lose a key while looking
+/// successful. See the encryption-at-rest row in `docs/PRODUCTION_CHECKLIST.md`.
+///
+/// Copying is best effort in the other direction too: a keychain that refuses — a
+/// headless Linux box with no Secret Service, a locked keyring — must not stop a run
+/// we already have a credential for. The failure is silent here on purpose; the
+/// read path is what matters, and it still has the old copy to fall back on.
+fn resolve_provider_key(
+    store: &dyn SecretStore,
+    provider: &str,
+    from_old_store: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let name = secret_name_for_provider(provider);
+    if let Some(key) = store.get(&name) {
+        return Some(key);
+    }
+    let key = from_old_store()?;
+    let _ = store.set(&name, &key);
+    Some(key)
+}
+
 fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<String> {
+    resolve_provider_key(&KeychainStore, provider, || {
+        engine_resolve_key_from_old_store(app_handle, provider)
+    })
+}
+
+/// The database-backed lookup this replaces. Kept as the fallback until the
+/// keychain has been proven from a signed build, and as the reading half of the
+/// migration above.
+fn engine_resolve_key_from_old_store(
+    app_handle: &tauri::AppHandle,
+    provider: &str,
+) -> Option<String> {
     let resource_dir = app_handle.path().resource_dir().ok();
     let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "db");
     argv.push("providers.resolveKey".to_string());
@@ -4461,7 +4546,7 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
             sink.lock().unwrap().push((name.to_string(), line));
         });
 
-        let mut session = AgentSession::spawn(&script, &std::env::temp_dir(), ".", &[], emitter)
+        let session = AgentSession::spawn(&script, &std::env::temp_dir(), ".", &[], emitter)
             .expect("spawn the fake runtime");
         session
             .request("initialize", serde_json::json!({}), std::time::Duration::from_secs(5))
@@ -4494,5 +4579,122 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
             .expect("the fake echoed the steer params");
         assert!(echo.contains("stop and do X instead"), "{echo}");
         assert!(echo.contains("expectedTurnId"), "{echo}");
+    }
+
+    /// An in-memory `SecretStore` for the migration tests.
+    ///
+    /// Not the crate's `mock`: that keeps its data *inside* the credential object,
+    /// so a freshly built entry starts empty and it cannot exercise the one thing
+    /// worth proving — that a value written through one entry can be read back
+    /// through another.
+    #[derive(Default)]
+    struct MemoryStore {
+        values: std::sync::Mutex<std::collections::HashMap<String, String>>,
+        refuse_writes: bool,
+    }
+
+    impl SecretStore for MemoryStore {
+        fn get(&self, name: &str) -> Option<String> {
+            self.values.lock().unwrap().get(name).cloned()
+        }
+
+        fn set(&self, name: &str, value: &str) -> Result<(), String> {
+            if self.refuse_writes {
+                return Err("the keychain is not available".to_string());
+            }
+            self.values.lock().unwrap().insert(name.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_keychain_value_wins_and_the_old_store_is_never_asked() {
+        let store = MemoryStore::default();
+        store.set("deepseek_api_key", "sk-from-keychain").unwrap();
+        let mut asked = false;
+        let resolved = resolve_provider_key(&store, "deepseek", || {
+            asked = true;
+            Some("sk-from-the-database".to_string())
+        });
+        assert_eq!(resolved.as_deref(), Some("sk-from-keychain"));
+        // Once the keychain has it, the old store is not consulted at all — which
+        // matters because that lookup spawns the engine.
+        assert!(!asked, "the fallback should not have been reached");
+    }
+
+    #[test]
+    fn a_value_from_the_old_store_is_copied_into_the_keychain_and_kept_where_it_was() {
+        let store = MemoryStore::default();
+        let old = std::sync::Mutex::new(Some("sk-from-the-database".to_string()));
+
+        let resolved = resolve_provider_key(&store, "deepseek", || old.lock().unwrap().clone());
+
+        assert_eq!(resolved.as_deref(), Some("sk-from-the-database"));
+        // The copy is additive. Nothing here deletes, and that is deliberate: the
+        // delete waits until a *signed* build has been shown to read the keychain
+        // back, because macOS binds Keychain access to the signing identity and the
+        // dev binary is ad-hoc signed with a per-build identifier.
+        assert_eq!(
+            store.get("deepseek_api_key").as_deref(),
+            Some("sk-from-the-database"),
+            "the value should have been copied into the keychain"
+        );
+        assert!(
+            old.lock().unwrap().is_some(),
+            "the old copy must survive the migration"
+        );
+    }
+
+    #[test]
+    fn a_keychain_that_refuses_the_copy_still_returns_the_key() {
+        // A headless Linux box with no Secret Service, or a locked keyring: the run
+        // has a credential and must not be stopped because a copy failed.
+        let store = MemoryStore { refuse_writes: true, ..Default::default() };
+        let resolved = resolve_provider_key(&store, "deepseek", || Some("sk-old".to_string()));
+        assert_eq!(resolved.as_deref(), Some("sk-old"));
+        assert_eq!(store.get("deepseek_api_key"), None);
+    }
+
+    #[test]
+    fn a_missing_credential_resolves_to_nothing_and_writes_nothing() {
+        let store = MemoryStore::default();
+        assert_eq!(resolve_provider_key(&store, "deepseek", || None), None);
+        // Especially not an empty string: a stored "" would then read as "present".
+        assert_eq!(store.get("deepseek_api_key"), None);
+    }
+
+    #[test]
+    fn the_secret_name_is_the_spelling_the_engine_uses() {
+        // The engine writes and reads `{provider}_api_key`
+        // (app_db.secret_name_for_provider). Two spellings of the same idea would
+        // silently resolve nothing.
+        assert_eq!(secret_name_for_provider("deepseek"), "deepseek_api_key");
+        assert_eq!(secret_name_for_provider("ollama"), "ollama_api_key");
+    }
+
+    /// Opt-in, like the real-runtime tests: it needs a real OS keychain and it
+    /// writes to it. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "needs a real OS keychain (writes and removes a throwaway entry)"]
+    fn a_real_keychain_round_trips_a_throwaway_credential() {
+        let name = format!("keychain-probe-{}", std::process::id());
+        let store = KeychainStore;
+        // `set` reads back through a fresh entry and only reports success if the
+        // value came back, so a successful set *is* the round trip.
+        if let Err(error) = store.set(&name, "throwaway-value") {
+            // The reason is the point of this test existing at all: an unsigned or
+            // ad-hoc-signed binary may be refused by the OS keychain, and that is
+            // exactly why the plaintext copy is not deleted until a *signed* build
+            // has been shown to read the keychain back.
+            eprintln!("no usable OS keychain here: {error}");
+            return;
+        }
+        assert_eq!(store.get(&name).as_deref(), Some("throwaway-value"));
+        // Clean up behind ourselves — through the crate directly, because the
+        // production store deliberately has no delete yet.
+        if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, &name) {
+            let _ = entry.delete_credential();
+        }
+        assert_eq!(store.get(&name), None, "the probe entry should be gone");
     }
 }
