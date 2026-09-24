@@ -698,7 +698,7 @@ async function runAgentOnAppServer(params: {
  * channel for the answer, and usage as its own notification rather than a field
  * on the turn event.
  */
-function applyAppServerEvent(
+export function applyAppServerEvent(
   event: any,
   update: {
     setSteps: (fn: (prev: any[]) => any[]) => void;
@@ -833,7 +833,7 @@ function buildAgentPrompt(
  * Map one Codex stream event onto the progress surfaces the chat already renders.
  * Separate from the runner so the mapping is readable and testable on its own.
  */
-function applyCodexEvent(
+export function applyCodexEvent(
   event: any,
   update: {
     setSteps: (fn: (prev: any[]) => any[]) => void;
