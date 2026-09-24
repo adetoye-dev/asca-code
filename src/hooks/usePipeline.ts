@@ -38,6 +38,7 @@ import {
   shouldStopTurn,
   turnLimitNotice,
 } from "../services/agentTurnLimit";
+import { restoreTurnSnapshot, takeTurnSnapshot } from "../services/turnSnapshot";
 
 /**
  * The provider id a local run uses once the tool adapter is in front of it.
@@ -93,6 +94,11 @@ async function runAgent(params: {
   onWaitingForUser?: (status: string) => void;
   /** A `request_user_input` question, which needs answers, not a decision. */
   onQuestion?: (request: { id: unknown; questions: AgentQuestion[] }) => void;
+  /**
+   * Called immediately before the turn is handed to the runtime — the last moment
+   * the pre-turn state can still be read. See `undoLastTurn`.
+   */
+  onBeforeTurn?: () => Promise<void>;
   /** Provider/model the user picked for this message; wins over the saved default. */
   selection?: { providerId: string; model: string };
   /** How much the agent may do unattended. Defaults to "approve for me". */
@@ -290,6 +296,7 @@ async function runAgent(params: {
       onApproval: params.onApproval,
       onWaitingForUser: params.onWaitingForUser,
       onQuestion: params.onQuestion,
+      onBeforeTurn: params.onBeforeTurn,
     });
   }
 
@@ -498,6 +505,8 @@ async function runAgentOnAppServer(params: {
   onWaitingForUser?: (status: string) => void;
   /** A `request_user_input` question, which needs answers, not a decision. */
   onQuestion?: (request: { id: unknown; questions: AgentQuestion[] }) => void;
+  /** Called immediately before the turn is handed to the runtime. See `undoLastTurn`. */
+  onBeforeTurn?: () => Promise<void>;
 }): Promise<"unavailable" | "success" | "failed"> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -654,6 +663,9 @@ async function runAgentOnAppServer(params: {
     params.log(`[agent] app-server: thread ${threadId.slice(0, 8)}`);
 
     try {
+      // Before the runtime touches anything: the pre-turn state, so the turn can
+      // be undone. Best effort — see `takeTurnSnapshot`.
+      await params.onBeforeTurn?.();
       await invoke("agent_turn", { text: params.prompt });
     } catch (error) {
       params.log(`[agent] app-server: turn rejected — ${String(error)}`);
@@ -1226,6 +1238,11 @@ export interface UsePipelineReturn {
    * success, or a sentence to show the user — and to put the unsent text back for.
    */
   steerPipeline: (text: string) => Promise<string | null>;
+  /**
+   * Put the last turn's file changes back, from the snapshot taken before it ran.
+   * Resolves to `null` on success, or a sentence to show.
+   */
+  undoLastTurn: () => Promise<string | null>;
   clearLog: () => void;
   isTauriAvailable: boolean;
 }
@@ -2010,6 +2027,66 @@ export function usePipeline(): UsePipelineReturn {
     void appStore.setSetting("agent_threads", trimmed).catch(() => {});
   }, []);
 
+  /**
+   * The snapshot taken for the turn in flight, or null.
+   *
+   * The id is ours rather than the runtime's: the snapshot has to exist *before*
+   * the turn starts, and the runtime's turn id only arrives in the reply to
+   * `turn/start`, which is after the point of no return.
+   */
+  const turnSnapshotRef = useRef<string | null>(null);
+
+  const beginTurnSnapshot = useCallback(async (projectRoot: string) => {
+    if (!projectRoot) {
+      turnSnapshotRef.current = null;
+      return;
+    }
+    const id = `snap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const taken = await takeTurnSnapshot(projectRoot, id);
+    // Null means the engine could not take one at all; the turn still runs, and
+    // Undo will say it has nothing to undo rather than pretending.
+    turnSnapshotRef.current = taken ? id : null;
+  }, []);
+
+  /**
+   * Put the last turn's changes back.
+   *
+   * Returns `null` on success, or a sentence to show. The paths come from the turn
+   * itself (`turnChanges`), so files the turn did not touch are not ours to move —
+   * which is what keeps this from becoming a second `git checkout --` that also
+   * discards work the user did by hand.
+   */
+  const undoLastTurn = useCallback(async (): Promise<string | null> => {
+    const id = turnSnapshotRef.current;
+    const root = activeProject.path;
+    const paths = turnChanges.map((change) => change.path);
+    if (!id) return "There is no snapshot for the last turn, so it cannot be undone.";
+    if (!root || paths.length === 0) return "There is nothing to undo.";
+    try {
+      const result = await restoreTurnSnapshot(root, id, paths);
+      turnSnapshotRef.current = null;
+      setTurnChanges([]);
+      setNoFileChanges(false);
+      // The tree and the symbol index both describe the project as it was a moment
+      // ago now; the same refresh an agent turn does.
+      await refreshProjectFiles();
+      void syncIndex();
+      const files = result.restored.length + result.removed.length;
+      setActivityLog((prev) => [
+        ...prev,
+        {
+          line_number: prev.length + 1,
+          content: `Undid the last turn: ${result.restored.length} file(s) restored, ${result.removed.length} removed.`,
+          stream: "stdout" as const,
+          is_json: false,
+        },
+      ]);
+      return files === 0 ? "Nothing needed changing." : null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }, [activeProject.path, turnChanges, refreshProjectFiles, syncIndex]);
+
   const runPipeline = useCallback(
     async (
       customPrompt?: string,
@@ -2185,6 +2262,8 @@ export function usePipeline(): UsePipelineReturn {
             },
             onWaitingForUser: setWaitingForUser,
             onQuestion: setPendingQuestion,
+            // Last moment before the runtime can touch a file.
+            onBeforeTurn: () => beginTurnSnapshot(activeProject.path),
             onEvent: onAgentEvent,
             resumeThreadId: resume,
             images: usableImages,
@@ -2313,6 +2392,7 @@ export function usePipeline(): UsePipelineReturn {
       refreshWorkspace,
       persistAgentThreads,
       projectFiles,
+      beginTurnSnapshot,
     ]
   );
 
@@ -2461,6 +2541,7 @@ export function usePipeline(): UsePipelineReturn {
     runPipeline,
     cancelPipeline,
     steerPipeline,
+    undoLastTurn,
     clearLog,
     isTauriAvailable,
     streamingAnswer,

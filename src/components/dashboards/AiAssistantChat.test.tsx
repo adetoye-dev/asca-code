@@ -247,3 +247,50 @@ describe("steering a running turn", () => {
     expect(screen.queryByRole("button", { name: /steer the running turn/i })).toBeNull();
   });
 });
+
+/**
+ * Undo. The change log described what a turn changed and offered no way back, and
+ * the runtime cannot do it either — both of its history primitives say they do not
+ * revert local file changes. The engine snapshots the pre-turn state; this is the
+ * affordance for it.
+ */
+describe("undoing the last turn", () => {
+  const CHANGES = [{ path: "src/a.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new\n" }];
+
+  it("offers to undo the turn that just finished", async () => {
+    const undo = vi.fn().mockResolvedValue(null);
+    render(<AiAssistantChat {...baseProps} turnChanges={CHANGES} onUndoLastTurn={undo} />);
+
+    fireEvent.click(screen.getByTestId("undo-last-turn"));
+    await waitFor(() => expect(undo).toHaveBeenCalledTimes(1));
+    // The outcome is stated, not just implied by the row disappearing.
+    await waitFor(() => expect(screen.getByTestId("undo-notice").textContent).toMatch(/Undone/));
+  });
+
+  it("says why when it cannot undo, rather than failing silently", async () => {
+    const undo = vi.fn().mockResolvedValue("that turn's snapshot is incomplete");
+    render(<AiAssistantChat {...baseProps} turnChanges={CHANGES} onUndoLastTurn={undo} />);
+
+    fireEvent.click(screen.getByTestId("undo-last-turn"));
+    await waitFor(() =>
+      expect(screen.getByTestId("undo-notice").textContent).toMatch(/incomplete/),
+    );
+  });
+
+  it("does not offer undo while the turn is still running", () => {
+    render(
+      <AiAssistantChat
+        {...baseProps}
+        status="running"
+        turnChanges={CHANGES}
+        onUndoLastTurn={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("undo-last-turn")).toBeNull();
+  });
+
+  it("does not offer undo when nothing changed", () => {
+    render(<AiAssistantChat {...baseProps} turnChanges={[]} onUndoLastTurn={vi.fn()} />);
+    expect(screen.queryByTestId("undo-last-turn")).toBeNull();
+  });
+});

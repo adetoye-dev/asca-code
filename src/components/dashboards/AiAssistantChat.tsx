@@ -69,6 +69,11 @@ interface AiAssistantChatProps {
    * success, or a sentence to show — and to put the unsent text back for.
    */
   onSteerPipeline?: (text: string) => Promise<string | null>;
+  /**
+   * Put the last turn's file changes back. Resolves to `null` on success, or a
+   * sentence to show — the same contract as steering.
+   */
+  onUndoLastTurn?: () => Promise<string | null>;
   projectRoot?: string;
   /** Current git branch of the active project (shown on the hero welcome screen). */
   branch?: string;
@@ -522,6 +527,7 @@ export function AiAssistantChat({
   onRunPipeline,
   onCancelPipeline,
   onSteerPipeline,
+  onUndoLastTurn,
   projectRoot = "",
   branch = "",
   onClose,
@@ -604,6 +610,9 @@ export function AiAssistantChat({
   const [isStreaming, setIsStreaming] = useState(false);
   /** Why the last steer did not send, if it did not. Cleared on the next send. */
   const [steerError, setSteerError] = useState<string | null>(null);
+  /** What an undo did or could not do, shown where the button was. */
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [undoNotice, setUndoNotice] = useState<string | null>(null);
   const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("agent");
   const isStreamingRef = useRef(false);
 
@@ -1977,6 +1986,49 @@ Click to re-index project.`}
               >
                 <Icon icon={AlertCircle} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300" />
                 <span className="break-words">{steerError}</span>
+              </div>
+            )}
+            {/* The change log said what a turn changed and offered no way back.
+                Only for the turn that just finished: snapshots are kept per turn
+                and pruned, and "undo" after two more turns would be a surprise
+                rather than a convenience. */}
+            {status !== "running" && turnChanges.length > 0 && onUndoLastTurn && (
+              <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                <span className="text-2xs text-zinc-300">
+                  The last turn changed {turnChanges.length}{" "}
+                  {turnChanges.length === 1 ? "file" : "files"}.
+                </span>
+                <button
+                  type="button"
+                  disabled={undoBusy}
+                  data-testid="undo-last-turn"
+                  onClick={async () => {
+                    if (!onUndoLastTurn) return;
+                    setUndoBusy(true);
+                    setUndoNotice(null);
+                    const failure = await onUndoLastTurn();
+                    setUndoNotice(
+                      failure ?? "Undone — those files are back to how they were before that turn.",
+                    );
+                    setUndoBusy(false);
+                  }}
+                  className={`shrink-0 rounded-lg border px-2.5 py-1 text-2xs font-semibold transition-colors ${
+                    undoBusy
+                      ? "border-zinc-800 text-zinc-500 cursor-not-allowed"
+                      : "border-zinc-700 text-zinc-200 hover:border-zinc-600 hover:text-white cursor-pointer"
+                  }`}
+                >
+                  {undoBusy ? "Undoing…" : "Undo"}
+                </button>
+              </div>
+            )}
+            {undoNotice && (
+              <div
+                role="status"
+                data-testid="undo-notice"
+                className="mb-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-2xs leading-relaxed text-zinc-300"
+              >
+                {undoNotice}
               </div>
             )}
             {/* The agent is blocked until this is answered. */}

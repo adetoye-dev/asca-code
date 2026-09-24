@@ -185,6 +185,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     runPipeline,
     cancelPipeline,
     steerPipeline,
+    undoLastTurn,
     clearLog,
     isTauriAvailable,
     streamingAnswer,
@@ -873,6 +874,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     },
     onCancelPipeline: cancelPipeline,
     onSteerPipeline: steerPipeline,
+    onUndoLastTurn: undoLastTurn,
     isWide: true,
     activeAiSettings: aiSettings,
     selectedContext: activeTabPath ? { path: activeTabPath, code: selectedCode } : null,
@@ -1492,6 +1494,7 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
               }}
               onCancelPipeline={cancelPipeline}
               onSteerPipeline={steerPipeline}
+              onUndoLastTurn={undoLastTurn}
               onClose={() => setIsRightPanelOpen(false)}
               onPopOutWide={openAiChatTab}
               isWide={false}
