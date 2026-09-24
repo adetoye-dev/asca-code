@@ -27,16 +27,11 @@ export interface SecurityStatus {
 export type AIProviderId =
   | "ollama"
   | "openai"
-  | "anthropic"
-  | "google"
   | "groq"
-  | "mistral"
   | "deepseek"
   | "xai"
   | "moonshot"
   | "cohere"
-  | "perplexity"
-  | "huggingface"
   | "together"
   | "openrouter";
 

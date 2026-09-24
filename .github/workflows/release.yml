@@ -166,6 +166,10 @@ jobs:
           set -euo pipefail
           APP=".tauri/target/release/bundle/macos/ACSA Code.app"
           test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
+          # The agent runtime, for the same reason: it is fetched at build time and
+          # shipped, so a user needs no Codex install of their own. A build that lost
+          # this step starts, opens a chat, and cannot run an agent.
+          test -x "$APP/Contents/Resources/engine-codex/codex"
           # `acsa_engine.py` is the entry point; `manager.py` was deleted with
           # the deterministic harness and this checked for it anyway.
           test -f "$APP/Contents/Resources/core-engine/acsa_engine.py"

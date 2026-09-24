@@ -37,32 +37,22 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     isDefault: false,
     apiKey: "",
     baseUrl: "https://api.openai.com/v1",
-    selectedModel: "gpt-4o",
-    availableModels: ["gpt-4o", "gpt-4o-mini", "o3", "o1", "o1-pro", "gpt-4-turbo"],
-    speedBadge: "Fast",
-  },
-  anthropic: {
-    id: "anthropic",
-    name: "Anthropic",
-    category: "cloud",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "https://api.anthropic.com/v1",
-    selectedModel: "claude-3-7-sonnet-latest",
-    availableModels: ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
-    speedBadge: "Thinking",
-  },
-  google: {
-    id: "google",
-    name: "Google Gemini",
-    category: "cloud",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "https://generativelanguage.googleapis.com",
-    selectedModel: "gemini-2.0-flash",
-    availableModels: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
+    selectedModel: "gpt-5.3-codex",
+    // The starting list, for a provider whose key has just been entered and no
+    // fetch has run yet. It used to be `gpt-4o / o3 / o1 / o1-pro` — generation-old
+    // names that made a fresh install look stale before its first fetch, which is
+    // exactly when a user judges the app. These are the coding models the live
+    // `/v1/models` returns and `curateProviderModels` ranks to the top of it; the
+    // fetch replaces this list with whatever is current, so it only has to be
+    // honest, not exhaustive.
+    availableModels: [
+      "gpt-5.3-codex",
+      "gpt-5.2-codex",
+      "gpt-5.1-codex-max",
+      "gpt-5.1-codex",
+      "gpt-5-pro",
+      "o4-mini",
+    ],
     speedBadge: "Fast",
   },
   groq: {
@@ -76,18 +66,6 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     selectedModel: "deepseek-r1-distill-llama-70b",
     availableModels: ["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
     speedBadge: "Fast",
-  },
-  mistral: {
-    id: "mistral",
-    name: "Mistral AI",
-    category: "cloud",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "https://api.mistral.ai/v1",
-    selectedModel: "codestral-latest",
-    availableModels: ["codestral-latest", "mistral-large-latest", "mistral-small-latest"],
-    speedBadge: "Medium",
   },
   deepseek: {
     id: "deepseek",
@@ -137,30 +115,6 @@ export const INITIAL_PROVIDERS: Record<AIProviderId, AIProviderConfig> = {
     baseUrl: "https://api.cohere.ai/v1",
     selectedModel: "command-r-plus",
     availableModels: ["command-r-plus", "command-r", "c4ai-aya-expanse-32b"],
-    speedBadge: "Medium",
-  },
-  perplexity: {
-    id: "perplexity",
-    name: "Perplexity AI",
-    category: "cloud",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "https://api.perplexity.ai",
-    selectedModel: "sonar-pro",
-    availableModels: ["sonar-pro", "sonar-reasoning-pro", "sonar", "sonar-reasoning"],
-    speedBadge: "Fast",
-  },
-  huggingface: {
-    id: "huggingface",
-    name: "Hugging Face",
-    category: "cloud",
-    isConnected: false,
-    isDefault: false,
-    apiKey: "",
-    baseUrl: "https://api-inference.huggingface.co/v1",
-    selectedModel: "Qwen/Qwen2.5-Coder-32B-Instruct",
-    availableModels: ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"],
     speedBadge: "Medium",
   },
   together: {
@@ -1025,7 +979,7 @@ export function isModelVisionCapable(providerId: string, modelName: string): boo
   }
 
   // 3. Frontier cloud providers: multimodality is standard for modern/future generative models
-  if (p === "google" || p === "anthropic" || p === "openai" || p === "openrouter") {
+  if (p === "openai" || p === "openrouter") {
     return true;
   }
 
@@ -1088,7 +1042,7 @@ export function findBestAvailableVisionModel(
     if (item.speedBadge === "Fast") score += 30;
     if (m.includes("flash") || m.includes("haiku") || m.includes("mini")) score += 25;
     if (item.category === "cloud") score += 20;
-    if (item.providerId === "google" || item.providerId === "openai" || item.providerId === "anthropic") score += 15;
+    if (item.providerId === "openai") score += 15;
     return { item, score };
   });
 

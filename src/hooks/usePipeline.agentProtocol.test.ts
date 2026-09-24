@@ -170,9 +170,11 @@ describe("counting a diff", () => {
  * id alone made `gpt-5.3-codex` perform 12 command calls and change the file.
  */
 describe("the provider id our generated config offers the runtime", () => {
+  // Every hosted provider the registry actually offers. Five were removed for
+  // being unable to serve a Responses API at all (a 404 on `POST /responses`;
+  // huggingface served nothing), so this list and `AIProviderId` must agree.
   const hosted = [
-    "openai", "anthropic", "google", "groq", "mistral", "deepseek", "xai",
-    "moonshot", "cohere", "perplexity", "huggingface", "together", "openrouter",
+    "openai", "groq", "deepseek", "xai", "moonshot", "cohere", "together", "openrouter",
   ];
 
   it("never collides with a name the runtime reserves", () => {

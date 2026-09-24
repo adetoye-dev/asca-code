@@ -199,6 +199,10 @@ jobs:
           # supposed to be gone.
           test -f "$APP/Contents/Resources/core-engine/acsa_engine.py"
           test -x "$APP/Contents/Resources/engine/acsa-engine/acsa-engine"
+          # And the agent runtime, which is fetched at build time and shipped so a
+          # user needs no Codex install. Losing it leaves an app that opens a chat
+          # and cannot run an agent, which no other assertion here would catch.
+          test -x "$APP/Contents/Resources/engine-codex/codex"
           # MIT needs the notice to accompany the binary, and OFL needs the font
           # licence to travel with the font. Both live inside the bundle.
           test -f "$APP/Contents/Resources/LICENSE"
