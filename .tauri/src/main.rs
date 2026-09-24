@@ -2065,9 +2065,9 @@ fn run_with_timeout(
 /// page is compromised. `pty` and `adapter` are deliberately absent — the
 /// terminal and the local-model adapter are spawned by Rust with arguments Rust
 /// picked, not with arguments the webview supplies.
-const ALLOWED_ENGINE_SUBCOMMANDS: [&str; 12] = [
+const ALLOWED_ENGINE_SUBCOMMANDS: [&str; 13] = [
     "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs", "backup",
-    "support",
+    "support", "snapshot",
 ];
 
 fn engine_subcommand_allowed(subcommand: &str) -> bool {
@@ -4291,7 +4291,7 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         // arguments — including the two added for Data & backups.
         for allowed in [
             "db", "ollama", "index", "git", "indexer", "skills", "mcp", "ai", "project", "fs",
-            "backup", "support",
+            "backup", "support", "snapshot",
         ] {
             assert!(engine_subcommand_allowed(allowed), "{allowed} must be reachable");
         }

@@ -68,6 +68,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "crash": ("crash_log", "main"),
     "backup": ("backup", "main"),
     "support": ("support", "main"),
+    # The file half of "undo this turn": the runtime's own rollback/revert
+    # primitives both state that they do not revert local file changes, so the
+    # pre-turn state has to be captured before a turn runs.
+    "snapshot": ("snapshot_cli", "run"),
 }
 
 
