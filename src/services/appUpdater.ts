@@ -19,11 +19,41 @@ const AUTO_CHECK_KEY = "acsa_update_check_on_launch";
 /** Don't re-check more than this often within one session. */
 const CHECK_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * The version already on disk, waiting for a restart.
+ *
+ * Without this, quitting after an install and relaunching shows the *old* build
+ * offering the download it just completed — the update looks like it failed, and
+ * clicking again re-downloads it. Tauri's updater keeps no readable "installed,
+ * pending restart" state (the install replaces files on disk), so we record it
+ * ourselves and clear it once the running version catches up.
+ */
+const PENDING_RESTART_KEY = "acsa_update_pending_restart";
+
+/** Numeric part-wise comparison: "0.2.10" is newer than "0.2.9". */
+function compareVersions(a: string, b: string): number {
+  const parts = (value: string) => value.split(/[.+-]/).map((piece) => Number.parseInt(piece, 10));
+  const left = parts(a);
+  const right = parts(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = Number.isFinite(left[i]) ? left[i] : -1;
+    const r = Number.isFinite(right[i]) ? right[i] : -1;
+    if (l !== r) return l > r ? 1 : -1;
+  }
+  return 0;
+}
+
 export interface AvailableUpdate {
   version: string;
   currentVersion: string;
   notes: string;
   date?: string;
+  /**
+   * This version is already downloaded and waiting for a restart, rather than
+   * merely published. The two need different offers — one is "download", the
+   * other is "restart" — and only the caller knows which it is showing.
+   */
+  pendingRestart?: boolean;
 }
 
 let cached: AvailableUpdate | null = null;
@@ -120,6 +150,15 @@ export async function checkForUpdateDetailed(
       notes: String(update.body ?? "").slice(0, 2000),
       date: update.date ? String(update.date) : undefined,
     };
+    // Already downloaded for this very version: the honest answer is not
+    // "available", it is "restart". `check()` cannot tell the difference because
+    // it only reads the manifest.
+    const pending = await pendingRestart();
+    if (pending && compareVersions(pending, String(update.version)) >= 0) {
+      cached = { ...cached, pendingRestart: true };
+      announce({ kind: "installed", version: pending });
+      return { kind: "available", update: cached };
+    }
     announce({ kind: "available", update: cached });
     return { kind: "available", update: cached };
   } catch (error) {
@@ -163,11 +202,53 @@ export async function installUpdate(onProgress?: (percent: number) => void): Pro
       onProgress?.(100);
     }
   });
+  // Recorded before it is announced, so the record survives the quit-then-launch
+  // that motivated it: the next start is still the old build, and it has to know.
+  recordPendingRestart(String(update.version));
   // Announced, not merely cleared: another surface may be the one showing the
   // update, and it has to switch to "restart to finish" rather than offer the
   // download it just completed.
   announce({ kind: "installed", version: String(update.version) });
   cached = null;
+}
+
+/** Remember that a version is installed and waiting for a restart. */
+export function recordPendingRestart(version: string): void {
+  try {
+    localStorage.setItem(PENDING_RESTART_KEY, version);
+  } catch {
+    /* storage unavailable; the session still knows via the announcement */
+  }
+}
+
+/**
+ * The installed-but-not-yet-running version, or null.
+ *
+ * Clears itself once the running build is that version or newer, which is the
+ * only reliable signal available that the restart happened — nothing rewrites
+ * this record when the new build starts.
+ */
+export async function pendingRestart(): Promise<string | null> {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(PENDING_RESTART_KEY);
+  } catch {
+    return null;
+  }
+  if (!stored) return null;
+  const running = await currentVersion();
+  // "unknown" is not evidence that the restart happened — a browser preview and a
+  // failed version read both land here — so the record is kept rather than
+  // dropped, at the cost of one stale Restart button in those cases.
+  if (running !== "unknown" && compareVersions(running, stored) >= 0) {
+    try {
+      localStorage.removeItem(PENDING_RESTART_KEY);
+    } catch {
+      /* nothing to do */
+    }
+    return null;
+  }
+  return stored;
 }
 
 /** Relaunch into the new build. */

@@ -64,3 +64,21 @@ describe("acting on the update from this pane", () => {
     expect(await screen.findByRole("button", { name: /restart to finish/i })).toBeTruthy();
   });
 });
+
+describe("an update that is already downloaded", () => {
+  it("offers the restart instead of downloading it a second time", async () => {
+    // The quit-after-install case: the running build is still the old one, so the
+    // manifest offers the version already on disk. Offering "Download & install"
+    // here reads as "the update failed" and re-downloads the whole app.
+    outcome = {
+      kind: "available",
+      update: { version: "0.2.10", currentVersion: "0.2.9", notes: "", pendingRestart: true },
+    };
+    render(<AboutPane />);
+    fireEvent.click(screen.getByRole("button", { name: /check now/i }));
+
+    expect(await screen.findByText(/installed and waiting for a restart/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /restart to finish/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /download & install/i })).toBeNull();
+  });
+});

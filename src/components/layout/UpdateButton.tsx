@@ -40,7 +40,16 @@ export function UpdateButton() {
   useEffect(() => {
     if (!autoCheckEnabled()) return;
     timerRef.current = window.setTimeout(() => {
-      void checkForUpdate().then(setUpdate);
+      void checkForUpdate().then((found) => {
+        setUpdate(found);
+        // Already downloaded for this version: the button is a restart, not a
+        // second download. This is the surface someone sees after quitting
+        // mid-install and launching the old build again.
+        if (found?.pendingRestart) {
+          setPercent(100);
+          setPhase("ready");
+        }
+      });
     }, STARTUP_DELAY_MS);
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -57,8 +66,13 @@ export function UpdateButton() {
       if (!detail) return;
       if (detail.kind === "available") {
         setUpdate(detail.update);
-        setPhase("idle");
         setDetail("");
+        if (detail.update.pendingRestart) {
+          setPercent(100);
+          setPhase("ready");
+        } else {
+          setPhase("idle");
+        }
       } else if (detail.kind === "none") {
         setUpdate(null);
       } else {

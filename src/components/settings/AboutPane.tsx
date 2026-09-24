@@ -26,7 +26,7 @@ export function AboutPane() {
   const [version, setVersion] = useState("");
   const [auto, setAuto] = useState(autoCheckEnabled);
   const [state, setState] = useState<CheckState>({ kind: "idle" });
-  const [found, setFound] = useState<{ version: string } | null>(null);
+  const [found, setFound] = useState<{ version: string; pendingRestart?: boolean } | null>(null);
   // The install lives here, not only in the titlebar. Reporting "an update is
   // available — the button is in the titlebar" was a dead end from this pane: the
   // titlebar only looked on mount, so the button appeared after a restart at the
@@ -46,6 +46,13 @@ export function AboutPane() {
     if (outcome.kind === "available") {
       setFound(outcome.update);
       setState({ kind: "available" });
+      // Quitting after an install and coming back here used to offer the download
+      // again, which reads as "the update failed". If the version is already on
+      // disk the only remaining step is the restart.
+      if (outcome.update.pendingRestart) {
+        setPercent(100);
+        setPhase("ready");
+      }
     } else if (outcome.kind === "current") {
       setState({ kind: "current" });
     } else {
@@ -126,7 +133,9 @@ export function AboutPane() {
           {state.kind === "available" && found && (
             <span className="text-2xs text-purple-300 flex items-center gap-1.5">
               <Icon icon={ArrowDownToLine} className="w-3 h-3" />
-              {found.version} is available.
+              {found.pendingRestart
+                ? `${found.version} is installed and waiting for a restart.`
+                : `${found.version} is available.`}
             </span>
           )}
           {state.kind === "failed" && (
