@@ -2004,15 +2004,21 @@ const ENGINE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// subcommands emit more than a pipe buffer's worth of JSON (`index` returns the
 /// whole symbol table), and a child blocked writing to a full pipe looks exactly
 /// like a hung one if nobody is reading.
-fn run_with_timeout(
+/// `run_with_timeout`, with environment variables for the child.
+///
+/// A separate function rather than a parameter on every caller: most of them want
+/// a clean environment, and the one that does not is handing over credentials.
+fn run_with_timeout_env(
     program: &Path,
     args: &[String],
+    envs: &[(String, String)],
     timeout: std::time::Duration,
 ) -> Result<std::process::Output, String> {
     use std::io::Read;
 
     let mut child = Command::new(program)
         .args(args)
+        .envs(envs.iter().map(|(key, value)| (key.as_str(), value.as_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2088,8 +2094,12 @@ async fn engine_call(
     let (program, mut argv) = engine_invocation(resource_dir.as_deref(), &subcommand);
     argv.extend(args);
 
+    // Any credential the keychain holds, for the engine's own lookups. The engine
+    // resolves secrets environment-first, which is what lets a keychain-only
+    // credential reach it without the sidecar knowing anything about keychains.
+    let secrets = engine_env_secrets(&app_handle);
     let output = tauri::async_runtime::spawn_blocking(move || {
-        run_with_timeout(&program, &argv, ENGINE_CALL_TIMEOUT)
+        run_with_timeout_env(&program, &argv, &secrets, ENGINE_CALL_TIMEOUT)
     })
     .await
     .map_err(|e| format!("engine task failed: {}", e))?
@@ -2506,6 +2516,9 @@ const KEYCHAIN_SERVICE: &str = "ACSA Code";
 trait SecretStore {
     fn get(&self, name: &str) -> Option<String>;
     fn set(&self, name: &str, value: &str) -> Result<(), String>;
+    /// Remove a credential. Used when the *user* removes one — the migration's own
+    /// delete is a separate, deferred step.
+    fn delete(&self, name: &str) -> Result<(), String>;
 }
 
 struct KeychainStore;
@@ -2530,12 +2543,201 @@ impl SecretStore for KeychainStore {
         }
     }
 
+    fn delete(&self, name: &str) -> Result<(), String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, name).map_err(|e| e.to_string())?;
+        match entry.delete_credential() {
+            Ok(()) => Ok(()),
+            // Already gone is the outcome the caller wanted.
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
 }
 
 /// The engine spells a provider's credential `{provider}_api_key`; this is that
 /// name, in one place so the two sides cannot drift.
 fn secret_name_for_provider(provider: &str) -> String {
     format!("{provider}_api_key")
+}
+
+/// Where the *names* of keychain-held credentials are kept.
+///
+/// An OS keychain cannot be enumerated — a property of the API, not of this code —
+/// so "which providers are connected?" needs a list somewhere. This is names only:
+/// nothing here is sensitive, and the credential itself never appears.
+const SECRET_NAMES_SETTING: &str = "secret_names";
+
+/// Call the engine and return its `data`, or `None` for any failure.
+///
+/// Every caller of this has somewhere else to look, so a failed call is not an
+/// error to propagate — it is a missing answer.
+fn engine_json(
+    app_handle: &tauri::AppHandle,
+    subcommand: &str,
+    args: &[String],
+) -> Option<serde_json::Value> {
+    if !engine_subcommand_allowed(subcommand) {
+        return None;
+    }
+    let resource_dir = app_handle.path().resource_dir().ok();
+    let (program, mut argv) = engine_invocation(resource_dir.as_deref(), subcommand);
+    argv.extend(args.iter().cloned());
+    let output = Command::new(&program).args(&argv).output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last = stdout.lines().rev().find(|line| !line.trim().is_empty())?;
+    let parsed: serde_json::Value = serde_json::from_str(last).ok()?;
+    if parsed.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        parsed.get("data").cloned()
+    } else {
+        None
+    }
+}
+
+fn read_secret_names(app_handle: &tauri::AppHandle) -> Vec<String> {
+    engine_json(app_handle, "db", &["settings.get".to_string(), "{}".to_string()])
+        .and_then(|settings| settings.get(SECRET_NAMES_SETTING).cloned())
+        .and_then(|value| value.as_array().cloned())
+        .map(|list| {
+            list.iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .filter(|name| !name.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_secret_names(app_handle: &tauri::AppHandle, names: &[String]) -> Result<(), String> {
+    let payload = serde_json::json!({ "key": SECRET_NAMES_SETTING, "value": names }).to_string();
+    engine_json(app_handle, "db", &["settings.set".to_string(), payload])
+        .map(|_| ())
+        .ok_or_else(|| "could not record which credential names are stored".to_string())
+}
+
+/// The environment variable an engine-side lookup reads for a given name.
+///
+/// The engine resolves `ACSA_SECRET_<NAME>` case-insensitively by lowercasing the
+/// suffix (`app_db._env_secret_names`), so the variable has to be the upper-cased
+/// name: `deepseek_api_key` -> `ACSA_SECRET_DEEPSEEK_API_KEY`.
+fn secret_env_var(name: &str) -> String {
+    format!("ACSA_SECRET_{}", name.to_ascii_uppercase())
+}
+
+/// Every credential the keychain holds, as environment for the engine.
+///
+/// This is how a keychain-only credential reaches the engine at all: it already
+/// resolves secrets environment-first (`get_secret` checks `ACSA_SECRET_*` before
+/// the database), so the stdlib-only, frozen sidecar needs no change.
+fn engine_env_secrets(app_handle: &tauri::AppHandle) -> Vec<(String, String)> {
+    secret_env_pairs(&KeychainStore, &read_secret_names(app_handle))
+}
+
+/// The environment pairs for the names that actually resolve.
+///
+/// Split out from the handle so it can be tested: a name with no value is left out
+/// rather than injected as empty, because an empty `ACSA_SECRET_*` reads as "not
+/// set" in the engine and there is no reason to say that out loud.
+fn secret_env_pairs(store: &dyn SecretStore, names: &[String]) -> Vec<(String, String)> {
+    names
+        .iter()
+        .filter_map(|name| store.get(name).map(|value| (secret_env_var(name), value)))
+        .collect()
+}
+
+/// Store a credential in the OS keychain.
+///
+/// Deliberately **not** written to the engine's database: new credentials never
+/// reach the plaintext file. The engine is handed them through `ACSA_SECRET_*` at
+/// spawn instead. An empty value clears the credential.
+#[tauri::command]
+async fn secrets_set(
+    app_handle: tauri::AppHandle,
+    name: String,
+    value: String,
+) -> Result<serde_json::Value, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("a credential name cannot be empty".to_string());
+    }
+    if value.is_empty() {
+        return secrets_forget(&app_handle, &name).map(|_| serde_json::json!({ "stored": "removed" }));
+    }
+    // The keychain first, and it verifies its own write: if it cannot hold the
+    // value, the caller is told which store took it rather than being left to
+    // believe it is encrypted.
+    match KeychainStore.set(&name, &value) {
+        Ok(()) => {
+            let mut names = read_secret_names(&app_handle);
+            if !names.iter().any(|existing| existing == &name) {
+                names.push(name);
+            }
+            write_secret_names(&app_handle, &names)?;
+            Ok(serde_json::json!({ "stored": "keychain" }))
+        }
+        Err(keychain_error) => {
+            // The keychain is not usable here — no Secret Service on a headless
+            // Linux box, a locked keyring, or a build the OS refuses to recognise
+            // (measured: an ad-hoc-signed binary is told the write succeeded and
+            // then cannot read it back). Refusing the credential would break
+            // provider setup on those machines, so it goes where it went before and
+            // the caller is told which happened. This is not a fake encryption: the
+            // value is stored as it always was, in the `0600` file.
+            let payload = serde_json::json!({ "name": name, "value": value }).to_string();
+            engine_json(&app_handle, "db", &["secrets.set".to_string(), payload])
+                .map(|_| serde_json::json!({ "stored": "file" }))
+                .ok_or_else(|| format!("could not store the credential: {keychain_error}"))
+        }
+    }
+}
+
+/// Forget a credential everywhere it might be.
+#[tauri::command]
+async fn secrets_delete(app_handle: tauri::AppHandle, name: String) -> Result<(), String> {
+    secrets_forget(&app_handle, name.trim())
+}
+
+fn secrets_forget(app_handle: &tauri::AppHandle, name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("a credential name cannot be empty".to_string());
+    }
+    KeychainStore.delete(name)?;
+    // The engine's copy as well. The migration's own delete is deferred, so an old
+    // row would otherwise still resolve the credential the user just removed.
+    let payload = serde_json::json!({ "name": name }).to_string();
+    let _ = engine_json(app_handle, "db", &["secrets.delete".to_string(), payload]);
+    let remaining: Vec<String> = read_secret_names(app_handle)
+        .into_iter()
+        .filter(|existing| existing != name)
+        .collect();
+    write_secret_names(app_handle, &remaining)
+}
+
+/// The names this app can currently resolve a credential for.
+///
+/// The union of what the engine still holds (its rows, plus anything from a real
+/// `ACSA_SECRET_*` in the environment) and what the keychain actually returns for
+/// the names on the index. A keychain that will not answer contributes nothing,
+/// which is the honest answer rather than an optimistic one.
+#[tauri::command]
+async fn secrets_list(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> =
+        engine_json(&app_handle, "db", &["secrets.list".to_string(), "{}".to_string()])
+            .and_then(|value| value.as_array().cloned())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|name| name.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+    let store = KeychainStore;
+    for name in read_secret_names(&app_handle) {
+        if store.get(&name).is_some() && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// Resolve a provider credential, preferring the OS keychain.
@@ -3543,6 +3745,9 @@ fn main() {
             agent_respond,
             agent_interrupt,
             agent_steer,
+            secrets_set,
+            secrets_delete,
+            secrets_list,
             agent_stop,
             local_adapter_start,
             local_adapter_stop,
@@ -4313,9 +4518,10 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         // for minutes while a permission prompt went unanswered, so the request
         // never returned and the process never exited.
         let started = std::time::Instant::now();
-        let result = run_with_timeout(
+        let result = run_with_timeout_env(
             &PathBuf::from("/bin/sleep"),
             &["30".to_string()],
+            &[],
             std::time::Duration::from_millis(300),
         );
         assert!(result.is_err(), "a wedged child must not be reported as success");
@@ -4333,9 +4539,10 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
             "-c".into(),
             "head -c 300000 /dev/zero | tr '\\0' 'x'".into(),
         ];
-        let out = run_with_timeout(
+        let out = run_with_timeout_env(
             &PathBuf::from("/bin/sh"),
             &args,
+            &[],
             std::time::Duration::from_secs(20),
         )
         .expect("large output must not time out");
@@ -4344,9 +4551,10 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
 
     #[test]
     fn run_with_timeout_returns_the_exit_status() {
-        let out = run_with_timeout(
+        let out = run_with_timeout_env(
             &PathBuf::from("/bin/sh"),
             &["-c".into(), "exit 3".into()],
+            &[],
             std::time::Duration::from_secs(20),
         )
         .expect("a failing command still runs");
@@ -4605,6 +4813,11 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
             self.values.lock().unwrap().insert(name.to_string(), value.to_string());
             Ok(())
         }
+
+        fn delete(&self, name: &str) -> Result<(), String> {
+            self.values.lock().unwrap().remove(name);
+            Ok(())
+        }
     }
 
     #[test]
@@ -4670,6 +4883,34 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         // silently resolve nothing.
         assert_eq!(secret_name_for_provider("deepseek"), "deepseek_api_key");
         assert_eq!(secret_name_for_provider("ollama"), "ollama_api_key");
+    }
+
+    #[test]
+    fn a_keychain_credential_reaches_the_engine_as_its_own_environment_variable() {
+        // The engine resolves `ACSA_SECRET_<NAME>` by lowercasing the suffix
+        // (`app_db._env_secret_names`), so the variable has to be the upper-cased
+        // name. Getting the case wrong means a keychain-only credential is invisible
+        // to the engine, and invisibly so: a missing variable simply means "not set".
+        assert_eq!(
+            secret_env_var("deepseek_api_key"),
+            "ACSA_SECRET_DEEPSEEK_API_KEY"
+        );
+
+        let store = MemoryStore::default();
+        store.set("deepseek_api_key", "sk-live").unwrap();
+        let pairs = secret_env_pairs(
+            &store,
+            &["deepseek_api_key".to_string(), "openai_api_key".to_string()],
+        );
+        // Only the name that resolves is handed over. The other is absent rather
+        // than present-and-empty, which is a different thing to the engine.
+        assert_eq!(
+            pairs,
+            vec![(
+                "ACSA_SECRET_DEEPSEEK_API_KEY".to_string(),
+                "sk-live".to_string()
+            )]
+        );
     }
 
     /// Opt-in, like the real-runtime tests: it needs a real OS keychain and it
