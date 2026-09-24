@@ -51,6 +51,7 @@ import type { AgentQuestion, PendingFileChange, ProjectIndexState } from "../../
 import { approvalSummary, countDiffLines } from "../../hooks/usePipeline";
 import type { ApprovalDecision } from "../../services/agentApproval";
 import { formatDuration } from "../../services/agentTurnLimit";
+import { summarizeFailure } from "../../services/providerErrors";
 
 interface AiAssistantChatProps {
   status: PipelineStatus;
@@ -679,6 +680,16 @@ export function AiAssistantChat({
 
   const projectName = projectRoot ? projectRoot.split("/").filter(Boolean).pop() || "acsa-code" : "acsa-code";
   const latestActivity = activityLog[activityLog.length - 1]?.content || "";
+  /**
+   * A failed run whose reason the runtime did not phrase usefully.
+   *
+   * `failureDetail` holds the runtime's own words when it has any. A dead provider
+   * is the case where it effectively has none — the transcript used to say only
+   * "the task needs attention". What the runtime *did* print is enough to name the
+   * cause, so this reads it back out.
+   */
+  const failureSummary =
+    status === "failed" && !failureDetail ? summarizeFailure(activityLog) ?? "" : "";
   const currentAgentPhase = latestActivity.includes("syntax")
     ? "Checking generated changes"
     : latestActivity.includes("performance") || latestActivity.includes("sandbox")
@@ -781,8 +792,8 @@ export function AiAssistantChat({
         ? (streamingAnswer || "Task completed.") +
           (noFileChanges ? noChangesNote : "") +
           waitingNote
-        : failureDetail
-        ? `⚠️ **Task Failed:** ${failureDetail}`
+        : failureDetail || failureSummary
+        ? `⚠️ **Task Failed:** ${failureDetail || failureSummary}`
         : "The task needs attention. Review Problems or Output for details.";
 
       const finalizedSteps = agentSteps.map((s) =>
@@ -817,7 +828,7 @@ export function AiAssistantChat({
       });
     }
     prevStatusRef.current = status;
-  }, [status, failureDetail, noFileChanges, waitingForUser, turnChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
+  }, [status, failureDetail, failureSummary, noFileChanges, waitingForUser, turnChanges, projectRoot, selectedModelItem, streamingAnswer, streamingThought, agentSteps]);
 
   /**
    * Ask Ollama what is actually installed, and believe it.

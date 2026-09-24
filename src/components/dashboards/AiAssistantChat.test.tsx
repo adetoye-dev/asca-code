@@ -294,3 +294,56 @@ describe("undoing the last turn", () => {
     expect(screen.queryByTestId("undo-last-turn")).toBeNull();
   });
 });
+
+/**
+ * What a failed run says.
+ *
+ * The transcript used to fall through to "The task needs attention. Review Problems
+ * or Output for details." — true, and useless. The runtime does print the cause; it
+ * just buries it under one retry notice per attempt. This is the piece the checklist
+ * called "a dead provider still reads as a generic needs attention".
+ */
+describe("a failed run with a dead provider", () => {
+  /** Copied from a run of the bundled runtime against a deliberately bad key. */
+  const DEAD_PROVIDER = [
+    {
+      line_number: 1,
+      content:
+        "ERROR: unexpected status 401 Unauthorized: Authentication Fails, Your api key: " +
+        "****0000 is invalid (request_id: 3aba3fb8), url: https://api.deepseek.com/v1/responses",
+      stream: "stderr" as const,
+      is_json: false,
+    },
+    { line_number: 2, content: "ERROR: Reconnecting... 5/5", stream: "stderr" as const, is_json: false },
+  ];
+
+  it("says which provider rejected the key, not that something needs attention", async () => {
+    const { rerender } = render(<AiAssistantChat {...baseProps} status="running" />);
+    // The message is built on the running -> terminal transition.
+    rerender(<AiAssistantChat {...baseProps} status="failed" activityLog={DEAD_PROVIDER} />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/rejected the API key/).length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText(/api\.deepseek\.com/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/needs attention/)).toHaveLength(0);
+  });
+
+  it("keeps the generic sentence when the output explains nothing", async () => {
+    // The classifier returns nothing rather than guessing, and this is what that
+    // protects: an unrecognised failure must not acquire a confident wrong cause.
+    const { rerender } = render(<AiAssistantChat {...baseProps} status="running" />);
+    rerender(
+      <AiAssistantChat
+        {...baseProps}
+        status="failed"
+        activityLog={[
+          { line_number: 1, content: "ERROR: something we have never seen", stream: "stderr", is_json: false },
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText(/needs attention/).length).toBeGreaterThan(0),
+    );
+  });
+});
