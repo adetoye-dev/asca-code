@@ -635,6 +635,28 @@ export function AiAssistantChat({
     }
   };
 
+  // Drag and drop, alongside paste: both end in `handleImageFiles`, so a dropped
+  // image and a pasted one take the same route to the same attachment list. The
+  // `dragover` handler *must* preventDefault or the browser never fires `drop` —
+  // the classic way this silently does nothing.
+  const [isImageDragOver, setIsImageDragOver] = useState(false);
+
+  const handleImageDragOver = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setIsImageDragOver(true);
+  };
+
+  const handleImageDragLeave = () => setIsImageDragOver(false);
+
+  const handleImageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsImageDragOver(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) handleImageFiles(files);
+  };
+
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1758,6 +1780,9 @@ Click to re-index project.`}
                       value={draft}
                       onChange={(e) => chatDraft.set(e.target.value)}
                       onPaste={handlePaste}
+                      onDragOver={handleImageDragOver}
+                      onDragLeave={handleImageDragLeave}
+                      onDrop={handleImageDrop}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
@@ -1765,14 +1790,18 @@ Click to re-index project.`}
                         }
                       }}
                       placeholder={
-                        workflowMode === "agent"
+                        isImageDragOver
+                          ? "Drop the image to attach it…"
+                          : workflowMode === "agent"
                           ? "Describe a task for the agent to build, edit, or test… (Enter to run)"
                           : workflowMode === "plan"
                           ? "Brainstorm an architectural plan or discuss design decisions… (Enter)"
                           : "Ask anything, / for commands, @ for context (Enter to send)"
                       }
                       rows={3}
-                      className="w-full bg-transparent border-0 text-sm text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-1"
+                      className={`w-full bg-transparent border-0 text-sm text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-1 ${
+                        isImageDragOver ? "rounded-lg ring-2 ring-purple-500/50 bg-purple-500/5" : ""
+                      }`}
                     />
 
                     {/* Bottom control bar inside card */}
@@ -2261,6 +2290,9 @@ Click to re-index project.`}
                 value={draft}
                 onChange={(e) => chatDraft.set(e.target.value)}
                 onPaste={handlePaste}
+                onDragOver={handleImageDragOver}
+                onDragLeave={handleImageDragLeave}
+                onDrop={handleImageDrop}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -2275,7 +2307,9 @@ Click to re-index project.`}
                     : `Ask ${selectedModelItem?.model || "AI"} anything… (Shift+Enter for new line)`
                 }
                 rows={2}
-                className="w-full bg-transparent border-0 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-0.5"
+                className={`w-full bg-transparent border-0 text-xs text-zinc-100 placeholder-zinc-500 outline-none resize-none font-sans leading-relaxed focus:ring-0 p-0.5 ${
+                  isImageDragOver ? "rounded-lg ring-2 ring-purple-500/50 bg-purple-500/5" : ""
+                }`}
               />
 
               {/* Bottom control strip inside card */}

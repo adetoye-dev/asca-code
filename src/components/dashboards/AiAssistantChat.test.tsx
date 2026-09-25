@@ -347,3 +347,39 @@ describe("a failed run with a dead provider", () => {
     );
   });
 });
+
+/**
+ * Dropping an image, which is how people attach a screenshot in practice —
+ * pasting works and the file picker works, but the gesture everyone reaches for
+ * is to drag the file onto the box. It takes the same route as paste
+ * (`handleImageFiles`), so what arrives is identical either way.
+ */
+describe("dropping an image on the composer", () => {
+  const imageFile = () =>
+    new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+
+  it("attaches it", async () => {
+    render(<AiAssistantChat {...baseProps} />);
+    const box = screen.getByRole("textbox");
+    const file = imageFile();
+
+    // `dragover` has to preventDefault or the browser never fires `drop`; passing
+    // both events through is what proves the handler is really wired.
+    fireEvent.dragOver(box, { dataTransfer: { types: ["Files"], files: [file] } });
+    fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [file] } });
+
+    expect(await screen.findByAltText("Attachment")).toBeTruthy();
+  });
+
+  it("ignores a drop that is not an image", async () => {
+    // A stray text file should not become an attachment the model is asked about.
+    render(<AiAssistantChat {...baseProps} />);
+    const box = screen.getByRole("textbox");
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+
+    fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [file] } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(screen.queryByAltText("Attachment")).toBeNull();
+  });
+});

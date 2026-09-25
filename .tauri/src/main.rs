@@ -3265,41 +3265,67 @@ async fn agent_start(
 /// Send one turn to the open thread. Events stream as `agent:event`.
 /// The model-visible input for one turn: the text, then any images.
 ///
-/// Shape taken from the runtime itself (`codex debug prompt-input -i <file> "…"`),
-/// which renders the list it builds for an attached image:
+/// Shape taken from the app-server itself rather than from documentation. Sending
+/// it a variant with no fields names what that variant needs:
 ///
-///     {"type": "input_image", "image_url": "data:image/png;base64,…", "detail": "high"}
+///     turn/start: {"code":-32600,"message":"Invalid request: missing field `path`"}
 ///
-/// This is what the app-server transport was missing. It sent `input` as text
-/// alone, so an image attached in the composer reached the *exec* path (which
-/// passes `--image=`) and vanished on the app-server default — the user saw their
-/// own message arrive as "text only (no image input)" while a screenshot sat on
-/// disk and the model went looking for it.
+/// and the accepted enums are `text`, `image`, `localImage`, `audio`, `localAudio`,
+/// `skill`, `mention` — note that there is no `input_image`, which is the
+/// *model-visible* shape `codex debug prompt-input` renders for the Responses API.
+/// Trusting that renderer produced this, from a real run:
 ///
-/// `image_url` carries the data URL verbatim, the same string the exec path hands
-/// to `write_attachment`, so both transports take the image from one place.
-fn turn_input(text: &str, images: &[String]) -> Vec<serde_json::Value> {
+///     unknown variant `input_image`, expected one of `text`, `image`, `localImage`, …
+///
+/// The runtime rejected the turn, the app fell back to one-shot exec, and the user
+/// got "Task completed. No files were added, removed or resized" for a request with
+/// two screenshots attached.
+///
+/// `localImage` takes a path, so the attachments go to disk exactly as the exec
+/// path writes them for `--image=` — one file, two transports, no base64 in the
+/// protocol.
+fn turn_input(text: &str, images: &[PathBuf]) -> Vec<serde_json::Value> {
     let mut input = vec![serde_json::json!({ "type": "text", "text": text })];
-    for data_url in images {
-        let trimmed = data_url.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
+    for path in images {
         input.push(serde_json::json!({
-            "type": "input_image",
-            "image_url": trimmed,
-            "detail": "high",
+            "type": "localImage",
+            "path": path.to_string_lossy(),
         }));
     }
     input
 }
 
+/// Write the composer's data URLs to files, the way the exec path does.
+///
+/// Returns the paths that were written; an image that could not be written is left
+/// out rather than sent as a broken reference.
+fn write_turn_attachments(app_handle: &tauri::AppHandle, images: &[String]) -> Vec<PathBuf> {
+    if images.is_empty() {
+        return Vec::new();
+    }
+    let Ok(codex_home) = app_handle.path().app_data_dir().map(|dir| dir.join("codex")) else {
+        return Vec::new();
+    };
+    let mut written = Vec::new();
+    for (index, data_url) in images.iter().enumerate() {
+        if let Some(path) = write_attachment(&codex_home, data_url, index) {
+            written.push(path);
+        }
+    }
+    if !written.is_empty() {
+        prune_attachments(&codex_home.join("attachments"), 20);
+    }
+    written
+}
+
 #[tauri::command]
 async fn agent_turn(
+    app_handle: tauri::AppHandle,
     state: State<'_, AgentState>,
     text: String,
     images: Vec<String>,
 ) -> Result<(), String> {
+    let attachment_paths = write_turn_attachments(&app_handle, &images);
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or("no agent session is running")?;
     let thread_id = session
@@ -3313,7 +3339,7 @@ async fn agent_turn(
         "turn/start",
         serde_json::json!({
             "threadId": thread_id,
-            "input": turn_input(&text, &images),
+            "input": turn_input(&text, &attachment_paths),
         }),
         std::time::Duration::from_secs(30),
     )?;
@@ -5155,18 +5181,21 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
     /// is the one-line check to repeat if this ever regresses, because nothing else
     /// in the build can tell the difference.
     #[test]
-    fn a_turn_with_an_image_sends_it_as_an_input_image_item() {
+    fn a_turn_with_an_image_sends_it_as_the_runtime_accepts_it() {
         // The app-server transport sent text alone, so an attached image was
         // dropped there while the same image went through `--image=` on `exec` —
         // the asymmetry a user hit when their message arrived as "text only".
-        let input = turn_input("look at this", &["data:image/png;base64,AAAA".to_string()]);
+        //
+        // The variant and field are the runtime's, asked rather than assumed: an
+        // empty `{"type":"localImage"}` answers `missing field \`path\``, and
+        // `input_image` — the shape `codex debug prompt-input` renders for the
+        // Responses API — is rejected outright as an unknown variant.
+        let input = turn_input("look at this", &[PathBuf::from("/tmp/attachments/0.png")]);
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["type"], "text");
         assert_eq!(input[0]["text"], "look at this");
-        assert_eq!(input[1]["type"], "input_image");
-        assert_eq!(input[1]["image_url"], "data:image/png;base64,AAAA");
-        // The runtime names this field; without it the item is rejected.
-        assert_eq!(input[1]["detail"], "high");
+        assert_eq!(input[1]["type"], "localImage");
+        assert_eq!(input[1]["path"], "/tmp/attachments/0.png");
     }
 
     #[test]
@@ -5176,9 +5205,6 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
         let input = turn_input("no pictures", &[]);
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["type"], "text");
-
-        let blank = turn_input("still none", &["   ".to_string()]);
-        assert_eq!(blank.len(), 1, "a blank attachment is not an image");
     }
 
     #[test]
