@@ -1,18 +1,39 @@
 /**
  * editor-app-check.mjs — the whole app, in a browser, driven like a user.
  *
- * The editor's typing bug does not reproduce when the component is mounted on
- * its own (`editor-typing-probe.mjs` passes), which says the cause is in the app
- * around it — the dockview panels, the workbench context, a per-keystroke
- * effect. This runs the *real* app with a stubbed Tauri IPC layer, opens a file
- * from the explorer, and types into it with real key events.
+ * The editor's typing bug — one keystroke landing per click — does not reproduce
+ * when the editor is mounted on its own, which says the cause is in the app
+ * around it: the dockview panels, the workbench context, a per-keystroke effect.
+ * So this runs the *real* app with a stubbed Tauri IPC layer, opens a file from
+ * the explorer, and types into it with real key events. It reproduced the bug
+ * (`a{hello` -> `a{h`) and names the culprit in a focusout stack.
  *
  * Why a stub rather than the packaged app: a Tauri rebuild is minutes and gives
  * no DOM to inspect; this is seconds and lets the test read exactly what the
  * user sees. The assertions are on the rendered text, so they cannot pass
  * because a mocked model said so.
  *
- *   node scripts/editor-app-check.mjs
+ *   node scripts/editor-app-check.mjs            # against the dev server
+ *   node scripts/editor-app-check.mjs --dist     # against the built bundle
+ *
+ * Two things about the browser that this had to work around, and neither is
+ * obvious from a failure:
+ *
+ *   * Monaco chooses its input mechanism from `typeof globalThis.EditContext`,
+ *     which Chrome has and the macOS webview the app actually ships in does
+ *     not. The stub deletes it, so Chrome exercises the same path a user does;
+ *     without that this silently tests a mechanism no user has.
+ *   * Monaco renders a space as `&nbsp;` so layout will not collapse it, so the
+ *     text read back out of `.view-lines` is full of U+00A0 where the file has
+ *     U+0020. `editorText` normalises, which keeps assertions from failing on a
+ *     rendering detail — and from passing by accident.
+ *
+ * And one for whoever verifies the packaged app by hand instead: two copies can
+ * be installed at once (a build under `.tauri/target` and the released one),
+ * `cua.getApp("ACSA Code")` may bind to either, and a screenshot can show one
+ * while the AX tree describes the other — which is how a fixed build gets
+ * reported as still broken. Kill every copy, confirm none remain, and bind by
+ * full app path.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -21,6 +42,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 const PORT = 5202;
 const CDP_PORT = 9446;
 const APP = `http://127.0.0.1:${PORT}/`;
+/**
+ * `--dist` serves the built bundle instead of the dev server.
+ *
+ * The dev server and the shipped app are not the same artifact, and a bug that
+ * only appears in one is exactly the kind that ships. This is how the packaged
+ * bundle gets checked from the same browser that checks the source.
+ */
+const SERVE_DIST = process.argv.includes("--dist");
 
 const CHROME_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -263,7 +292,11 @@ async function openFileAndFocus(session) {
   return point;
 }
 
-children.push(spawn("npx", ["vite", "--port", String(PORT), "--strictPort"], { stdio: "ignore" }));
+children.push(
+  SERVE_DIST
+    ? spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" })
+    : spawn("npx", ["vite", "--port", String(PORT), "--strictPort"], { stdio: "ignore" })
+);
 await waitFor(APP, "vite");
 
 children.push(spawn(chrome, [
