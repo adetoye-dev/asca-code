@@ -74,6 +74,7 @@ if (!chrome) {
 const TAURI_STUB = `(() => {
   globalThis.EditContext = undefined;
   window.__engineCalls = [];
+  window.__writes = [];
   const callbacks = new Map();
   let nextCallbackId = 1;
   let nextEventId = 1;
@@ -123,7 +124,12 @@ const TAURI_STUB = `(() => {
       }
       if (cmd === "list_project_files") return TREE;
       if (cmd === "read_file_content") return CONTENTS[args && args.filePath] || "";
-      if (cmd === "write_file_content") return null;
+      if (cmd === "write_file_content") {
+        // Recorded, not applied: a save has to be observable without the harness
+        // pretending to be a filesystem.
+        window.__writes.push({ filePath: args && args.filePath, content: args && args.content });
+        return null;
+      }
       if (cmd === "create_file_or_folder") return null;
       if (cmd === "delete_project_file") return null;
       if (cmd === "pick_folder") return null;
@@ -231,6 +237,26 @@ class Session {
     }
   }
   /**
+   * Cmd+C / Cmd+X / Cmd+V.
+   *
+   * A real keyboard makes the browser run its own editing command; a synthesised
+   * key event alone does not, and the page never sees a copy or cut event at all.
+   * `commands` is what makes this a keypress rather than a key code.
+   */
+  async editingCommand(letter, code, command) {
+    await this.send("Input.dispatchKeyEvent", {
+      type: "keyDown", key: letter, code: `Key${letter.toUpperCase()}`, modifiers: 4,
+      windowsVirtualKeyCode: code, nativeVirtualKeyCode: code, commands: [command],
+    });
+    await this.send("Input.dispatchKeyEvent", {
+      type: "keyUp", key: letter, code: `Key${letter.toUpperCase()}`, modifiers: 4,
+      windowsVirtualKeyCode: code, nativeVirtualKeyCode: code,
+    });
+  }
+  copy() { return this.editingCommand("c", 67, "copy"); }
+  cut() { return this.editingCommand("x", 88, "cut"); }
+  paste() { return this.editingCommand("v", 86, "paste"); }
+  /**
    * A non-character key. `text` is what the browser would insert for the key,
    * and CDP only models a real Enter if it is given the carriage return the
    * keyboard would produce — without it the editor sees a key code and nothing
@@ -261,6 +287,11 @@ const check = (name, ok, detail = "") => {
  */
 const editorText = (s) =>
   s.eval(`((document.querySelector('.monaco-editor .view-lines') || {}).innerText || '').replace(/\\u00a0/g, ' ')`);
+const readClipboard = (s) => s.eval("navigator.clipboard.readText()");
+const writeClipboard = (s, text) =>
+  s.eval(`navigator.clipboard.writeText(${JSON.stringify(text)}).then(() => true)`);
+const inlinePromptOpen = (s) =>
+  s.eval(`Boolean(document.querySelector('input[placeholder^="Describe changes or ask AI"]'))`);
 const inputState = (s) => s.eval(`(() => {
   const t = document.querySelector('.monaco-editor textarea');
   return t ? { readOnly: t.readOnly, active: document.activeElement === t, start: t.selectionStart } : null;
@@ -315,6 +346,14 @@ await session.send("Page.enable");
 await session.send("Runtime.enable");
 await session.send("Log.enable");
 await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+// Without this the page cannot read or write the clipboard, and copy/paste are
+// untestable rather than broken.
+await session
+  .send("Browser.grantPermissions", {
+    origin: `http://127.0.0.1:${PORT}`,
+    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+  })
+  .catch(() => {});
 await session.send("Page.addScriptToEvaluateOnNewDocument", { source: TAURI_STUB });
 await session.send("Page.addScriptToEvaluateOnNewDocument", { source: FOCUS_LOGGER });
 await session.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -412,6 +451,85 @@ const afterRight = await inputState(session);
 check("arrow keys move the caret and focus stays put",
   Boolean(afterLeft?.active) && afterLeft.start === beforeArrow - 1 && afterRight.start === beforeArrow,
   `${beforeArrow} -> ${afterLeft?.start} -> ${afterRight?.start} focused=${afterLeft?.active}`);
+
+// ── Clipboard ────────────────────────────────────────────────────────────
+// Rebuilt from scratch so the caret position is constructed, not guessed.
+await session.chord("a", 65);
+await session.type("hello");
+await sleep(400);
+check("select-all then typing replaces the buffer",
+  (await editorText(session)) === "hello", JSON.stringify(await editorText(session)));
+
+await session.chord("a", 65);
+await session.copy();
+await sleep(500);
+const copied = await readClipboard(session);
+check("Cmd+C copies the file without changing it",
+  copied === "hello" && (await editorText(session)) === "hello",
+  `clipboard=${JSON.stringify(copied)} text=${JSON.stringify(await editorText(session))}`);
+
+await session.chord("a", 65);
+await session.cut();
+await sleep(500);
+const afterCut = await editorText(session);
+const cutClipboard = await readClipboard(session);
+check("Cmd+X cuts the selection into the clipboard",
+  afterCut === "" && cutClipboard === "hello",
+  `text=${JSON.stringify(afterCut)} clipboard=${JSON.stringify(cutClipboard)}`);
+
+await session.chord("z", 90);
+await sleep(500);
+check("a cut is one undo", (await editorText(session)) === "hello", JSON.stringify(await editorText(session)));
+
+await writeClipboard(session, "PASTED");
+await session.press("End", 35);
+await session.paste();
+await sleep(600);
+const afterPaste = await editorText(session);
+check("Cmd+V pastes at the caret", afterPaste === "helloPASTED", JSON.stringify(afterPaste));
+
+await session.chord("z", 90);
+await sleep(500);
+check("a paste is one undo", (await editorText(session)) === "hello", JSON.stringify(await editorText(session)));
+
+// ── Save ─────────────────────────────────────────────────────────────────
+await session.chord("s", 83);
+await sleep(700);
+const writes = await session.eval("window.__writes");
+const lastWrite = writes[writes.length - 1];
+check("Cmd+S writes the buffer to the host",
+  Boolean(lastWrite) && lastWrite.content === "hello",
+  JSON.stringify(writes.map((w) => ({ path: w.filePath, len: (w.content || "").length }))));
+
+// ── The Cmd+K prompt, and getting back out of it ─────────────────────────
+// Reported as "Cmd+K opens it and there is no way to close it".
+await session.chord("k", 75);
+await sleep(500);
+const openedByChord = await inlinePromptOpen(session);
+check("Cmd+K opens the inline edit prompt", openedByChord, `open=${openedByChord}`);
+
+await session.press("Escape", 27);
+await sleep(500);
+const closedByEscape = !(await inlinePromptOpen(session));
+const focusedAfterEscape = await inputState(session);
+check("Escape closes it and hands focus back to the editor",
+  closedByEscape && Boolean(focusedAfterEscape?.active),
+  `closed=${closedByEscape} focused=${focusedAfterEscape?.active}`);
+
+await session.chord("k", 75);
+await sleep(500);
+const reopened = await inlinePromptOpen(session);
+const clickedCancel = await session.eval(`(() => {
+  const button = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'Cancel');
+  if (button) button.click();
+  return Boolean(button);
+})()`);
+await sleep(500);
+const closedByCancel = !(await inlinePromptOpen(session));
+const focusedAfterCancel = await inputState(session);
+check("Cancel closes it too, and does not leave the editor behind",
+  reopened && clickedCancel && closedByCancel && Boolean(focusedAfterCancel?.active),
+  `reopened=${reopened} clicked=${clickedCancel} closed=${closedByCancel} focused=${focusedAfterCancel?.active}`);
 
 check("no uncaught errors in the console", session.errors.length === 0, session.errors.slice(0, 4).join(" || "));
 if (process.env.DUMP_CALLS) {
