@@ -3247,10 +3247,42 @@ async fn agent_start(
 }
 
 /// Send one turn to the open thread. Events stream as `agent:event`.
+/// The model-visible input for one turn: the text, then any images.
+///
+/// Shape taken from the runtime itself (`codex debug prompt-input -i <file> "…"`),
+/// which renders the list it builds for an attached image:
+///
+///     {"type": "input_image", "image_url": "data:image/png;base64,…", "detail": "high"}
+///
+/// This is what the app-server transport was missing. It sent `input` as text
+/// alone, so an image attached in the composer reached the *exec* path (which
+/// passes `--image=`) and vanished on the app-server default — the user saw their
+/// own message arrive as "text only (no image input)" while a screenshot sat on
+/// disk and the model went looking for it.
+///
+/// `image_url` carries the data URL verbatim, the same string the exec path hands
+/// to `write_attachment`, so both transports take the image from one place.
+fn turn_input(text: &str, images: &[String]) -> Vec<serde_json::Value> {
+    let mut input = vec![serde_json::json!({ "type": "text", "text": text })];
+    for data_url in images {
+        let trimmed = data_url.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        input.push(serde_json::json!({
+            "type": "input_image",
+            "image_url": trimmed,
+            "detail": "high",
+        }));
+    }
+    input
+}
+
 #[tauri::command]
 async fn agent_turn(
     state: State<'_, AgentState>,
     text: String,
+    images: Vec<String>,
 ) -> Result<(), String> {
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or("no agent session is running")?;
@@ -3265,7 +3297,7 @@ async fn agent_turn(
         "turn/start",
         serde_json::json!({
             "threadId": thread_id,
-            "input": [{ "type": "text", "text": text }],
+            "input": turn_input(&text, &images),
         }),
         std::time::Duration::from_secs(30),
     )?;
@@ -5106,6 +5138,33 @@ Unknown model gpt-5.6-luna is used. This will use fallback model metadata.";
     /// system keychain". `cargo tree -p keyring -e features` showed only `log` — that
     /// is the one-line check to repeat if this ever regresses, because nothing else
     /// in the build can tell the difference.
+    #[test]
+    fn a_turn_with_an_image_sends_it_as_an_input_image_item() {
+        // The app-server transport sent text alone, so an attached image was
+        // dropped there while the same image went through `--image=` on `exec` —
+        // the asymmetry a user hit when their message arrived as "text only".
+        let input = turn_input("look at this", &["data:image/png;base64,AAAA".to_string()]);
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "text");
+        assert_eq!(input[0]["text"], "look at this");
+        assert_eq!(input[1]["type"], "input_image");
+        assert_eq!(input[1]["image_url"], "data:image/png;base64,AAAA");
+        // The runtime names this field; without it the item is rejected.
+        assert_eq!(input[1]["detail"], "high");
+    }
+
+    #[test]
+    fn a_turn_without_images_is_just_the_text() {
+        // The common case must not acquire an empty image item, which the runtime
+        // would reject as malformed rather than ignore.
+        let input = turn_input("no pictures", &[]);
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "text");
+
+        let blank = turn_input("still none", &["   ".to_string()]);
+        assert_eq!(blank.len(), 1, "a blank attachment is not an image");
+    }
+
     #[test]
     #[ignore = "needs a real OS keychain; run explicitly on a Mac"]
     fn the_os_keychain_round_trips_a_credential() {

@@ -988,9 +988,20 @@ export function isModelVisionCapable(providerId: string, modelName: string): boo
     return false;
   }
 
-  // 5. Other cloud providers (Groq, Mistral, DeepSeek, xAI, etc.):
-  // If unrecognized, default to permissive (runtime self-healing will catch API 400s)
-  return true;
+  // 5. Anything else is treated as text-only.
+  //
+  // This used to be `return true` — "default to permissive, the runtime self-heals
+  // on a 400". It does not self-heal: the attach path in `usePipeline` records
+  // that the provider's 400 is retried five times and then reported as a *failed
+  // turn*. So a wrong "yes" costs a broken run and a wrong "no" costs a warning
+  // and an unattached image, which is not a close call. Measured: this answered
+  // `true` for `deepseek-flash`, whose API is text-only, and declared image input
+  // for every model in the runtime catalog as a result.
+  //
+  // Everything genuinely multimodal is still caught above — the keywords cover
+  // `-vl`, `vision`, `omni`, `4o` and the local vision weights, and the two
+  // aggregator providers are handled by name.
+  return false;
 }
 
 /**

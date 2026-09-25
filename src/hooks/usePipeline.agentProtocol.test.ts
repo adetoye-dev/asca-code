@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_BASE_INSTRUCTIONS, AGENT_RUNTIME_FLAGS, RESERVED_RUNTIME_PROVIDER_IDS, approvalSummary, countDiffLines, hostedProviderId, summarizeItemChanges, userInputResponse } from "./usePipeline";
+import { AGENT_BASE_INSTRUCTIONS, AGENT_RUNTIME_FLAGS, RESERVED_RUNTIME_PROVIDER_IDS, agentCatalogEntry, approvalSummary, countDiffLines, hostedProviderId, summarizeItemChanges, userInputResponse } from "./usePipeline";
 
 /**
  * The instruction the app hands the agent through the model catalog on every run.
@@ -195,5 +195,38 @@ describe("the provider id our generated config offers the runtime", () => {
     const reserved = new Set<string>(RESERVED_RUNTIME_PROVIDER_IDS);
     expect(hosted.some((id) => reserved.has(id))).toBe(true);
     expect(reserved.has("openai")).toBe(true);
+  });
+});
+
+/**
+ * What the runtime is told about a model, which decides what the model is allowed
+ * to do with an image.
+ *
+ * Reported: a run on a vision model could not use `view_image` —
+ * "error=view_image is not allowed because you do not support image inputs" — and
+ * fell back to hunting for the screenshot on disk and OCR-ing it with macOS
+ * Vision. Every catalog entry said `input_modalities: ["text"]`, because the field
+ * was hard-coded, and the runtime believes its catalog over the request.
+ */
+describe("the catalog entry for one model", () => {
+  it("declares image input for a vision model", () => {
+    const entry = agentCatalogEntry("openai", "OpenAI", "gpt-5.3-codex");
+    expect(entry.input_modalities).toContain("image");
+  });
+
+  it("keeps a text-only model text-only, because a false yes is a failed run", () => {
+    // Sending an image to a model that cannot read one is a 400 the runtime
+    // retries five times before reporting the turn as failed.
+    const entry = agentCatalogEntry("deepseek", "DeepSeek", "deepseek-flash");
+    expect(entry.input_modalities).toEqual(["text"]);
+  });
+
+  it("still names the model and the provider it came through", () => {
+    // The extraction that made this testable must not have dropped a field.
+    const entry = agentCatalogEntry("deepseek", "DeepSeek", "deepseek-flash");
+    expect(entry.slug).toBe("deepseek-flash");
+    expect(entry.description).toContain("DeepSeek");
+    expect(entry.base_instructions).toBe(AGENT_BASE_INSTRUCTIONS);
+    expect(entry.apply_patch_tool_type).toBe("freeform");
   });
 });

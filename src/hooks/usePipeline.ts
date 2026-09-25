@@ -238,34 +238,7 @@ async function runAgent(params: {
   const catalogJson = JSON.stringify(
     {
       models: (provider.availableModels?.length ? provider.availableModels : [model]).map(
-        (slug: string) => ({
-          slug,
-          display_name: slug,
-          description: `${slug} via ${provider.name || providerId}.`,
-          default_reasoning_level: "high",
-          supported_reasoning_levels: [
-            { effort: "low", description: "Low reasoning" },
-            { effort: "high", description: "High reasoning" },
-          ],
-          shell_type: "shell_command",
-          visibility: "list",
-          supported_in_api: true,
-          priority: 1,
-          base_instructions: AGENT_BASE_INSTRUCTIONS,
-          context_window: 131072,
-          max_context_window: 131072,
-          effective_context_window_percent: 95,
-          truncation_policy: { mode: "tokens", limit: 10000 },
-          input_modalities: ["text"],
-          apply_patch_tool_type: "freeform",
-          support_verbosity: true,
-          default_verbosity: "low",
-          default_reasoning_summary: "none",
-          supports_parallel_tool_calls: true,
-          use_responses_lite: false,
-          prefer_websockets: false,
-          experimental_supported_tools: [],
-        }),
+        (slug: string) => agentCatalogEntry(providerId, provider.name || providerId, slug),
       ),
     },
     null,
@@ -317,6 +290,7 @@ async function runAgent(params: {
       // and resolve the same credential.
       providerId,
       runtimeProviderId,
+      images: params.images,
       catalogJson,
       model,
       approvalMode: params.approvalMode ?? DEFAULT_AGENT_APPROVAL_MODE,
@@ -516,6 +490,8 @@ async function runAgentOnAppServer(params: {
   providerId: string;
   /** Routes inside the runtime; namespaced so it cannot be a built-in name. */
   runtimeProviderId: string;
+  /** Data URLs from the composer, delivered as `input_image` items with the turn. */
+  images?: string[];
   catalogJson: string;
   model: string;
   approvalMode: AgentApprovalMode;
@@ -704,7 +680,19 @@ async function runAgentOnAppServer(params: {
       // Before the runtime touches anything: the pre-turn state, so the turn can
       // be undone. Best effort — see `takeTurnSnapshot`.
       await params.onBeforeTurn?.();
-      await invoke("agent_turn", { text: params.prompt });
+      // Same gate as the exec path, for the same reason: an image the model cannot
+      // read is a provider 400 the runtime retries five times before failing the
+      // turn. Declaring it here as well keeps the two transports honest about the
+      // same model — this path used to drop every image instead.
+      const turnImages = isModelVisionCapable(params.providerId, params.model)
+        ? params.images ?? []
+        : [];
+      if ((params.images?.length ?? 0) > 0 && turnImages.length === 0) {
+        params.log(
+          `[agent] ${params.images!.length} image(s) not attached: ${params.model} does not take image input. Pick a vision model, or say what is in the image.`,
+        );
+      }
+      await invoke("agent_turn", { text: params.prompt, images: turnImages });
     } catch (error) {
       params.log(`[agent] app-server: turn rejected — ${String(error)}`);
       return "unavailable";
@@ -2594,3 +2582,54 @@ export function usePipeline(): UsePipelineReturn {
 }
 
 export default usePipeline;
+
+/**
+ * One model's entry in the catalog the runtime reads.
+ *
+ * Extracted so the modality question is testable: this catalog is built inline
+ * inside a long agent run, and its `input_modalities` was `["text"]` for every
+ * model for several releases. The runtime believes the catalog over the request,
+ * so a vision model declared text-only has its `view_image` tool refused with
+ * "you do not support image inputs" and any attached image is dropped — reported
+ * from a run that fell back to OCR-ing a screenshot off the Desktop.
+ */
+export function agentCatalogEntry(providerId: string, providerName: string, slug: string) {
+  return {
+
+        slug,
+        display_name: slug,
+    description: `${slug} via ${providerName}.`,
+        default_reasoning_level: "high",
+        supported_reasoning_levels: [
+          { effort: "low", description: "Low reasoning" },
+          { effort: "high", description: "High reasoning" },
+        ],
+        shell_type: "shell_command",
+        visibility: "list",
+        supported_in_api: true,
+        priority: 1,
+        base_instructions: AGENT_BASE_INSTRUCTIONS,
+        context_window: 131072,
+        max_context_window: 131072,
+        effective_context_window_percent: 95,
+        truncation_policy: { mode: "tokens", limit: 10000 },
+        // Per model, not per app. This said `["text"]` for everything, and the
+        // runtime believes its catalog over the request: a vision model declared
+        // text-only gets its `view_image` tool refused with "you do not support
+        // image inputs", and any attached image is dropped. Reported from a run
+        // where the model hunted for a screenshot on disk and then had to OCR it.
+        // `isModelVisionCapable` is the same gate the attach path uses, so the
+        // two cannot disagree about what a model can read.
+        input_modalities: isModelVisionCapable(providerId, slug)
+          ? ["text", "image"]
+          : ["text"],
+        apply_patch_tool_type: "freeform",
+        support_verbosity: true,
+        default_verbosity: "low",
+        default_reasoning_summary: "none",
+        supports_parallel_tool_calls: true,
+        use_responses_lite: false,
+        prefer_websockets: false,
+    experimental_supported_tools: [],
+  };
+}
