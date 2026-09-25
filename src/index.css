@@ -260,6 +260,12 @@
      stacking order the text layer sits on top of the review cards, so every
      click and hover lands on the text layer instead of the buttons. */
   z-index: 30;
+  /* A zone is a full-width band as tall as its card, and it is the zone — not
+     the card, and not the wrapper inside it — that the hit test lands on. So a
+     `pointer-events: none` wrapper was only half the fix: the band itself still
+     swallowed the click, and the lines a finding covers stayed unclickable. The
+     card turns pointer events back on for itself below. */
+  pointer-events: none;
 }
 
 .acsa-review-card-wrap {
