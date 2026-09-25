@@ -2793,6 +2793,22 @@ fn engine_resolve_key(app_handle: &tauri::AppHandle, provider: &str) -> Option<S
 /// value: if this fails the key simply stays in both places and the next run tries
 /// again, which is the state every release before this one shipped in.
 fn engine_forget_old_store(app_handle: &tauri::AppHandle, name: &str) {
+    // The name has to be indexed *before* the plaintext copy goes.
+    //
+    // `engine_env_secrets` resolves credentials by name from this index, and a
+    // keychain entry no name points at cannot be found again — there is no way to
+    // enumerate a keychain (that is a property of the API, not of this code). The
+    // first build that deleted the old copy skipped this step and orphaned the
+    // two credentials of the machine it ran on: present in the Keychain, invisible
+    // to the app, which then reported no key and failed provider calls. Copying
+    // *and* indexing is the migration; deleting without indexing is data loss that
+    // looks like success.
+    let mut names = read_secret_names(app_handle);
+    if !names.iter().any(|existing| existing == name) {
+        names.push(name.to_string());
+        let _ = write_secret_names(app_handle, &names);
+    }
+
     let resource_dir = app_handle.path().resource_dir().ok();
     let (program, mut argv) = engine_invocation(resource_dir.as_deref(), "db");
     argv.push("secrets.delete".to_string());
