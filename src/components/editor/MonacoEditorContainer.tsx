@@ -1018,9 +1018,10 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
                   e.preventDefault();
                   await handleInlineSubmit();
                 } else if (e.key === "Escape") {
-                  inlineAbortControllerRef.current?.abort();
-                  setIsInlinePromptOpen(false);
-                  editorRef.current?.focus();
+                  // One close path, not two. Doing the work inline here left the
+                  // prompt's loading and error state behind, and meant a change
+                  // to `closeInlinePrompt` silently did not apply to Escape.
+                  closeInlinePrompt();
                 }
               }}
               placeholder="Describe changes or ask AI to edit code... (Enter to apply, Esc to cancel)"
