@@ -278,20 +278,65 @@ const check = (name, ok, detail = "") => {
 };
 
 /**
- * What the editor is actually showing.
+ * The file's text as the editor has it on screen.
  *
- * Monaco renders a space as `&nbsp;` so the layout engine will not collapse it,
- * so the text read back out of `.view-lines` is full of U+00A0 where the file
- * has U+0020. Normalising here keeps assertions about the file from failing on
- * a rendering detail — and keeps them from passing by accident too.
+ * Read per line, with two rendering details removed, because reading the whole
+ * container's `innerText` gets both wrong:
+ *
+ *  * Monaco renders a space as `&nbsp;`, so the text comes back with U+00A0
+ *    where the file has U+0020.
+ *  * Monaco draws suggestions *into the view lines* — the inline preview of the
+ *    selected completion (`suggest.preview` is on here, and it renders as
+ *    `.ghost-text-decoration`) and any ghost text. A buffer of `x\ny` reads back
+ *    as `x\nyield`, and the assertion then fails on a word the file never held.
+ *    Matched on substring because Monaco names these spans more than one way.
  */
 const editorText = (s) =>
-  s.eval(`((document.querySelector('.monaco-editor .view-lines') || {}).innerText || '').replace(/\\u00a0/g, ' ')`);
+  s.eval(`(() => {
+    const lines = [...document.querySelectorAll('.monaco-editor .view-lines .view-line')];
+    return lines.map((line) => {
+      const copy = line.cloneNode(true);
+      copy.querySelectorAll(
+        '[class*="ghost"], [class*="suggest-preview"], [class*="inline-suggestions"], .codicon, .monaco-reserved-space'
+      ).forEach((node) => node.remove());
+      return (copy.textContent || '').replace(/\\u00a0/g, ' ');
+    }).join('\\n');
+  })()`);
 const readClipboard = (s) => s.eval("navigator.clipboard.readText()");
 const writeClipboard = (s, text) =>
   s.eval(`navigator.clipboard.writeText(${JSON.stringify(text)}).then(() => true)`);
 const inlinePromptOpen = (s) =>
   s.eval(`Boolean(document.querySelector('input[placeholder^="Describe changes or ask AI"]'))`);
+/**
+ * Is the code *visible*, or merely present?
+ *
+ * Every other assertion here reads text out of the DOM, and DOM text survives
+ * being laid out at zero size, made transparent, or painted in the background
+ * colour — so on its own it cannot tell "the file is on screen" from "the file
+ * is there but you cannot see it". This is the one check that looks at layout
+ * and colour instead of content.
+ */
+const editorInk = (s) =>
+  s.eval(`(() => {
+    const lines = [...document.querySelectorAll('.monaco-editor .view-line')];
+    const laidOut = lines.filter((line) => {
+      const r = line.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }).length;
+    const span = document.querySelector('.monaco-editor .view-line span');
+    const style = span ? getComputedStyle(span) : null;
+    const surface = document.querySelector('.monaco-editor');
+    const background = surface ? getComputedStyle(surface).backgroundColor : null;
+    return {
+      lines: lines.length,
+      laidOut,
+      color: style ? style.color : null,
+      opacity: style ? style.opacity : null,
+      visibility: style ? style.visibility : null,
+      background,
+      firstLine: lines[0] ? (lines[0].textContent || '').slice(0, 12) : null,
+    };
+  })()`);
 const inputState = (s) => s.eval(`(() => {
   const t = document.querySelector('.monaco-editor textarea');
   return t ? { readOnly: t.readOnly, active: document.activeElement === t, start: t.selectionStart } : null;
@@ -345,6 +390,21 @@ const session = new Session(ws);
 await session.send("Page.enable");
 await session.send("Runtime.enable");
 await session.send("Log.enable");
+// Hermetic: this app's editor asks a model for inline completions, and a real
+// Ollama (or a cloud key) on this machine answers it. Ghost text then lands in
+// `.view-lines` and the assertions read the suggestion instead of the file —
+// observed as `helloHello! How can I assist you today?`. Only the harness's own
+// origin is allowed through.
+await session.send("Network.enable");
+await session.send("Network.setBlockedURLs", {
+  urls: [
+    "*://localhost:*/*",
+    "*://127.0.0.1:11434/*",
+    "*://127.0.0.1:1234/*",
+    "*://127.0.0.1:8080/*",
+    "https://*/*",
+  ],
+});
 await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 // Without this the page cannot read or write the clipboard, and copy/paste are
 // untestable rather than broken.
@@ -365,6 +425,12 @@ console.log("  editor shows:", JSON.stringify(await editorText(session)));
 
 const focused = await inputState(session);
 check("clicking the code focuses the editor's input", Boolean(focused && focused.active && !focused.readOnly), JSON.stringify(focused));
+
+const ink = await editorInk(session);
+check("the code is laid out and painted, not merely in the DOM",
+  ink.lines >= 2 && ink.laidOut === ink.lines && ink.opacity === "1" &&
+    ink.visibility === "visible" && Boolean(ink.color) && ink.color !== ink.background,
+  JSON.stringify(ink));
 
 // One character, with a stack for every focus change it causes. This is where
 // "one keystroke per focus" is either explained or is not happening.
@@ -424,12 +490,24 @@ check("Tab indents in the editor instead of leaving it",
 // the caret sits after a select-all has to be constructed, not guessed.
 await session.chord("a", 65);
 await session.type("x");
+await sleep(700);
+// Typing a letter opens the suggest widget, and Enter accepts the highlighted
+// suggestion rather than adding a line — which is what the editor should do, and
+// is why the widget has to be dismissed before this test means anything. Left
+// in, the assertion caught `XMLDocumenty`: Enter had completed `x`.
+await session.press("Escape", 27);
 await sleep(300);
 await session.press("Enter", 13, { text: "\r" });
 await sleep(300);
 await session.type("y");
 await sleep(400);
 const afterEnter = await editorText(session);
+if (process.env.DUMP_DOM) {
+  console.log("  view-lines html:", await session.eval(
+    `(document.querySelector('.monaco-editor .view-lines') || {}).innerHTML || ''`));
+  console.log("  classes inside:", await session.eval(
+    `[...new Set([...document.querySelectorAll('.monaco-editor .view-lines *')].map((n) => String(n.className)))].join(' | ')`));
+}
 check("Enter opens a new line and the next text lands on it",
   afterEnter === "x\ny", JSON.stringify(afterEnter));
 
