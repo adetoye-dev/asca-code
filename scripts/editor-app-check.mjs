@@ -35,7 +35,7 @@
  * reported as still broken. Kill every copy, confirm none remain, and bind by
  * full app path.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -75,6 +75,10 @@ const TAURI_STUB = `(() => {
   globalThis.EditContext = undefined;
   window.__engineCalls = [];
   window.__writes = [];
+  // What the engine answers for the two AI actions the editor can make. Set per
+  // check, so a review or an inline edit is deterministic rather than a
+  // question about which model happened to reply.
+  window.__ai = { review: { ok: true, issues: [] }, inline: { ok: true, replacement: "" } };
   const callbacks = new Map();
   let nextCallbackId = 1;
   let nextEventId = 1;
@@ -117,6 +121,12 @@ const TAURI_STUB = `(() => {
         }
         if (sub === "git") return JSON.stringify({ ok: true, data: { branch: "dev", files: [] } });
         if (sub === "indexer") return JSON.stringify({ ok: true, data: { indexed: true, totalSymbols: 0, profile: null } });
+        if (sub === "ai") {
+          const action = list && list[0];
+          if (action === "review-file") return JSON.stringify({ ok: true, data: window.__ai.review });
+          if (action === "inline-edit") return JSON.stringify({ ok: true, data: window.__ai.inline });
+          return JSON.stringify({ ok: true, data: null });
+        }
         if (sub === "ollama") return JSON.stringify({ ok: true, data: { installed: false, running: false, models: [], recommendedModel: "qwen2.5-coder:3b", totalRamGb: 0 } });
         if (sub === "project") return JSON.stringify({ ok: true, data: { ok: true } });
         if (sub === "crash") return JSON.stringify({ ok: true, data: { ok: true } });
@@ -307,6 +317,56 @@ const writeClipboard = (s, text) =>
   s.eval(`navigator.clipboard.writeText(${JSON.stringify(text)}).then(() => true)`);
 const inlinePromptOpen = (s) =>
   s.eval(`Boolean(document.querySelector('input[placeholder^="Describe changes or ask AI"]'))`);
+/** What the engine will answer next, injected as data rather than as source. */
+const setAi = (s, key, value) => s.eval(`(window.__ai.${key} = ${JSON.stringify(value)}, true)`);
+/** Any element whose text matches, so a class rename cannot break the check. */
+const textMatching = (s, pattern) =>
+  s.eval(`(() => {
+    const wanted = ${pattern};
+    const nodes = [...document.querySelectorAll('div, span, p')]
+      .filter((node) => wanted.test(node.textContent || ''));
+    const leaf = nodes[nodes.length - 1];
+    return leaf ? (leaf.textContent || '').trim() : null;
+  })()`);
+const reviewState = (s) =>
+  s.eval(`({
+    cards: document.querySelectorAll('.acsa-review-card').length,
+    warningLines: document.querySelectorAll('.acsa-review-line-warning').length,
+    infoLines: document.querySelectorAll('.acsa-review-line-info').length,
+  })`);
+/**
+ * A point on a finding's overlay *outside* the card itself.
+ *
+ * This is the surface that matters: the wrapper spans the zone so a card can be
+ * positioned at its line, the card re-enables pointer events for its own
+ * buttons, and everything else on that wrapper has to let a click through to the
+ * code. Clicking somewhere the overlay does not reach proves nothing.
+ */
+const overlaySurfacePoint = (s) =>
+  s.eval(`(() => {
+    const cards = [...document.querySelectorAll('.acsa-review-card')].map((c) => c.getBoundingClientRect());
+    for (const wrap of document.querySelectorAll('.acsa-review-card-wrap')) {
+      const box = wrap.getBoundingClientRect();
+      for (let y = box.top + 1; y < box.bottom; y += 2) {
+        for (let x = box.left + 1; x < box.right; x += 4) {
+          const onCard = cards.some((c) => x >= c.left && x <= c.right && y >= c.top && y <= c.bottom);
+          if (!onCard) return { x: Math.round(x), y: Math.round(y) };
+        }
+      }
+    }
+    return null;
+  })()`);
+const overlayPointerEvents = (s) =>
+  s.eval(`(() => {
+    const zone = document.querySelector('.acsa-review-zone');
+    const wrap = document.querySelector('.acsa-review-card-wrap');
+    const card = document.querySelector('.acsa-review-card');
+    return {
+      zone: zone ? getComputedStyle(zone).pointerEvents : null,
+      wrapper: wrap ? getComputedStyle(wrap).pointerEvents : null,
+      card: card ? getComputedStyle(card).pointerEvents : null,
+    };
+  })()`);
 /**
  * Is the code *visible*, or merely present?
  *
@@ -366,6 +426,17 @@ async function openFileAndFocus(session) {
   await session.click(point.x, point.y);
   await sleep(400);
   return point;
+}
+
+if (SERVE_DIST) {
+  // Build from the tree in front of us. Serving whatever `dist/` happens to
+  // hold makes a stale bundle's behaviour look like this commit's — which cost
+  // a confusing round of "why does the fix not work in the built app".
+  const build = spawnSync("npm", ["run", "build"], { stdio: "inherit" });
+  if (build.status !== 0) {
+    console.error("editor-app-check: the build failed, so there is nothing to check");
+    process.exit(1);
+  }
 }
 
 children.push(
@@ -608,6 +679,138 @@ const focusedAfterCancel = await inputState(session);
 check("Cancel closes it too, and does not leave the editor behind",
   reopened && clickedCancel && closedByCancel && Boolean(focusedAfterCancel?.active),
   `reopened=${reopened} clicked=${clickedCancel} closed=${closedByCancel} focused=${focusedAfterCancel?.active}`);
+
+// ── Review ───────────────────────────────────────────────────────────────
+// The engine answers, not a model: what is under test is how the editor handles
+// findings, not which model produced them.
+await setAi(session, "review", {
+  ok: true,
+  provider: "ollama",
+  model: "stub-reviewer",
+  issues: [
+    { line: 1, severity: "warning", title: "Stub finding one", detail: "The first detail.", suggestion: "Try this instead." },
+    { line: 3, severity: "info", title: "Stub finding two", detail: "The second detail." },
+  ],
+});
+
+// A three-line file for the findings to land on.
+await session.chord("a", 65);
+await session.press("Backspace", 8);
+await session.press("Escape", 27);
+for (const [index, line] of ["aa", "bb", "cc"].entries()) {
+  await session.type(line);
+  // Typing opens the suggest widget, and a stray Enter would accept from it.
+  await session.press("Escape", 27);
+  if (index < 2) await session.press("Enter", 13, { text: "\r" });
+  await session.press("Escape", 27);
+}
+await sleep(600);
+const reviewed = await editorText(session);
+check("three lines are in the buffer to review", reviewed === "aa\nbb\ncc", JSON.stringify(reviewed));
+
+const clickedReview = await session.eval(`(() => {
+  const button = document.querySelector('button[title^="Review this file"]');
+  if (button) button.click();
+  return Boolean(button) && !button.disabled;
+})()`);
+await sleep(1000);
+const afterReview = await reviewState(session);
+check("Review renders one inline thread per finding",
+  clickedReview && afterReview.cards === 2, `clicked=${clickedReview} ${JSON.stringify(afterReview)}`);
+check("the reviewed lines are marked in the editor",
+  afterReview.warningLines >= 1 && afterReview.infoLines >= 1, JSON.stringify(afterReview));
+check("a review does not touch the file",
+  (await editorText(session)) === "aa\nbb\ncc", JSON.stringify(await editorText(session)));
+
+// The findings overlay the editor. When clicks landed on that overlay instead of
+// the code, the file could not be edited for as long as a finding existed.
+const overlay = await overlayPointerEvents(session);
+check("the finding overlay is transparent to clicks and its card is not",
+  overlay.zone === "none" && overlay.wrapper === "none" && overlay.card === "auto",
+  JSON.stringify(overlay));
+
+const overlayPoint = await overlaySurfacePoint(session);
+if (overlayPoint) {
+  await session.click(overlayPoint.x, overlayPoint.y);
+  await sleep(400);
+}
+const clickThrough = await inputState(session);
+const hitAt = overlayPoint
+  ? await session.eval(`(() => {
+      const el = document.elementFromPoint(${overlayPoint.x}, ${overlayPoint.y});
+      if (!el) return null;
+      const cls = String(el.className || '').split(/\\s+/).filter(Boolean).slice(0, 3).join('.');
+      return { tag: el.tagName, cls, insideViewLines: Boolean(el.closest('.view-lines')) };
+    })()`)
+  : null;
+check("a click inside a finding's band reaches the code, not the overlay",
+  Boolean(overlayPoint) && hitAt?.insideViewLines === true,
+  `point=${JSON.stringify(overlayPoint)} hit=${JSON.stringify(hitAt)}`);
+
+// ...and the card's own controls still work, which is the other half of the
+// trade: the overlay is transparent, the card is not.
+const cardHit = await session.eval(`(() => {
+  const card = document.querySelector('.acsa-review-card');
+  const button = card && card.querySelector('button');
+  if (!button) return { buttons: card ? card.querySelectorAll('button').length : 0 };
+  const box = button.getBoundingClientRect();
+  const hit = document.elementFromPoint(Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2));
+  return {
+    buttons: card.querySelectorAll('button').length,
+    hitInsideCard: Boolean(hit && hit.closest('.acsa-review-card')),
+  };
+})()`);
+check("the finding card's own controls are still reachable",
+  cardHit.buttons > 0 && cardHit.hitInsideCard === true, JSON.stringify(cardHit));
+
+// An answer the editor cannot use must be reported, not written into the file.
+await setAi(session, "review", { ok: true, issues: [], warning: "The reply was not a findings list." });
+await session.eval(`document.querySelector('button[title^="Review this file"]').click()`);
+await sleep(1000);
+const warningText = await textMatching(session, "/not a findings list/");
+check("an unusable review answer is reported and the file is untouched",
+  Boolean(warningText) && (await editorText(session)) === "aa\nbb\ncc",
+  `error=${JSON.stringify(warningText)} text=${JSON.stringify(await editorText(session))}`);
+
+// ── Inline edit ──────────────────────────────────────────────────────────
+// A fenced answer is the shape that used to be written into the file whole —
+// the reported "review broke my entire code file".
+await setAi(session, "inline", { ok: true, replacement: "```ts\nconst boom = 1;\n```" });
+await session.chord("a", 65);
+await session.chord("k", 75);
+await sleep(500);
+await session.type("replace this");
+await session.press("Enter", 13, { text: "\r" });
+await sleep(900);
+const refusedText = await editorText(session);
+const refusal = await textMatching(session, "/code fence/i");
+check("a fenced answer is refused and the file is untouched",
+  refusedText === "aa\nbb\ncc" && Boolean(refusal),
+  `error=${JSON.stringify(refusal)} text=${JSON.stringify(refusedText)}`);
+
+// And a usable answer is applied to the selection, closing the prompt.
+await session.press("Escape", 27);
+await sleep(300);
+await setAi(session, "inline", { ok: true, replacement: "REPLACED" });
+await session.chord("a", 65);
+await session.chord("k", 75);
+await sleep(500);
+await session.chord("a", 65);
+await session.press("Backspace", 8);
+await session.type("replace this");
+await session.press("Enter", 13, { text: "\r" });
+await sleep(900);
+const applied = await editorText(session);
+const promptClosed = !(await inlinePromptOpen(session));
+const focusAfterApply = await inputState(session);
+check("an accepted answer replaces the selection, closes the prompt and refocuses the editor",
+  applied === "REPLACED" && promptClosed && Boolean(focusAfterApply?.active),
+  `text=${JSON.stringify(applied)} closed=${promptClosed} focused=${focusAfterApply?.active}`);
+
+await session.chord("z", 90);
+await sleep(600);
+check("an applied inline edit is one undo",
+  (await editorText(session)) === "aa\nbb\ncc", JSON.stringify(await editorText(session)));
 
 check("no uncaught errors in the console", session.errors.length === 0, session.errors.slice(0, 4).join(" || "));
 if (process.env.DUMP_CALLS) {
