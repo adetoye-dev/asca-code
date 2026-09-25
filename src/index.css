@@ -264,12 +264,20 @@
 
 .acsa-review-card-wrap {
   /* Tailwind provides absolute inset-x-0 top-0 h-full; the card itself is
-     absolutely laid out so its natural height stays measurable. */
-  pointer-events: auto;
+     absolutely laid out so its natural height stays measurable.
+
+     `pointer-events: none` is load-bearing. The wrapper covers the whole editor —
+     that is how a card gets positioned at its line — so with clicks enabled on it,
+     every click landed on the wrapper instead of the code beneath: the caret never
+     moved, the editor never took focus, and the file could not be edited by hand
+     for as long as a single finding existed. The card turns clicks back on for
+     itself below, so the findings stay usable. */
+  pointer-events: none;
   z-index: 30;
 }
 
 .acsa-review-card {
+  pointer-events: auto;
   margin-left: 8px;
   margin-right: 8px;
 }

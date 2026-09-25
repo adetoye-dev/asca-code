@@ -414,6 +414,10 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
       }
     } finally {
       setIsReviewing(false);
+      // Back to the code. Review is a detour from editing, not a mode, and focus
+      // left on the Review button is what made the editor look broken: nothing
+      // typed, and Tab cycled the review controls over the file.
+      editorRef.current?.focus();
     }
   };
 
@@ -530,6 +534,10 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
   }, []);
 
   const dismissFinding = (index: number) => {
+    // The clicked button is about to unmount, and a click on a removed control
+    // leaves focus on the body — from where the next Tab visits the review
+    // controls and typing does nothing at all.
+    editorRef.current?.focus();
     setReviewIssues((prev) => prev.filter((_, i) => i !== index));
     setExpandedFindings((prev) => {
       const next = new Set<number>();
@@ -883,6 +891,11 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
             >
               <button
                 type="button"
+                // Not a tab stop: these cards sit *over* the code, and once focus
+                // was inside one, typing went to a button and Tab cycled the review
+                // controls — the editor was unreachable while any finding existed.
+                // Mouse access is unchanged; the top-right controls stay tabbable.
+                tabIndex={-1}
                 onClick={() => toggleFinding(index)}
                 className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left hover:bg-white/[0.04] transition-colors"
                 title={expanded ? "Collapse" : "Expand"}
@@ -909,7 +922,7 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
                 />
                 <span
                   role="button"
-                  tabIndex={0}
+                  tabIndex={-1}
                   title="Dismiss this finding"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -941,6 +954,7 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
                   <div className="flex items-center gap-1.5 pt-0.5">
                     <button
                       type="button"
+                      tabIndex={-1}
                       disabled={fixingIndex !== null}
                       onClick={() => handleFixIssue(issue, index)}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-3xs font-semibold bg-emerald-600/80 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
@@ -950,6 +964,7 @@ export const MonacoEditorContainer = memo(function MonacoEditorContainer({
                     </button>
                     <button
                       type="button"
+                      tabIndex={-1}
                       onClick={() => dismissFinding(index)}
                       className="px-2 py-0.5 rounded text-3xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 transition-colors"
                     >
