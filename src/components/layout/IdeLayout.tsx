@@ -1008,21 +1008,48 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     isTauriAvailable,
   ]);
 
+  /**
+   * The tabs as of the last committed render.
+   *
+   * The sync effect below is keyed off the *set* of tabs rather than off
+   * `openTabs` itself. A keystroke rewrites the active tab's content, so
+   * `openTabs` is a brand-new array on every keystroke — and rewriting a tab's
+   * content is not a reason to touch the panels at all.
+   *
+   * Keying it off the array was not merely wasteful. The sweep ends by calling
+   * `setActive()` on the active panel, and dockview's activation path detaches
+   * and re-attaches that panel's DOM node. Detaching the node blurs whatever is
+   * focused inside it, so the editor lost focus after every keystroke and the
+   * rest of the burst went to the document body: typing in a file worked exactly
+   * one character per click.
+   */
+  const openTabsRef = useRef(openTabs);
+  useEffect(() => {
+    openTabsRef.current = openTabs;
+  }, [openTabs]);
+
+  /** Identity of the open *set*: what this effect actually cares about. */
+  const openTabSetKey = useMemo(
+    () => openTabs.map((t) => `${t.path}\u0000${t.name}`).join("\u0001"),
+    [openTabs]
+  );
+
   // Synchronize open tabs with Dockview panels
   useEffect(() => {
     const api = dockviewApiRef.current;
     if (!api) return;
+    const tabs = openTabsRef.current;
 
     // Close any editor panel whose tab is no longer in openTabs
     const editorPanels = api.panels.filter((p) => ["editor", "assetPreview", "diff"].includes((p as any).component));
     for (const panel of editorPanels) {
-      if (!openTabs.some((t) => t.path === panel.id)) {
+      if (!tabs.some((t) => t.path === panel.id)) {
         panel.api.close();
       }
     }
 
     // Add panels for newly opened tabs
-    for (const tab of openTabs) {
+    for (const tab of tabs) {
       const existing = api.getPanel(tab.path);
       if (!existing) {
         api.addPanel({
@@ -1034,13 +1061,15 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
       }
     }
 
+    // Only when the wanted panel is not already the active one: activating a
+    // panel that is already active is what blurred the editor.
     if (activeTabPath) {
       const panel = api.getPanel(activeTabPath);
-      if (panel) {
+      if (panel && !panel.api.isActive) {
         panel.api.setActive();
       }
     }
-  }, [openTabs, activeTabPath, activeProject.path, isTauriAvailable]);
+  }, [openTabSetKey, activeTabPath, activeProject.path, isTauriAvailable]);
 
   // Isolate project state: close all previous project tabs & diffs when switching project
   useEffect(() => {
