@@ -18,8 +18,10 @@ import {
   installUpdate,
   restartApp,
   autoCheckEnabled,
+  installProgress,
   UPDATE_ANNOUNCEMENT,
   type AvailableUpdate,
+  type InstallProgress,
   type UpdateAnnouncement,
 } from "../../services/appUpdater";
 
@@ -31,9 +33,10 @@ type Phase = "idle" | "downloading" | "installing" | "ready" | "failed";
 export function UpdateButton() {
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
   const [open, setOpen] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [percent, setPercent] = useState(0);
-  const [detail, setDetail] = useState("");
+  // The install is the service's, not this button's: starting one in Settings and
+  // closing the modal used to take its progress with it, so the banner had nothing
+  // to show until the download had already finished.
+  const [install, setInstall] = useState<InstallProgress | null>(installProgress);
   const timerRef = useRef<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -46,8 +49,7 @@ export function UpdateButton() {
         // second download. This is the surface someone sees after quitting
         // mid-install and launching the old build again.
         if (found?.pendingRestart) {
-          setPercent(100);
-          setPhase("ready");
+          setInstall({ version: found.version, phase: "ready", percent: 100 });
         }
       });
     }, STARTUP_DELAY_MS);
@@ -66,20 +68,11 @@ export function UpdateButton() {
       if (!detail) return;
       if (detail.kind === "available") {
         setUpdate(detail.update);
-        setDetail("");
-        if (detail.update.pendingRestart) {
-          setPercent(100);
-          setPhase("ready");
-        } else {
-          setPhase("idle");
-        }
       } else if (detail.kind === "none") {
         setUpdate(null);
       } else {
-        // Another surface ran the install: this one must offer the restart, not
-        // the download it just watched finish.
-        setPhase("ready");
-        setPercent(100);
+        // Progress, and the finished state, from wherever the install is running.
+        setInstall(detail.progress);
       }
     };
     window.addEventListener(UPDATE_ANNOUNCEMENT, onAnnouncement);
@@ -97,18 +90,22 @@ export function UpdateButton() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
+  // Derived rather than stored, so there is one answer per question. A record
+  // from a previous session (installed, not yet restarted) shows as `ready` too.
+  const phase: Phase =
+    install?.phase === "ready" || (!install && update?.pendingRestart)
+      ? "ready"
+      : install?.phase ?? "idle";
+  const percent = install?.percent ?? 0;
+  const detail = install?.detail ?? "";
+
   const startInstall = async () => {
-    setPhase("downloading");
-    setPercent(0);
     try {
-      await installUpdate((value) => {
-        setPercent(value);
-        if (value >= 100) setPhase("installing");
-      });
-      setPhase("ready");
-    } catch (error) {
-      setDetail(error instanceof Error ? error.message : String(error));
-      setPhase("failed");
+      // No local bookkeeping: `installUpdate` publishes progress through the
+      // service, which is what makes it survive this button being unmounted.
+      await installUpdate();
+    } catch {
+      /* the failed phase is already published, with the reason */
     }
   };
 
@@ -125,8 +122,23 @@ export function UpdateButton() {
         <Icon icon={ArrowDownToLine} className="w-3.5 h-3.5" />
         {/* "Update", not the version number. A bare number reads as *the* version
             rather than *a newer one is waiting*, which is how it was reported. The
-            version itself is in the panel, where there is room to say it properly. */}
-        <span className="text-2xs font-semibold">Update</span>
+            version itself is in the panel, where there is room to say it properly.
+
+            During an install it reports that instead, because a download started in
+            Settings → About continues after the modal closes and this is the only
+            thing on screen — a banner that still reads "Update" would look like the
+            download had stopped. */}
+        <span className="text-2xs font-semibold">
+          {phase === "downloading"
+            ? `${percent}%`
+            : phase === "installing"
+            ? "Installing…"
+            : phase === "ready"
+            ? "Restart"
+            : phase === "failed"
+            ? "Retry"
+            : "Update"}
+        </span>
       </button>
 
       {open && (

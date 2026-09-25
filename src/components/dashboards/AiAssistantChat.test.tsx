@@ -383,3 +383,31 @@ describe("dropping an image on the composer", () => {
     expect(screen.queryByAltText("Attachment")).toBeNull();
   });
 });
+
+/**
+ * Opening a chat lands on the newest message.
+ *
+ * The follow-tail effect deliberately refuses to scroll when the reader is not at
+ * the bottom — which is the state a freshly opened transcript is in, at the top of
+ * the whole history. So nothing scrolled, and the reply someone opened the app to
+ * read was a manual scroll away.
+ */
+describe("where an opened chat starts", () => {
+  it("scrolls to the newest message", async () => {
+    const spy = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = spy;
+    try {
+      render(<AiAssistantChat {...baseProps} />);
+      // `block: "end"`, which is this jump and not the follow-tail effect: that
+      // one passes only `behavior`, and in jsdom it fires too (zero heights read as
+      // "already at the bottom"), so asserting a bare call would pass without the
+      // fix — verified by removing the effect and watching it still pass.
+      await waitFor(() =>
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ block: "end", behavior: "auto" })),
+      );
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+});

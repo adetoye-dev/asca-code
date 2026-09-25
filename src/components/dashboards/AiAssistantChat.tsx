@@ -1089,6 +1089,25 @@ export function AiAssistantChat({
     return () => window.removeEventListener("acsa:ai-workflow", handleWorkflowRequest);
   }, [selectedContext]);
 
+  // Opening a chat lands on the newest message.
+  //
+  // The follow-tail effect below deliberately does nothing when the reader is not
+  // at the bottom — and a freshly opened transcript is exactly that, scrolled to
+  // the top of the whole history, so the reply someone came back to read was a
+  // manual scroll away. This runs once, when there is finally something to scroll
+  // to (history arrives after mount), and then the follow logic takes over.
+  const didInitialScroll = useRef(false);
+  useEffect(() => {
+    if (didInitialScroll.current || chatMessages.length === 0) return;
+    didInitialScroll.current = true;
+    // After paint: the sentinel has to exist and the list has to be laid out, or
+    // this scrolls to a height that is about to change.
+    const frame = requestAnimationFrame(() => {
+      chatBottomRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [chatMessages.length]);
+
   // Follow the tail on new messages, logs and streaming updates — but only while
   // the reader is already at the bottom. Scrolling up to read something used to
   // be undone by the next token. Streaming lands many times a second and a smooth

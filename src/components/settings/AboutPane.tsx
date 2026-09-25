@@ -17,10 +17,15 @@ import {
   currentVersion,
   installUpdate,
   restartApp,
+  installProgress,
+  UPDATE_ANNOUNCEMENT,
+  type InstallProgress,
+  type UpdateAnnouncement,
 } from "../../services/appUpdater";
 
 type CheckState = { kind: "idle" | "checking" | "current" | "available" | "failed"; detail?: string };
-type InstallPhase = "idle" | "downloading" | "installing" | "ready" | "failed";
+// The install state is the service's, not this pane's — see `installProgress`.
+type InstallState = InstallProgress | null;
 
 export function AboutPane() {
   const [version, setVersion] = useState("");
@@ -31,17 +36,25 @@ export function AboutPane() {
   // available — the button is in the titlebar" was a dead end from this pane: the
   // titlebar only looked on mount, so the button appeared after a restart at the
   // earliest. Finding an update is the moment the user wants to act on it.
-  const [phase, setPhase] = useState<InstallPhase>("idle");
-  const [percent, setPercent] = useState(0);
-  const [installError, setInstallError] = useState("");
+  const [install, setInstall] = useState<InstallState>(installProgress);
 
   useEffect(() => {
     void currentVersion().then(setVersion);
   }, []);
 
+  // Follows an install started anywhere — including one this pane started and
+  // then outlived, because closing the modal no longer discards it.
+  useEffect(() => {
+    const onAnnouncement = (event: Event) => {
+      const detail = (event as CustomEvent<UpdateAnnouncement>).detail;
+      if (detail?.kind === "install") setInstall(detail.progress);
+    };
+    window.addEventListener(UPDATE_ANNOUNCEMENT, onAnnouncement);
+    return () => window.removeEventListener(UPDATE_ANNOUNCEMENT, onAnnouncement);
+  }, []);
+
   const check = async () => {
     setState({ kind: "checking" });
-    setPhase("idle");
     const outcome = await checkForUpdateDetailed({ force: true });
     if (outcome.kind === "available") {
       setFound(outcome.update);
@@ -50,8 +63,7 @@ export function AboutPane() {
       // again, which reads as "the update failed". If the version is already on
       // disk the only remaining step is the restart.
       if (outcome.update.pendingRestart) {
-        setPercent(100);
-        setPhase("ready");
+        setInstall({ version: outcome.update.version, phase: "ready", percent: 100 });
       }
     } else if (outcome.kind === "current") {
       setState({ kind: "current" });
@@ -60,18 +72,13 @@ export function AboutPane() {
     }
   };
 
-  const install = async () => {
-    setPhase("downloading");
-    setPercent(0);
+  const startInstall = async () => {
     try {
-      await installUpdate((value) => {
-        setPercent(value);
-        if (value >= 100) setPhase("installing");
-      });
-      setPhase("ready");
-    } catch (error) {
-      setInstallError(error instanceof Error ? error.message : String(error));
-      setPhase("failed");
+      // No local phase bookkeeping: `installUpdate` reports through the service,
+      // which is what makes the progress survive this component unmounting.
+      await installUpdate();
+    } catch {
+      /* the failed phase is already published, with the reason */
     }
   };
 
@@ -145,34 +152,34 @@ export function AboutPane() {
             </span>
           )}
 
-          {state.kind === "available" && found && phase === "idle" && (
+          {state.kind === "available" && found && !install && (
             <button
               type="button"
-              onClick={() => void install()}
+              onClick={() => void startInstall()}
               className="ml-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition cursor-pointer"
             >
               <Icon icon={ArrowDownToLine} className="w-3.5 h-3.5" />
               Download &amp; install {found.version}
             </button>
           )}
-          {phase === "downloading" && (
+          {install?.phase === "downloading" && (
             <span className="ml-auto flex items-center gap-2 min-w-40">
               <span className="h-1 flex-1 rounded-full bg-zinc-800 overflow-hidden">
                 <span
                   className="block h-full bg-purple-500 transition-all"
-                  style={{ width: `${percent}%` }}
+                  style={{ width: `${install.percent}%` }}
                 />
               </span>
-              <span className="text-2xs text-zinc-400 font-mono">{percent}%</span>
+              <span className="text-2xs text-zinc-400 font-mono">{install.percent}%</span>
             </span>
           )}
-          {phase === "installing" && (
+          {install?.phase === "installing" && (
             <span className="ml-auto text-2xs text-zinc-400 flex items-center gap-1.5">
               <Icon icon={RefreshCw} className="w-3 h-3 animate-spin" />
               Installing…
             </span>
           )}
-          {phase === "ready" && (
+          {install?.phase === "ready" && (
             <>
               <span className="ml-auto text-2xs text-emerald-300 flex items-center gap-1.5">
                 <Icon icon={Check} className="w-3 h-3" />
@@ -187,10 +194,10 @@ export function AboutPane() {
               </button>
             </>
           )}
-          {phase === "failed" && (
+          {install?.phase === "failed" && (
             <span className="ml-auto text-2xs text-red-300 flex items-center gap-1.5">
               <Icon icon={AlertCircle} className="w-3 h-3" />
-              {installError || "The update could not be installed."}
+              {install?.detail || "The update could not be installed."}
             </span>
           )}
         </div>

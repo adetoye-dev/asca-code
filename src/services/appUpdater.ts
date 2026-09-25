@@ -58,6 +58,17 @@ export interface AvailableUpdate {
 
 let cached: AvailableUpdate | null = null;
 let lastCheckAt = 0;
+let progress: InstallProgress | null = null;
+
+/** The live install state, for a surface that has just mounted. */
+export function installProgress(): InstallProgress | null {
+  return progress;
+}
+
+function setProgress(next: InstallProgress | null): void {
+  progress = next;
+  announce({ kind: "install", progress: next });
+}
 
 /**
  * What a check concludes, announced rather than held.
@@ -71,7 +82,26 @@ let lastCheckAt = 0;
 export type UpdateAnnouncement =
   | { kind: "available"; update: AvailableUpdate }
   | { kind: "none" }
-  | { kind: "installed"; version: string };
+  | { kind: "install"; progress: InstallProgress | null };
+
+/**
+ * An install in flight, or one that has finished and is waiting for a restart.
+ *
+ * This lives in the service rather than in a component because it outlives the
+ * surface that started it. Downloading from Settings → About and then closing the
+ * modal left the download running but the *only* indication of it unmounted with
+ * the pane — so it looked cancelled, and the titlebar had nothing to show until
+ * the whole thing finished. Both surfaces read this one value now, so the
+ * progress follows the user out of the dialog and into the banner.
+ */
+export type InstallPhase = "downloading" | "installing" | "ready" | "failed";
+
+export interface InstallProgress {
+  version: string;
+  phase: InstallPhase;
+  percent: number;
+  detail?: string;
+}
 
 export const UPDATE_ANNOUNCEMENT = "acsa:update";
 
@@ -156,7 +186,9 @@ export async function checkForUpdateDetailed(
     const pending = await pendingRestart();
     if (pending && compareVersions(pending, String(update.version)) >= 0) {
       cached = { ...cached, pendingRestart: true };
-      announce({ kind: "installed", version: pending });
+      // The same channel the install itself reports on, so a surface that shows
+      // "restart to finish" does not care whether it watched the download.
+      setProgress({ version: pending, phase: "ready", percent: 100 });
       return { kind: "available", update: cached };
     }
     announce({ kind: "available", update: cached });
@@ -189,26 +221,38 @@ export async function installUpdate(onProgress?: (percent: number) => void): Pro
   const update = await check();
   if (!update?.available) throw new Error("no update is available");
 
+  const version = String(update.version);
+  setProgress({ version, phase: "downloading", percent: 0 });
+
   let total = 0;
   let received = 0;
-  await update.downloadAndInstall((event: any) => {
-    if (event?.event === "Started") {
-      total = Number(event.data?.contentLength ?? 0);
-      onProgress?.(0);
-    } else if (event?.event === "Progress") {
-      received += Number(event.data?.chunkLength ?? 0);
-      onProgress?.(total > 0 ? Math.min(99, Math.round((received / total) * 100)) : 50);
-    } else if (event?.event === "Finished") {
-      onProgress?.(100);
-    }
-  });
+  try {
+    await update.downloadAndInstall((event: any) => {
+      if (event?.event === "Started") {
+        total = Number(event.data?.contentLength ?? 0);
+        setProgress({ version, phase: "downloading", percent: 0 });
+        onProgress?.(0);
+      } else if (event?.event === "Progress") {
+        received += Number(event.data?.chunkLength ?? 0);
+        const percent = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : 50;
+        setProgress({ version, phase: "downloading", percent });
+        onProgress?.(percent);
+      } else if (event?.event === "Finished") {
+        setProgress({ version, phase: "installing", percent: 100 });
+        onProgress?.(100);
+      }
+    });
+  } catch (error) {
+    // Reported, not swallowed: a failed install has to be visible wherever the
+    // user is standing, which is the point of holding this here.
+    setProgress({ version, phase: "failed", percent: 0, detail: describe(error) });
+    throw error;
+  }
+
   // Recorded before it is announced, so the record survives the quit-then-launch
   // that motivated it: the next start is still the old build, and it has to know.
-  recordPendingRestart(String(update.version));
-  // Announced, not merely cleared: another surface may be the one showing the
-  // update, and it has to switch to "restart to finish" rather than offer the
-  // download it just completed.
-  announce({ kind: "installed", version: String(update.version) });
+  recordPendingRestart(version);
+  setProgress({ version, phase: "ready", percent: 100 });
   cached = null;
 }
 
@@ -217,7 +261,7 @@ export function recordPendingRestart(version: string): void {
   try {
     localStorage.setItem(PENDING_RESTART_KEY, version);
   } catch {
-    /* storage unavailable; the session still knows via the announcement */
+    /* storage unavailable; this session still knows via the announcement */
   }
 }
 
@@ -225,8 +269,8 @@ export function recordPendingRestart(version: string): void {
  * The installed-but-not-yet-running version, or null.
  *
  * Clears itself once the running build is that version or newer, which is the
- * only reliable signal available that the restart happened — nothing rewrites
- * this record when the new build starts.
+ * only reliable signal that the restart happened — nothing rewrites this record
+ * when the new build starts.
  */
 export async function pendingRestart(): Promise<string | null> {
   let stored: string | null = null;

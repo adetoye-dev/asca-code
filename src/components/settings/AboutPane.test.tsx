@@ -10,8 +10,19 @@ vi.mock("../../services/appUpdater", () => ({
   setAutoCheck: vi.fn(),
   currentVersion: async () => "0.2.0",
   checkForUpdateDetailed: async () => outcome,
-  installUpdate: vi.fn(async (onProgress?: (n: number) => void) => onProgress?.(100)),
+  installUpdate: vi.fn(async () => {
+    // What the real service does: publish the new state and announce it. A mock
+    // that merely resolves would leave both surfaces showing nothing, which is a
+    // property of the mock rather than of the app.
+    window.dispatchEvent(
+      new CustomEvent("acsa:update", {
+        detail: { kind: "install", progress: { version: "0.2.0", phase: "ready", percent: 100 } },
+      }),
+    );
+  }),
   restartApp: vi.fn(async () => undefined),
+  UPDATE_ANNOUNCEMENT: "acsa:update",
+  installProgress: () => null,
 }));
 
 const { AboutPane } = await import("./AboutPane");
