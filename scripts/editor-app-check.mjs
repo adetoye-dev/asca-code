@@ -201,6 +201,14 @@ class Session {
         this.console.push(`${msg.params.type}: ${text}`.slice(0, 240));
         if (msg.params.type === "error") this.errors.push(text.slice(0, 240));
       }
+      if (msg.method === "Fetch.requestPaused") {
+        const { requestId } = msg.params;
+        if (this.hold) {
+          this.held.push(requestId);
+          return;
+        }
+        this.send("Fetch.continueRequest", { requestId }).catch(() => {});
+      }
       if (msg.method === "Log.entryAdded" && msg.params.entry.level === "error") {
         this.console.push(`log: ${msg.params.entry.text}`.slice(0, 240));
       }
@@ -278,6 +286,30 @@ class Session {
       if (text && type === "rawKeyDown") { params.type = "keyDown"; params.text = text; params.unmodifiedText = text; }
       await this.send("Input.dispatchKeyEvent", params);
     }
+  }
+  /**
+   * Hold matching requests at the network layer instead of letting them through.
+   *
+   * This reproduces a *stalled* chunk: the request neither completes nor fails,
+   * which is the failure `Suspense` cannot report and an error boundary never
+   * sees.
+   */
+  async holdRequests(pattern) {
+    this.hold = true;
+    this.held = [];
+    await this.send("Fetch.enable", {
+      patterns: [{ urlPattern: pattern, requestStage: "Request" }],
+    });
+  }
+  async releaseHeld() {
+    this.hold = false;
+    const held = this.held;
+    this.held = [];
+    for (const requestId of held) {
+      await this.send("Fetch.continueRequest", { requestId }).catch(() => {});
+    }
+    await this.send("Fetch.disable").catch(() => {});
+    return held.length;
   }
 }
 
@@ -402,8 +434,13 @@ const inputState = (s) => s.eval(`(() => {
   return t ? { readOnly: t.readOnly, active: document.activeElement === t, start: t.selectionStart } : null;
 })()`);
 
-/** Open the probe file and put the caret in it, the way a user does. */
-async function openFileAndFocus(session) {
+/**
+ * Open the probe file and put the caret in it, the way a user does.
+ *
+ * `waitForEditor: false` is for when the editor is deliberately not going to
+ * arrive — waiting for it there would hang the run instead of the surface.
+ */
+async function openFileAndFocus(session, { waitForEditor = true } = {}) {
   for (let i = 0; i < 60; i++) {
     const ready = await session
       .eval(`Boolean([...document.querySelectorAll('[role="treeitem"]')].find((n) => /probe\\.ts/.test(n.textContent || '')))`)
@@ -412,6 +449,7 @@ async function openFileAndFocus(session) {
     await sleep(500);
   }
   await session.eval(`[...document.querySelectorAll('[role="treeitem"]')].find((n) => /probe\\.ts/.test(n.textContent || '')).click()`);
+  if (!waitForEditor) return null;
   for (let i = 0; i < 60; i++) {
     const ready = await session.eval(`Boolean(document.querySelector('.monaco-editor .view-lines'))`).catch(() => false);
     if (ready) break;
@@ -811,6 +849,46 @@ await session.chord("z", 90);
 await sleep(600);
 check("an applied inline edit is one undo",
   (await editorText(session)) === "aa\nbb\ncc", JSON.stringify(await editorText(session)));
+
+// ── A surface that never arrives ─────────────────────────────────────────
+// `Suspense` reports nothing when a chunk stalls rather than fails: no error, no
+// timeout, nothing to click, and the surface stays "loading" forever. That is
+// what the packaged app did with the editor. Hold the chunk at the network layer
+// and check the app says so — then that it can get out.
+const stallNoteShown = async (s) => {
+  for (let i = 0; i < 30; i++) {
+    const state = await s.eval(`(() => {
+      const note = document.querySelector('[data-testid="surface-stalled"]');
+      return {
+        note: Boolean(note),
+        text: note ? (note.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 90) : null,
+        reload: Boolean(document.querySelector('[data-testid="surface-reload"]')),
+      };
+    })()`);
+    if (state.note) return state;
+    await sleep(500);
+  }
+  return { note: false };
+};
+
+await session.holdRequests("*MonacoEditorContainer*");
+await session.send("Page.navigate", { url: APP });
+await sleep(1500);
+await openFileAndFocus(session, { waitForEditor: false });
+const stalled = await stallNoteShown(session);
+check("a stalled surface says so instead of loading forever",
+  stalled.note === true && stalled.reload === true,
+  JSON.stringify(stalled));
+
+// The note accompanies the load rather than replacing it: let the chunk through
+// and the surface arrives on its own, with nothing for the user to do.
+const released = await session.releaseHeld();
+await sleep(3000);
+const recoveredText = await editorText(session);
+const noteCleared = await session.eval(`!document.querySelector('[data-testid="surface-stalled"]')`);
+check("the note does not block the load — the surface arrives once the chunk does",
+  stalled.note === true && released > 0 && noteCleared === true && recoveredText.includes("a{"),
+  `shown=${stalled.note} released=${released} cleared=${noteCleared} text=${JSON.stringify(recoveredText)}`);
 
 check("no uncaught errors in the console", session.errors.length === 0, session.errors.slice(0, 4).join(" || "));
 if (process.env.DUMP_CALLS) {
