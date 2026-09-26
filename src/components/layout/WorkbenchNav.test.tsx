@@ -147,17 +147,6 @@ describe("the workbench sidebar", () => {
     expect(width()).toBeLessThan(100);
   });
 
-  it("counts unsaved files on the Editor row, and only when there are some", () => {
-    // Borrowed from the reference's rail: a badge that reports something you
-    // would otherwise have to open a screen to discover.
-    setup({ dirtyCount: 3 });
-    expect(screen.getByTestId("nav-dirty-count").textContent).toBe("3");
-
-    cleanup();
-    setup({ dirtyCount: 0 });
-    expect(screen.queryByTestId("nav-dirty-count")).toBeNull();
-  });
-
   it("offers screens and settings, and nothing else", () => {
     // Chat is a panel toggle, not a screen, so it belongs to the titlebar and ⌘L
     // — it had been offered twice in here. Search was the palette's job too, and

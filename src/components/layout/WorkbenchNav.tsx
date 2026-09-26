@@ -76,7 +76,7 @@ export const NAV_EXPANDED_WIDTH = 240;
  * column puts any size on the centre line. Expanded does: the row is inset 6px
  * (`mx-1.5`), so the padding makes up the rest of `NAV_COLLAPSED_WIDTH / 2`.
  */
-export const NAV_ICON_SIZE = 20;
+export const NAV_ICON_SIZE = 18;
 export const NAV_ICON_STROKE = 1.5;
 export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2;
 /**
@@ -84,7 +84,22 @@ export const NAV_ICON_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 6 - NAV_ICON_SIZE / 2
  * — one square either way. Its distance from `NAV_ICON_SIZE` is the gutter: the
  * smaller this is, the tighter the highlight hugs the glyph.
  */
-export const NAV_ROW_HEIGHT = 38;
+export const NAV_ROW_HEIGHT = 32;
+/**
+ * The brand mark's box, and the padding that puts its *centre* on the column's
+ * line rather than its edge.
+ *
+ * Derived for the same reason the icons' padding is derived: the mark is wider
+ * than an icon, so padding copied from the rows would leave its centre 4px off
+ * the line the icons sit on. That is not hypothetical — it is exactly what
+ * happened when the mark went from 40px to 32px, where 40 had landed on the line
+ * by arithmetic coincidence (2px inset + 6px padding + half of 40).
+ *
+ * The 2 is the button's own `mx-0.5`, the 6 in `NAV_ICON_PAD_LEFT` above is the
+ * rows' `mx-1.5`.
+ */
+export const NAV_BRAND_SIZE = 32;
+export const NAV_BRAND_PAD_LEFT = NAV_COLLAPSED_WIDTH / 2 - 2 - NAV_BRAND_SIZE / 2;
 /** A cursor crossing the sidebar must not shove the editor across. */
 export const NAV_HOVER_INTENT_MS = 140;
 
@@ -94,11 +109,6 @@ interface WorkbenchNavProps {
   pinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
   onOpenSettings: () => void;
-  /**
-   * Unsaved files, shown as a count on the Editor row — the one badge here that
-   * reports something you would otherwise have to open the screen to find out.
-   */
-  dirtyCount?: number;
 }
 
 export function WorkbenchNav({
@@ -107,7 +117,6 @@ export function WorkbenchNav({
   pinned,
   onPinnedChange,
   onOpenSettings,
-  dirtyCount = 0,
 }: WorkbenchNavProps) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<number | null>(null);
@@ -244,23 +253,35 @@ export function WorkbenchNav({
         {/* ── Identity ─────────────────────────────────────────────────────
             The brand is the sidebar's, not a bar's: it is the icon alone when
             collapsed and the icon with the name when there is room. */}
-        <div className="relative flex h-14 shrink-0 items-center">
+        <div className="relative flex h-12 shrink-0 items-center">
           <button
             type="button"
             onClick={() => onPinnedChange(!pinned)}
             data-testid="nav-brand"
             aria-expanded={expanded}
             title={pinned ? "ACSA Code — release the sidebar (⌘B)" : "ACSA Code — keep the sidebar open (⌘B)"}
-            className="mx-0.5 flex h-12 w-[calc(100%-0.25rem)] shrink-0 items-center gap-3 rounded-xl pl-1.5 pr-2.5 hover:bg-white/5"
+            style={{
+              height: NAV_ROW_HEIGHT,
+              ...(expanded
+                ? { paddingLeft: NAV_BRAND_PAD_LEFT }
+                : { width: NAV_BRAND_SIZE }),
+            }}
+            className={`flex shrink-0 items-center rounded-xl transition-colors hover:bg-white/5 ${
+              expanded
+                ? "mx-0.5 w-[calc(100%-0.25rem)] gap-3 pr-2.5"
+                : "mx-auto justify-center"
+            }`}
           >
-            {/* The brand is deliberately the largest thing in the rail: it is
-                the identity, and at the nav rows' own icon size it read as just
-                another row. 40px, not 32 — the Apex artwork carries ~23% internal
-                padding (its ink spans 788 of a 1024 box), so a same-size box would
-                still paint a mark no bigger than the icons beside it. At 40px its
-                ink is ~34×31 against the icons' ~24–27. It sits on the same centre
-                line (x=28) as the icons below it, so the column stays one column. */}
-            <IdeBrandLogo size={40} className="h-10 w-10 shrink-0" />
+            {/* The brand is still the largest mark in the rail — that is what makes
+                it the identity rather than another row — but it is sized to the
+                rows it sits above instead of above them: 32px, the same box as a
+                highlight, and well over half again the icons' ink, because the Apex
+                artwork carries ~23% internal padding (its ink spans 788 of a 1024
+                box) while a lucide glyph only fills about three quarters of its own.
+                At 40px it read as a header block rather than a member of the column.
+                Its centre is held on the column's line by `NAV_BRAND_PAD_LEFT`
+                above, so the rail is still one column. */}
+            <IdeBrandLogo size={NAV_BRAND_SIZE} className="h-8 w-8 shrink-0" />
             <span
               aria-hidden={!expanded}
               className={`truncate text-sm font-semibold tracking-tight text-zinc-100 ${labelClass}`}
@@ -327,20 +348,6 @@ export function WorkbenchNav({
                 >
                   {item.label}
                 </span>
-                {item.id === "editor" && dirtyCount > 0 && (
-                  <span
-                    data-testid="nav-dirty-count"
-                    title={`${dirtyCount} unsaved ${dirtyCount === 1 ? "file" : "files"}`}
-                    className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1 font-mono text-3xs font-semibold text-zinc-950"
-                  >
-                    {dirtyCount}
-                  </span>
-                )}
-                {item.shortcut && expanded && (
-                  <span className={`shrink-0 font-mono text-3xs text-zinc-500 ${labelClass}`}>
-                    {item.shortcut}
-                  </span>
-                )}
               </button>
             );
           })}
@@ -352,7 +359,6 @@ export function WorkbenchNav({
             labelClass={labelClass}
             icon={Settings}
             label="Settings"
-            shortcut="⌘,"
             testId="nav-settings"
             onClick={() => {
               onOpenSettings();
@@ -371,7 +377,6 @@ function Row({
   labelClass,
   icon,
   label,
-  shortcut,
   testId,
   onClick,
 }: {
@@ -379,7 +384,6 @@ function Row({
   labelClass: string;
   icon: typeof Settings;
   label: string;
-  shortcut?: string;
   testId: string;
   onClick: () => void;
 }) {
@@ -407,9 +411,6 @@ function Row({
       >
         {label}
       </span>
-      {shortcut && expanded && (
-        <span className={`shrink-0 font-mono text-3xs text-zinc-500 ${labelClass}`}>{shortcut}</span>
-      )}
     </button>
   );
 }

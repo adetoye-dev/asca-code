@@ -194,10 +194,28 @@ try {
   })()`);
   // A band rather than an exact number: the rail's size is a single constant
   // that gets tuned by eye, and this check exists to catch it falling back to
-  // the 16px default or drifting out of the rail's range — not to pin it.
-  check("rail icons are sized in the 20–30px band, not the Icon default",
-    scale && scale.iconBox >= 20 && scale.iconBox <= 30,
+  // the 16px default or drifting out of the rail's range — not to pin it. The
+  // band moves when the design does; what must not move is the rail's own idea
+  // of what it is.
+  check("rail icons are sized in the rail's band, not the Icon default",
+    scale && scale.iconBox >= 17 && scale.iconBox <= 26,
     scale ? `icon ${scale.iconBox}px` : "no icon found");
+
+  // The brand mark's *centre* has to sit on the same line as the icons'. Its box
+  // is wider than an icon's, so this is not automatic: at 40px it landed there by
+  // arithmetic coincidence, and shrinking the mark moved it 4px off until the
+  // padding was derived from the size instead of copied from the rows.
+  const brandCentre = await session.eval(`(() => {
+    const nav = document.querySelector('[data-testid="workbench-nav"]');
+    const img = nav.querySelector('[data-testid="nav-brand"] img');
+    if (!img) return null;
+    const navLeft = nav.getBoundingClientRect().left;
+    const box = img.getBoundingClientRect();
+    return +(box.left - navLeft + box.width / 2).toFixed(1);
+  })()`);
+  check("the brand mark is centred on the icons' line, not offset by its width",
+    brandCentre !== null && Math.abs(brandCentre - 28) <= 1,
+    `brand centre ${brandCentre}px`);
   check("the brand mark is larger than the rail icons",
     scale && scale.brand > scale.iconBox && scale.brandInk > scale.iconInk,
     scale ? `brand ${scale.brand}px (ink ~${scale.brandInk}) vs icon ${scale.iconBox}px (ink ~${scale.iconInk})` : "no brand found");
