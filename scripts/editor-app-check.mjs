@@ -36,7 +36,7 @@
  * full app path.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5202;
@@ -50,6 +50,7 @@ const APP = `http://127.0.0.1:${PORT}/`;
  * bundle gets checked from the same browser that checks the source.
  */
 const SERVE_DIST = process.argv.includes("--dist");
+const SHOT_DIR = "/tmp/acsa-editor-app-check";
 
 const CHROME_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -128,7 +129,14 @@ const TAURI_STUB = `(() => {
           return JSON.stringify({ ok: true, data: null });
         }
         if (sub === "ollama") return JSON.stringify({ ok: true, data: { installed: false, running: false, models: [], recommendedModel: "qwen2.5-coder:3b", totalRamGb: 0 } });
-        if (sub === "project") return JSON.stringify({ ok: true, data: { ok: true } });
+        // A real status shape: the empty editor's action panel shows the
+        // project's own commands when it has any, and a stub that answers with
+        // a bare truthy object leaves that half of the panel untested.
+        if (sub === "project") return JSON.stringify({ ok: true, data: {
+          projectRoot: "/probe", hasPackageJson: true, hasNodeModules: true, needsInstall: false,
+          manager: "npm", installCommand: "npm install", devCommand: "npm run dev",
+          buildCommand: "npm run build", testCommand: "npm test", scripts: {},
+        } });
         if (sub === "crash") return JSON.stringify({ ok: true, data: { ok: true } });
         return JSON.stringify({ ok: true, data: null });
       }
@@ -310,6 +318,12 @@ class Session {
     }
     await this.send("Fetch.disable").catch(() => {});
     return held.length;
+  }
+  /** Written to disk so a layout can be looked at, not just asserted on. */
+  async screenshot(name) {
+    const shot = await this.send("Page.captureScreenshot", { format: "png" });
+    mkdirSync(SHOT_DIR, { recursive: true });
+    writeFileSync(`${SHOT_DIR}/${name}.png`, Buffer.from(shot.data, "base64"));
   }
 }
 
@@ -527,6 +541,37 @@ await session.send("Page.addScriptToEvaluateOnNewDocument", { source: TAURI_STUB
 await session.send("Page.addScriptToEvaluateOnNewDocument", { source: FOCUS_LOGGER });
 await session.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 await session.send("Page.navigate", { url: APP });
+
+// ── The empty editor, before anything is open ────────────────────────────
+// One panel, with the project's commands in it and the shortcuts under one
+// divider — the merge, in the state a user actually lands on.
+const emptyState = async () => {
+  for (let i = 0; i < 24; i++) {
+    const state = await session.eval(`(() => {
+      const panel = document.querySelector('[data-testid="watermark-actions"]');
+      if (!panel) return null;
+      return {
+        panels: document.querySelectorAll('[data-testid="watermark-actions"]').length,
+        rows: [...panel.querySelectorAll('button')].map((b) => {
+          const span = b.querySelector('span');
+          return span ? (span.textContent || '').trim() : '';
+        }),
+        dividers: panel.querySelectorAll('div.h-px').length,
+      };
+    })()`);
+    if (state && state.rows.length >= 5) return state;
+    await sleep(500);
+  }
+  return null;
+};
+
+const empty = await emptyState();
+check("the empty editor is one panel, holding the project's commands and the shortcuts",
+  empty && empty.panels === 1 && empty.dividers === 1 &&
+    ["Run dev server", "Build", "Search files", "Command palette", "Ask the assistant"].every((label) =>
+      empty.rows.includes(label)),
+  empty ? JSON.stringify(empty) : "the empty-state panel never appeared");
+await session.screenshot("empty-editor");
 
 const point = await openFileAndFocus(session);
 console.log(`  clicking into line 1 at ${point.x},${point.y}`);
