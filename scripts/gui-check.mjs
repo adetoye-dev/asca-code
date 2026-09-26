@@ -234,6 +234,39 @@ try {
   await sleep(500);
   await session.screenshot("sidebar");
 
+  // 2d. The empty editor: one panel of actions, and it sits *on* the halftone
+  //     field rather than above it. The panel used to be two menus, and the
+  //     pattern is only worth having if the panel's lower half is over it —
+  //     which is a measurement, not a look: the panel's midpoint has to land on
+  //     the line where the field stops, and the field has to reach that line.
+  const watermark = await session.eval(`(() => {
+    const panel = document.querySelector('[data-testid="watermark-actions"]');
+    const field = document.querySelector('.acsa-watermark-field');
+    if (!panel || !field) return null;
+    const host = field.parentElement;
+    const p = panel.getBoundingClientRect();
+    const f = field.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    return {
+      panels: document.querySelectorAll('[data-testid="watermark-actions"]').length,
+      rows: panel.querySelectorAll('button').length,
+      midlineOffset: Math.round(p.top + p.height / 2 - (h.top + h.height / 2)),
+      fieldShareOfHost: +(f.height / h.height).toFixed(3),
+      fieldBottomGap: Math.round(h.bottom - f.bottom),
+      fieldWidth: Math.round(f.width),
+    };
+  })()`);
+  check("the empty editor offers a single panel of actions",
+    watermark && watermark.panels === 1 && watermark.rows >= 3,
+    watermark ? JSON.stringify(watermark) : "no watermark panel found");
+  // Within a couple of pixels: the panel is what the parent centres, so this is
+  // the assertion that the field's edge and the panel's middle are the same line.
+  check("that panel is centred on the line where the field stops",
+    watermark && Math.abs(watermark.midlineOffset) <= 2 && watermark.fieldBottomGap === 0 &&
+      Math.abs(watermark.fieldShareOfHost - 0.5) <= 0.01,
+    watermark ? `offset ${watermark.midlineOffset}px, field ${watermark.fieldShareOfHost} of host` : "no watermark panel found");
+  await session.screenshot("empty-editor");
+
   // 3. Every screen paints something with a way back out of it.
   for (const id of ["git", "codeMap", "aiManager", "marketplace", "monitor"]) {
     await session.eval(`document.querySelector('[data-testid="nav-item-${id}"]').click()`);
