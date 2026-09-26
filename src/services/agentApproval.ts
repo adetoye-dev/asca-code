@@ -26,7 +26,12 @@ export const AGENT_APPROVAL_MODES = {
   "approve-for-me": {
     label: "Approve for me",
     description:
-      "Edits and commands run inside your project without asking. Anything reaching past it is reviewed automatically, so a run does not stop to interrupt you.",
+      // "Inside your project" was not the whole truth. The runtime's
+      // workspace-write sandbox also allows the system temporary directory —
+      // builds need scratch space — so a run can create files outside the
+      // project without asking anyone. Found by watching an agent write its own
+      // test harness to /tmp while this mode was on and no prompt appeared.
+      "Edits and commands run inside your project, and in temporary directories a build needs, without asking. Anything reaching further is reviewed automatically, so a run does not stop to interrupt you.",
     approvalPolicy: "on-request",
     approvalsReviewer: "auto_review",
     sandboxMode: "workspace-write",
@@ -36,10 +41,11 @@ export const AGENT_APPROVAL_MODES = {
     description:
       // Says what the sandbox actually does, because the honest answer surprised
       // us too: `workspace-write` lets the agent edit and build inside the project
-      // *without* asking, so "Ask me" is not "approve every change" — it is
+      // (and in temporary directories) *without* asking,
+      // so "Ask me" is not "approve every change" — it is
       // "I answer the escalations, not an automatic reviewer". Verified by running
       // a multi-file refactor under this mode: no prompt appeared.
-      "Edits and commands run inside your project without asking. Anything reaching past it — the network, other folders, destructive commands — waits for your approval in the chat. Needs the app-server engine below.",
+      "Edits and commands run inside your project, and in temporary directories, without asking. Anything reaching past that — the network, other folders, destructive commands — waits for your approval in the chat. Needs the app-server engine below.",
     approvalPolicy: "on-request",
     approvalsReviewer: "user",
     sandboxMode: "workspace-write",

@@ -36,6 +36,11 @@ from typing import Any, Iterable, Optional
 
 SCHEMA_VERSION = 1
 
+# How long a model call stays in the ledger. Far wider than the fourteen days the
+# Performance page draws, so nothing on screen changes; the point is that the table
+# has a ceiling at all. See `prune_usage`.
+USAGE_RETENTION_DAYS = 90
+
 # ── Location ────────────────────────────────────────────────────────────────
 
 
@@ -617,6 +622,37 @@ def record_usage(
                 float(cost_usd or 0.0),
             ),
         )
+        prune_usage(conn=conn)
+
+
+def prune_usage(
+    retention_days: int = USAGE_RETENTION_DAYS,
+    conn: Optional[sqlite3.Connection] = None,
+) -> int:
+    """Drop ledger rows older than the retention window. Returns how many went.
+
+    The ledger is append-only and was the one table nothing bounded — the chat is
+    trimmed to its most recent messages, but every call ever made stayed here
+    forever, at a row per model call, each with a project path and a model name.
+    That is a slow leak rather than a bug, which is why it survived: nothing breaks
+    until a database nobody looks at is large.
+
+    Pruned on write rather than on a schedule or on read: there is no scheduler
+    here, and a read that deletes is a read with a surprising side effect. The
+    `ts` index makes it a range delete, and the window is far wider than the
+    fourteen days the Performance page shows.
+    """
+    cutoff = time.time() - max(0, int(retention_days)) * 86_400
+    own = conn is None
+    conn = conn or connect()
+    try:
+        cursor = conn.execute("DELETE FROM usage_events WHERE ts < ?", (cutoff,))
+        if own:
+            conn.commit()
+        return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+    finally:
+        if own:
+            conn.close()
 
 
 def usage_summary(

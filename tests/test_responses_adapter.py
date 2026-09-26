@@ -215,3 +215,38 @@ class MessageTranslationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import ai_cli  # noqa: E402  (the engine's provider client)
+
+
+class TestConnectionErrorTextTests(unittest.TestCase):
+    """A failed provider test has to say why.
+
+    Every hosted provider nests its reason differently, and the settings page reads
+    one field. Handing the payload through unchanged meant a dict arrived as
+    "[object Object]" and, on the page that read `message`, nothing arrived at all —
+    so a rejected key, an account with no credit and a dead network all produced
+    "Connection failed. Please check endpoint or API key."
+    """
+
+    def test_reads_the_message_openai_nests_inside_error(self):
+        body = {"error": {"message": "Incorrect API key provided: sk-***", "type": "invalid_request_error"}}
+        self.assertEqual(ai_cli._error_text(body), "Incorrect API key provided: sk-***")
+
+    def test_reads_a_bare_string_and_a_bare_message(self):
+        self.assertEqual(ai_cli._error_text("rate limit exceeded"), "rate limit exceeded")
+        self.assertEqual(ai_cli._error_text({"message": "quota exhausted"}), "quota exhausted")
+
+    def test_says_nothing_rather_than_guessing_at_an_unknown_shape(self):
+        # Gemini returns a list of attempts, and some providers return nothing useful.
+        # An empty string is what lets the caller fall back to the status code.
+        self.assertEqual(ai_cli._error_text({"error": [{"reason": "x"}]}), "")
+        self.assertEqual(ai_cli._error_text(None), "")
+        self.assertEqual(ai_cli._error_text({"error": {}}), "")
+
+    def test_the_failure_keeps_the_status(self):
+        # The status is half the diagnosis: 401 and 429 need different fixes, and the
+        # frontend's classifier keys off it.
+        source = (Path(__file__).resolve().parent.parent / "core-engine" / "ai_cli.py").read_text(encoding="utf-8")
+        self.assertIn('f"HTTP {status or \'unreachable\'}: {_error_text(body)}"', source)
