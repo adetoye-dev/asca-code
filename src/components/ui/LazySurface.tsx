@@ -22,7 +22,14 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { SurfaceFallback } from "./SurfaceFallback";
 
-/** How long a surface may be late before the user is told it is late. */
+/**
+ * How long a surface may be late before the user is told it is late.
+ *
+ * Measured rather than picked: a first file open in the packaged app puts the
+ * editor on screen in about a second, so eight leaves most of an order of
+ * magnitude of headroom. The stall this was written for sat there for twenty
+ * seconds and counting, which is not a slower version of the same thing.
+ */
 export const STALL_AFTER_MS = 8000;
 
 /** Reports the moment the surface actually mounts. */
