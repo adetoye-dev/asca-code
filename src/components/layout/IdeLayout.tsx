@@ -30,7 +30,6 @@ import { FileIcon } from "../ui/FileIcon";
 import { StatusBar, blockedLabel } from "./StatusBar";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { DockviewWatermark } from "./DockviewWatermark";
-import { ProjectSetupCard } from "./ProjectSetupCard";
 import { WORKBENCH_PANELS } from "./WorkbenchPanels";
 import { WorkbenchProvider, type WorkbenchLive } from "./WorkbenchContext";
 import { SurfaceFallback } from "../ui/SurfaceFallback";
@@ -915,9 +914,6 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
     setPaletteMode("command");
     setIsCommandPaletteOpen(true);
   }, []);
-  const toggleTerminalFromWatermark = useCallback(() => {
-    setIsBottomPanelOpen((prev) => !prev);
-  }, []);
   const toggleAiFromWatermark = useCallback(() => {
     setIsCenterChatOpen(false);
     setIsRightPanelOpen((prev) => !prev);
@@ -1188,27 +1184,19 @@ export function IdeLayout(pipeline: UsePipelineReturn) {
   // one and mounted a new one. The prompt text lives above this layout, so every
   // keystroke in the chat composer re-rendered the workbench and the panel
   // flickered. The handlers below are setState calls, so their identities do not
-  // change; this memo only changes when the setup card's own data does.
+  // change; this memo only changes when the empty state's own data does.
   const watermarkComponent = useMemo(
     () => () => (
       <DockviewWatermark
         onOpenFile={openFilePalette}
         onOpenCommands={openCommandPalette}
-        onToggleTerminal={toggleTerminalFromWatermark}
         onToggleAi={toggleAiFromWatermark}
-        setupSlot={
-          <ProjectSetupCard
-            status={projectStatus}
-            busyCommand={setupBusyCommand}
-            onRun={runSetupCommand}
-          />
-        }
+        setup={{ status: projectStatus, busyCommand: setupBusyCommand, onRun: runSetupCommand }}
       />
     ),
     [
       openFilePalette,
       openCommandPalette,
-      toggleTerminalFromWatermark,
       toggleAiFromWatermark,
       projectStatus,
       setupBusyCommand,
